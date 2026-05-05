@@ -1,0 +1,21 @@
+[package]
+name = "codon"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+alacritty_terminal = { workspace = true }
+helix-core = { workspace = true }
+helix-view = { workspace = true }
+helix-loader = { workspace = true }
+helix-event = { workspace = true }
+portable-pty = { workspace = true }
+arc-swap.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+parking_lot.workspace = true
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }

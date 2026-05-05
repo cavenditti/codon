@@ -1,0 +1,9 @@
+[submodule "helix"]
+	path = vendor/helix
+	url = git@github.com:cavenditti/helix
+[submodule "zed"]
+	path = vendor/zed
+	url = git@github.com:cavenditti/zed
+[submodule "vendor/gpui-ghostty"]
+	path = vendor/gpui-ghostty
+	url = https://github.com/Xuanwo/gpui-ghostty
