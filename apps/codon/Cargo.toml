@@ -12,6 +12,7 @@ helix-core = { workspace = true }
 helix-view = { workspace = true }
 helix-loader = { workspace = true }
 helix-event = { workspace = true }
+helix-stdx = { workspace = true }
 portable-pty = { workspace = true }
 arc-swap.workspace = true
 anyhow.workspace = true

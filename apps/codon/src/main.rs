@@ -1,4 +1,5 @@
 mod editor_actions;
+mod editor_commands;
 mod editor_pane;
 mod terminal_pane;
 
@@ -51,8 +52,10 @@ fn main() {
         // Insert mode editor bindings
         let insert = Some("EditorPane && mode == insert");
 
+        let select = Some("EditorPane && mode == select");
+
         cx.bind_keys([
-            // Normal mode — motion
+            // ── Normal mode: motion ──
             KeyBinding::new("h", MoveCharLeft, normal),
             KeyBinding::new("left", MoveCharLeft, normal),
             KeyBinding::new("l", MoveCharRight, normal),
@@ -64,36 +67,96 @@ fn main() {
             KeyBinding::new("w", MoveNextWordStart, normal),
             KeyBinding::new("b", MovePrevWordStart, normal),
             KeyBinding::new("e", MoveNextWordEnd, normal),
+            KeyBinding::new("shift-w", MoveNextLongWordStart, normal),
+            KeyBinding::new("shift-b", MovePrevLongWordStart, normal),
+            KeyBinding::new("shift-e", MoveNextLongWordEnd, normal),
+            // ── Normal mode: goto ──
             KeyBinding::new("g g", GotoFileStart, normal),
+            KeyBinding::new("g e", GotoLastLine, normal),
+            KeyBinding::new("g h", GotoLineStart, normal),
+            KeyBinding::new("g l", GotoLineEnd, normal),
+            KeyBinding::new("g s", GotoFirstNonwhitespace, normal),
             KeyBinding::new("shift-g", GotoLastLine, normal),
             KeyBinding::new("0", GotoLineStart, normal),
             KeyBinding::new("$", GotoLineEnd, normal),
-            // Normal mode — mode switching
+            KeyBinding::new("^", GotoFirstNonwhitespace, normal),
+            // ── Normal mode: mode switching ──
             KeyBinding::new("i", InsertMode, normal),
             KeyBinding::new("a", AppendMode, normal),
+            KeyBinding::new("shift-i", InsertAtLineStart, normal),
+            KeyBinding::new("shift-a", InsertAtLineEnd, normal),
             KeyBinding::new("o", OpenBelow, normal),
             KeyBinding::new("shift-o", OpenAbove, normal),
-            // Normal mode — editing
+            KeyBinding::new("v", SelectMode, normal),
+            // ── Normal mode: editing ──
             KeyBinding::new("x", DeleteSelection, normal),
             KeyBinding::new("d", DeleteSelection, normal),
+            KeyBinding::new("shift-d", DeleteSelection, normal),
             KeyBinding::new("c", ChangeSelection, normal),
+            KeyBinding::new("~", SwitchCase, normal),
+            KeyBinding::new("`", SwitchToLowercase, normal),
+            KeyBinding::new("shift-`", SwitchToUppercase, normal),
+            KeyBinding::new("shift-j", JoinSelections, normal),
+            KeyBinding::new(">", Indent, normal),
+            KeyBinding::new("<", Unindent, normal),
+            KeyBinding::new("ctrl-c", ToggleComments, normal),
+            // ── Normal mode: yank/paste ──
+            KeyBinding::new("y", Yank, normal),
+            KeyBinding::new("p", PasteAfter, normal),
+            KeyBinding::new("shift-p", PasteBefore, normal),
+            KeyBinding::new("shift-r", ReplaceWithYanked, normal),
+            // ── Normal mode: undo/redo ──
             KeyBinding::new("u", Undo, normal),
             KeyBinding::new("shift-u", Redo, normal),
-            // Normal mode — scrolling
+            // ── Normal mode: selection ──
+            KeyBinding::new("shift-x", ExtendLine, normal),
+            KeyBinding::new("%", SelectAll, normal),
+            KeyBinding::new(";", CollapseSelection, normal),
+            KeyBinding::new("shift-;", FlipSelections, normal),
+            KeyBinding::new(",", KeepPrimarySelection, normal),
+            KeyBinding::new("shift-,", RemovePrimarySelection, normal),
+            KeyBinding::new("(", RotateSelectionsBackward, normal),
+            KeyBinding::new(")", RotateSelectionsForward, normal),
+            // ── Normal mode: match ──
+            KeyBinding::new("m m", MatchBrackets, normal),
+            // ── Normal mode: scroll ──
             KeyBinding::new("ctrl-u", HalfPageUp, normal),
             KeyBinding::new("ctrl-d", HalfPageDown, normal),
             KeyBinding::new("ctrl-b", PageUp, normal),
             KeyBinding::new("ctrl-f", PageDown, normal),
-            // Insert mode
+            KeyBinding::new("ctrl-e", ScrollDown, normal),
+            KeyBinding::new("ctrl-y", ScrollUp, normal),
+            // ── Normal mode: misc ──
+            KeyBinding::new("ctrl-a", Increment, normal),
+            KeyBinding::new("ctrl-x", Decrement, normal),
+            // ── Select mode: same motions but extend ──
+            KeyBinding::new("h", ExtendCharLeft, select),
+            KeyBinding::new("l", ExtendCharRight, select),
+            KeyBinding::new("k", ExtendVisualLineUp, select),
+            KeyBinding::new("j", ExtendVisualLineDown, select),
+            KeyBinding::new("w", ExtendNextWordStart, select),
+            KeyBinding::new("b", ExtendPrevWordStart, select),
+            KeyBinding::new("e", ExtendNextWordEnd, select),
+            KeyBinding::new("escape", ExitSelectMode, select),
+            KeyBinding::new("d", DeleteSelection, select),
+            KeyBinding::new("c", ChangeSelection, select),
+            KeyBinding::new("y", Yank, select),
+            KeyBinding::new("g g", ExtendToFileStart, select),
+            KeyBinding::new("shift-g", ExtendToLastLine, select),
+            // ── Insert mode ──
             KeyBinding::new("escape", NormalMode, insert),
             KeyBinding::new("backspace", DeleteCharBackward, insert),
             KeyBinding::new("delete", DeleteCharForward, insert),
             KeyBinding::new("enter", InsertNewline, insert),
+            KeyBinding::new("tab", InsertTab, insert),
             KeyBinding::new("left", MoveCharLeft, insert),
             KeyBinding::new("right", MoveCharRight, insert),
             KeyBinding::new("up", MoveVisualLineUp, insert),
             KeyBinding::new("down", MoveVisualLineDown, insert),
-            // Global
+            KeyBinding::new("ctrl-w", DeleteWordBackward, insert),
+            KeyBinding::new("ctrl-u", KillToLineStart, insert),
+            KeyBinding::new("ctrl-k", KillToLineEnd, insert),
+            // ── Global ──
             KeyBinding::new("alt-h", FocusLeft, None),
             KeyBinding::new("alt-l", FocusRight, None),
         ]);

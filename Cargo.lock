@@ -1048,6 +1048,7 @@ dependencies = [
  "helix-core",
  "helix-event",
  "helix-loader",
+ "helix-stdx",
  "helix-view",
  "log",
  "parking_lot",
