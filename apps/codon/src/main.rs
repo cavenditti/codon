@@ -870,26 +870,45 @@ fn main() {
 
         initialize_workspace(app_state.clone(), cx);
 
+        // Open terminal as a center pane item (not in the bottom dock)
+        cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
+            workspace.register_action(
+                |workspace, _: &workspace::NewTerminal, window, cx| {
+                    terminal_view::terminal_panel::TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                    )
+                    .detach_and_log_err(cx);
+                },
+            );
+        })
+        .detach();
+
         // Global pane navigation and management keybindings.
         // Registered last so they take priority over default keymaps.
         use gpui::KeyBinding;
         cx.bind_keys([
-            KeyBinding::new("alt-h", workspace::ActivatePaneLeft, None),
-            KeyBinding::new("alt-j", workspace::ActivatePaneDown, None),
-            KeyBinding::new("alt-k", workspace::ActivatePaneUp, None),
-            KeyBinding::new("alt-l", workspace::ActivatePaneRight, None),
+            // Pane navigation
+            KeyBinding::new("ctrl-shift-h", workspace::ActivatePaneLeft, None),
+            KeyBinding::new("ctrl-shift-j", workspace::ActivatePaneDown, None),
+            KeyBinding::new("ctrl-shift-k", workspace::ActivatePaneUp, None),
+            KeyBinding::new("ctrl-shift-l", workspace::ActivatePaneRight, None),
+            // Splits
             KeyBinding::new(
-                "alt-|",
+                "ctrl-shift-|",
                 workspace::pane::SplitRight::default(),
                 None,
             ),
             KeyBinding::new(
-                "alt--",
+                "ctrl-shift--",
                 workspace::pane::SplitDown::default(),
                 None,
             ),
+            // Pane management
             KeyBinding::new(
-                "alt-w",
+                "ctrl-shift-w",
                 workspace::CloseActiveItem {
                     save_intent: None,
                     close_pinned: false,
@@ -897,11 +916,11 @@ fn main() {
                 None,
             ),
             KeyBinding::new(
-                "alt-t",
+                "ctrl-shift-t",
                 workspace::NewTerminal { local: false },
                 None,
             ),
-            KeyBinding::new("alt-e", file_manager::Open, None),
+            KeyBinding::new("ctrl-shift-e", file_manager::Open, None),
         ]);
 
         cx.activate(true);
