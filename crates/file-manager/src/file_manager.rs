@@ -1,7 +1,7 @@
 use codon_mode::{CodonModeTracker, PaneMode};
 use gpui::{
     actions, div, prelude::*, px, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, KeyContext, Render, SharedString, Styled, Task, Window,
+    IntoElement, KeyContext, Render, SharedString, Styled, Task, WeakEntity, Window,
 };
 use std::cmp;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,7 @@ enum Preview {
 
 pub struct FileManager {
     focus_handle: FocusHandle,
+    workspace: WeakEntity<Workspace>,
     mode: PaneMode,
     current_dir: PathBuf,
     entries: Vec<DirEntry>,
@@ -62,6 +63,7 @@ impl EventEmitter<FileManagerEvent> for FileManager {}
 impl FileManager {
     pub fn new(
         initial_dir: PathBuf,
+        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn fs::Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -76,6 +78,7 @@ impl FileManager {
 
         let mut this = Self {
             focus_handle,
+            workspace,
             mode: PaneMode::Normal,
             current_dir: initial_dir,
             entries: Vec::new(),
@@ -172,23 +175,13 @@ impl FileManager {
             self.reload_entries(window, cx);
         } else {
             let path = entry.path.clone();
-            cx.spawn_in(window, async move |_this, cx| {
-                let _ = cx.update(|_, cx| {
-                    if let Some(workspace_handle) = cx
-                        .active_window()
-                        .and_then(|w| w.downcast::<workspace::MultiWorkspace>())
-                    {
-                        workspace_handle
-                            .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.workspace().update(cx, |workspace, cx| {
-                                    workspace
-                                        .open_abs_path(path, Default::default(), window, cx)
-                                        .detach();
-                                });
-                            })
-                            .ok();
-                    }
-                });
+            let workspace = self.workspace.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_abs_path(path, Default::default(), window, cx)
+                    })
+                    .ok();
             })
             .detach();
         }
@@ -424,8 +417,9 @@ impl Item for FileManager {
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
         let dir = self.current_dir.clone();
+        let workspace = self.workspace.clone();
         let fs = self.fs.clone();
-        Task::ready(Some(cx.new(|cx| Self::new(dir, fs, window, cx))))
+        Task::ready(Some(cx.new(|cx| Self::new(dir, workspace, fs, window, cx))))
     }
 
     fn can_split(&self) -> bool {
@@ -469,6 +463,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
             let fs = workspace.app_state().fs.clone();
+            let weak_workspace = workspace.weak_handle();
             let dir = workspace
                 .project()
                 .read(cx)
@@ -479,7 +474,8 @@ pub fn init(cx: &mut App) {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
                 });
 
-            let file_manager = cx.new(|cx| FileManager::new(dir, fs, window, cx));
+            let file_manager =
+                cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
             workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
         });
     })
