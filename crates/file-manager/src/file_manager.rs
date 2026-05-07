@@ -1,6 +1,6 @@
 use gpui::{
     actions, div, prelude::*, px, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Styled, Task, Window,
+    IntoElement, KeyBinding, KeyContext, Render, SharedString, Styled, Task, Window,
 };
 use std::cmp;
 use std::path::{Path, PathBuf};
@@ -318,8 +318,12 @@ impl Render for FileManager {
         let border_color = theme.colors().border;
         let dir_display = self.current_dir.display().to_string();
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("FileManager");
+
         v_flex()
             .size_full()
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::navigate_down))
             .on_action(cx.listener(Self::navigate_up))
@@ -430,6 +434,18 @@ fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
 }
 
 pub fn init(cx: &mut App) {
+    let context = Some("FileManager");
+    cx.bind_keys([
+        KeyBinding::new("j", NavigateDown, context),
+        KeyBinding::new("k", NavigateUp, context),
+        KeyBinding::new("l", EnterDirectory, context),
+        KeyBinding::new("enter", EnterDirectory, context),
+        KeyBinding::new("h", ParentDirectory, context),
+        KeyBinding::new("g g", GoToTop, context),
+        KeyBinding::new("shift-g", GoToBottom, context),
+        KeyBinding::new(".", ToggleHidden, context),
+    ]);
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
             let fs = workspace.app_state().fs.clone();
