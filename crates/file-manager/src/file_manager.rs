@@ -253,7 +253,7 @@ impl FileManager {
             "j" if !shift => { self.navigate_down(&NavigateDown, window, cx); true }
             "k" if !shift => { self.navigate_up(&NavigateUp, window, cx); true }
             "l" if !shift => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "enter" => { self.enter_directory(&EnterDirectory, window, cx); true }
+            "enter" | "\n" => { self.enter_directory(&EnterDirectory, window, cx); true }
             "h" if !shift => { self.parent_directory(&ParentDirectory, window, cx); true }
             "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
             "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
