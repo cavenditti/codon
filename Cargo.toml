@@ -1,222 +1,1020 @@
 [workspace]
 resolver = "2"
 members = [
-    # The binary
     "apps/codon",
-
-    # GPUI core (from Zed)
-    "vendor/zed/crates/gpui",
-    "vendor/zed/crates/gpui_macros",
-    "vendor/zed/crates/gpui_macos",
-    "vendor/zed/crates/gpui_platform",
-    "vendor/zed/crates/gpui_shared_string",
-    "vendor/zed/crates/gpui_util",
+    "vendor/zed/crates/acp_thread",
+    "vendor/zed/crates/acp_tools",
+    "vendor/zed/crates/action_log",
+    "vendor/zed/crates/activity_indicator",
+    "vendor/zed/crates/agent",
+    "vendor/zed/crates/agent_servers",
+    "vendor/zed/crates/agent_settings",
+    "vendor/zed/crates/agent_ui",
+    "vendor/zed/crates/ai_onboarding",
+    "vendor/zed/crates/anthropic",
+    "vendor/zed/crates/askpass",
+    "vendor/zed/crates/assets",
+    "vendor/zed/crates/audio",
+    "vendor/zed/crates/auto_update",
+    "vendor/zed/crates/auto_update_helper",
+    "vendor/zed/crates/auto_update_ui",
+    "vendor/zed/crates/aws_http_client",
+    "vendor/zed/crates/bedrock",
+    "vendor/zed/crates/breadcrumbs",
+    "vendor/zed/crates/buffer_diff",
+    "vendor/zed/crates/call",
+    "vendor/zed/crates/channel",
+    "vendor/zed/crates/cli",
+    "vendor/zed/crates/client",
+    "vendor/zed/crates/clock",
+    "vendor/zed/crates/cloud_api_client",
+    "vendor/zed/crates/cloud_api_types",
+    "vendor/zed/crates/cloud_llm_client",
+    "vendor/zed/crates/codestral",
+    "vendor/zed/crates/collab",
+    "vendor/zed/crates/collab_ui",
     "vendor/zed/crates/collections",
+    "vendor/zed/crates/command_palette",
+    "vendor/zed/crates/command_palette_hooks",
+    "vendor/zed/crates/component",
+    "vendor/zed/crates/component_preview",
+    "vendor/zed/crates/context_server",
+    "vendor/zed/crates/copilot",
+    "vendor/zed/crates/copilot_chat",
+    "vendor/zed/crates/copilot_ui",
+    "vendor/zed/crates/crashes",
+    "vendor/zed/crates/credentials_provider",
+    "vendor/zed/crates/csv_preview",
+    "vendor/zed/crates/dap",
+    "vendor/zed/crates/dap_adapters",
+    "vendor/zed/crates/db",
+    "vendor/zed/crates/debug_adapter_extension",
+    "vendor/zed/crates/debugger_tools",
+    "vendor/zed/crates/debugger_ui",
+    "vendor/zed/crates/deepseek",
+    "vendor/zed/crates/denoise",
+    "vendor/zed/crates/dev_container",
+    "vendor/zed/crates/diagnostics",
+    "vendor/zed/crates/docs_preprocessor",
+    "vendor/zed/crates/edit_prediction",
+    "vendor/zed/crates/edit_prediction_cli",
+    "vendor/zed/crates/edit_prediction_context",
+    "vendor/zed/crates/edit_prediction_metrics",
+    "vendor/zed/crates/edit_prediction_types",
+    "vendor/zed/crates/edit_prediction_ui",
+    "vendor/zed/crates/editor",
+    "vendor/zed/crates/encoding_selector",
+    "vendor/zed/crates/env_var",
+    "vendor/zed/crates/etw_tracing",
+    "vendor/zed/crates/eval_cli",
+    "vendor/zed/crates/eval_utils",
+    "vendor/zed/crates/explorer_command_injector",
+    "vendor/zed/crates/extension",
+    "vendor/zed/crates/extension_api",
+    "vendor/zed/crates/extension_cli",
+    "vendor/zed/crates/extension_host",
+    "vendor/zed/crates/extensions_ui",
+    "vendor/zed/crates/feature_flags",
+    "vendor/zed/crates/feature_flags_macros",
+    "vendor/zed/crates/feedback",
+    "vendor/zed/crates/file_finder",
+    "vendor/zed/crates/file_icons",
+    "vendor/zed/crates/fs",
+    "vendor/zed/crates/fs_benchmarks",
+    "vendor/zed/crates/fuzzy",
+    "vendor/zed/crates/fuzzy_nucleo",
+    "vendor/zed/crates/git",
+    "vendor/zed/crates/git_graph",
+    "vendor/zed/crates/git_hosting_providers",
+    "vendor/zed/crates/git_ui",
+    "vendor/zed/crates/go_to_line",
+    "vendor/zed/crates/google_ai",
+    "vendor/zed/crates/grammars",
+    "vendor/zed/crates/gpui",
+    "vendor/zed/crates/gpui_shared_string",
+    "vendor/zed/crates/gpui_linux",
+    "vendor/zed/crates/gpui_macos",
+    "vendor/zed/crates/gpui_macros",
+    "vendor/zed/crates/gpui_platform",
+    "vendor/zed/crates/gpui_tokio",
+    "vendor/zed/crates/gpui_util",
+    "vendor/zed/crates/gpui_web",
+    "vendor/zed/crates/gpui_wgpu",
+    "vendor/zed/crates/gpui_windows",
+    "vendor/zed/crates/html_to_markdown",
+    "vendor/zed/crates/http_client",
+    "vendor/zed/crates/http_client_tls",
+    "vendor/zed/crates/icons",
+    "vendor/zed/crates/image_viewer",
+    "vendor/zed/crates/input_latency_ui",
+    "vendor/zed/crates/inspector_ui",
+    "vendor/zed/crates/install_cli",
+    "vendor/zed/crates/journal",
+    "vendor/zed/crates/json_schema_store",
+    "vendor/zed/crates/keymap_editor",
+    "vendor/zed/crates/language",
+    "vendor/zed/crates/language_core",
+    "vendor/zed/crates/language_extension",
+    "vendor/zed/crates/language_model",
+    "vendor/zed/crates/language_model_core",
+    "vendor/zed/crates/language_models",
+    "vendor/zed/crates/language_models_cloud",
+    "vendor/zed/crates/language_onboarding",
+    "vendor/zed/crates/language_selector",
+    "vendor/zed/crates/language_tools",
+    "vendor/zed/crates/languages",
+    "vendor/zed/crates/line_ending_selector",
+    "vendor/zed/crates/livekit_api",
+    "vendor/zed/crates/livekit_client",
+    "vendor/zed/crates/lmstudio",
+    "vendor/zed/crates/lsp",
+    "vendor/zed/crates/markdown",
+    "vendor/zed/crates/markdown_preview",
+    "vendor/zed/crates/media",
+    "vendor/zed/crates/menu",
+    "vendor/zed/crates/migrator",
+    "vendor/zed/crates/miniprofiler_ui",
+    "vendor/zed/crates/mistral",
+    "vendor/zed/crates/multi_buffer",
+    "vendor/zed/crates/nc",
+    "vendor/zed/crates/net",
+    "vendor/zed/crates/node_runtime",
+    "vendor/zed/crates/notifications",
+    "vendor/zed/crates/ollama",
+    "vendor/zed/crates/onboarding",
+    "vendor/zed/crates/opencode",
+    "vendor/zed/crates/open_ai",
+    "vendor/zed/crates/open_path_prompt",
+    "vendor/zed/crates/open_router",
+    "vendor/zed/crates/outline",
+    "vendor/zed/crates/outline_panel",
+    "vendor/zed/crates/panel",
+    "vendor/zed/crates/paths",
+    "vendor/zed/crates/picker",
+    "vendor/zed/crates/platform_title_bar",
+    "vendor/zed/crates/prettier",
+    "vendor/zed/crates/project",
+    "vendor/zed/crates/project_benchmarks",
+    "vendor/zed/crates/project_panel",
+    "vendor/zed/crates/project_symbols",
+    "vendor/zed/crates/prompt_store",
+    "vendor/zed/crates/proto",
+    "vendor/zed/crates/recent_projects",
     "vendor/zed/crates/refineable",
     "vendor/zed/crates/refineable/derive_refineable",
+    "vendor/zed/crates/release_channel",
+    "vendor/zed/crates/remote",
+    "vendor/zed/crates/remote_connection",
+    "vendor/zed/crates/remote_server",
+    "vendor/zed/crates/repl",
+    "vendor/zed/crates/reqwest_client",
+    "vendor/zed/crates/rope",
+    "vendor/zed/crates/rpc",
+    "vendor/zed/crates/rules_library",
     "vendor/zed/crates/scheduler",
+    "vendor/zed/crates/schema_generator",
+    "vendor/zed/crates/search",
+    "vendor/zed/crates/session",
+    "vendor/zed/crates/settings",
+    "vendor/zed/crates/settings_content",
+    "vendor/zed/crates/settings_json",
+    "vendor/zed/crates/settings_macros",
+    "vendor/zed/crates/settings_profile_selector",
+    "vendor/zed/crates/settings_ui",
+    "vendor/zed/crates/shell_command_parser",
+    "vendor/zed/crates/sidebar",
+    "vendor/zed/crates/snippet",
+    "vendor/zed/crates/snippet_provider",
+    "vendor/zed/crates/snippets_ui",
+    "vendor/zed/crates/sqlez",
+    "vendor/zed/crates/sqlez_macros",
+    "vendor/zed/crates/streaming_diff",
     "vendor/zed/crates/sum_tree",
+    "vendor/zed/crates/svg_preview",
+    "vendor/zed/crates/system_specs",
+    "vendor/zed/crates/syntax_theme",
+    "vendor/zed/crates/tab_switcher",
+    "vendor/zed/crates/task",
+    "vendor/zed/crates/tasks_ui",
+    "vendor/zed/crates/telemetry",
+    "vendor/zed/crates/telemetry_events",
+    "vendor/zed/crates/terminal",
+    "vendor/zed/crates/terminal_view",
+    "vendor/zed/crates/text",
+    "vendor/zed/crates/theme",
+    "vendor/zed/crates/theme_extension",
+    "vendor/zed/crates/theme_settings",
+    "vendor/zed/crates/theme_importer",
+    "vendor/zed/crates/theme_selector",
+    "vendor/zed/crates/time_format",
+    "vendor/zed/crates/title_bar",
+    "vendor/zed/crates/toolchain_selector",
+    "vendor/zed/crates/ui",
+    "vendor/zed/crates/ui_input",
+    "vendor/zed/crates/ui_macros",
+    "vendor/zed/crates/ui_prompt",
     "vendor/zed/crates/util",
     "vendor/zed/crates/util_macros",
-    "vendor/zed/crates/http_client",
-    "vendor/zed/crates/media",
+    "vendor/zed/crates/vim",
+    "vendor/zed/crates/vim_mode_setting",
+    "vendor/zed/crates/watch",
+    "vendor/zed/crates/web_search",
+    "vendor/zed/crates/web_search_providers",
+    "vendor/zed/crates/which_key",
+    "vendor/zed/crates/workspace",
+    "vendor/zed/crates/worktree",
+    "vendor/zed/crates/worktree_benchmarks",
+    "vendor/zed/crates/x_ai",
+    "vendor/zed/crates/zed",
+    "vendor/zed/crates/zed_actions",
+    "vendor/zed/crates/windows_resources",
+    "vendor/zed/crates/zed_credentials_provider",
+    "vendor/zed/crates/zed_env_vars",
+    "vendor/zed/crates/zeta_prompt",
+    "vendor/zed/crates/zlog",
+    "vendor/zed/crates/zlog_settings",
     "vendor/zed/crates/ztracing",
     "vendor/zed/crates/ztracing_macro",
-    "vendor/zed/crates/zlog",
-    "vendor/zed/crates/gpui_linux",
-    "vendor/zed/crates/gpui_wgpu",
+
+    #
+    # Extensions
+    #
+
+    "vendor/zed/extensions/glsl",
+    "vendor/zed/extensions/html",
+    "vendor/zed/extensions/proto",
+    "vendor/zed/extensions/test-extension",
+
+    #
+    # Tooling
+    #
+
+    "vendor/zed/tooling/compliance",
     "vendor/zed/tooling/perf",
-
-
-    # Helix (minimum for Document + Rope)
-    "vendor/helix/helix-core",
-    "vendor/helix/helix-view",
-    "vendor/helix/helix-loader",
-    "vendor/helix/helix-stdx",
-    "vendor/helix/helix-event",
-    "vendor/helix/helix-lsp",
-    "vendor/helix/helix-lsp-types",
-    "vendor/helix/helix-parsec",
-    "vendor/helix/helix-vcs",
-    "vendor/helix/helix-dap",
-    "vendor/helix/helix-dap-types",
+    "vendor/zed/tooling/xtask",
 ]
+default-members = ["vendor/zed/crates/zed"]
 
 [workspace.package]
-edition = "2024"
 publish = false
-# Helix workspace.package fields (inherited by Helix crates)
-version = "25.7.1"
-authors = ["Blaž Hrastnik <blaz@mxxn.io>"]
-categories = ["editor"]
-repository = "https://github.com/helix-editor/helix"
-homepage = "https://helix-editor.com"
-license = "MPL-2.0"
-rust-version = "1.90"
-
-[workspace.lints.rust]
-unexpected_cfgs = { level = "allow" }
-
-[workspace.lints.clippy]
-style = { level = "allow", priority = -1 }
-type_complexity = "allow"
+edition = "2024"
 
 [workspace.dependencies]
+
 #
-# Zed internal path crates
+# Workspace member crates
 #
-collections = { path = "vendor/zed/crates/collections" }
+
+acp_tools = { path = "vendor/zed/crates/acp_tools" }
+acp_thread = { path = "vendor/zed/crates/acp_thread" }
+action_log = { path = "vendor/zed/crates/action_log" }
+agent = { path = "vendor/zed/crates/agent" }
+activity_indicator = { path = "vendor/zed/crates/activity_indicator" }
+agent_ui = { path = "vendor/zed/crates/agent_ui" }
+agent_settings = { path = "vendor/zed/crates/agent_settings" }
+agent_servers = { path = "vendor/zed/crates/agent_servers" }
+ai_onboarding = { path = "vendor/zed/crates/ai_onboarding" }
+anthropic = { path = "vendor/zed/crates/anthropic" }
+askpass = { path = "vendor/zed/crates/askpass" }
+assets = { path = "vendor/zed/crates/assets" }
+audio = { path = "vendor/zed/crates/audio" }
+auto_update = { path = "vendor/zed/crates/auto_update" }
+auto_update_ui = { path = "vendor/zed/crates/auto_update_ui" }
+aws_http_client = { path = "vendor/zed/crates/aws_http_client" }
+bedrock = { path = "vendor/zed/crates/bedrock" }
+breadcrumbs = { path = "vendor/zed/crates/breadcrumbs" }
+buffer_diff = { path = "vendor/zed/crates/buffer_diff" }
+call = { path = "vendor/zed/crates/call" }
+channel = { path = "vendor/zed/crates/channel" }
+cli = { path = "vendor/zed/crates/cli" }
+client = { path = "vendor/zed/crates/client" }
+clock = { path = "vendor/zed/crates/clock" }
+cloud_api_client = { path = "vendor/zed/crates/cloud_api_client" }
+cloud_api_types = { path = "vendor/zed/crates/cloud_api_types" }
+cloud_llm_client = { path = "vendor/zed/crates/cloud_llm_client" }
+collab = { path = "vendor/zed/crates/collab" }
+collab_ui = { path = "vendor/zed/crates/collab_ui" }
+collections = { path = "vendor/zed/crates/collections", version = "0.1.0" }
+command_palette = { path = "vendor/zed/crates/command_palette" }
+command_palette_hooks = { path = "vendor/zed/crates/command_palette_hooks" }
+compliance = { path = "vendor/zed/tooling/compliance" }
+component = { path = "vendor/zed/crates/component" }
+component_preview = { path = "vendor/zed/crates/component_preview" }
+console = "0.16"
+context_server = { path = "vendor/zed/crates/context_server" }
+copilot = { path = "vendor/zed/crates/copilot" }
+copilot_chat = { path = "vendor/zed/crates/copilot_chat" }
+copilot_ui = { path = "vendor/zed/crates/copilot_ui" }
+crashes = { path = "vendor/zed/crates/crashes" }
+credentials_provider = { path = "vendor/zed/crates/credentials_provider" }
+crossbeam = "0.8.4"
+csv_preview = { path = "vendor/zed/crates/csv_preview"}
+dap = { path = "vendor/zed/crates/dap" }
+dap_adapters = { path = "vendor/zed/crates/dap_adapters" }
+db = { path = "vendor/zed/crates/db" }
+debug_adapter_extension = { path = "vendor/zed/crates/debug_adapter_extension" }
+debugger_tools = { path = "vendor/zed/crates/debugger_tools" }
+debugger_ui = { path = "vendor/zed/crates/debugger_ui" }
+deepseek = { path = "vendor/zed/crates/deepseek" }
 derive_refineable = { path = "vendor/zed/crates/refineable/derive_refineable" }
-gpui = { path = "vendor/zed/crates/gpui", default-features = false, features = ["font-kit"] }
-gpui_macros = { path = "vendor/zed/crates/gpui_macros" }
-gpui_macos = { path = "vendor/zed/crates/gpui_macos", default-features = false, features = ["font-kit"] }
-gpui_platform = { path = "vendor/zed/crates/gpui_platform", default-features = false }
+dev_container = { path = "vendor/zed/crates/dev_container" }
+diagnostics = { path = "vendor/zed/crates/diagnostics" }
+dialoguer = { version = "0.12", default-features = false }
+editor = { path = "vendor/zed/crates/editor" }
+encoding_selector = { path = "vendor/zed/crates/encoding_selector" }
+env_var = { path = "vendor/zed/crates/env_var" }
+etw_tracing = { path = "vendor/zed/crates/etw_tracing" }
+eval_utils = { path = "vendor/zed/crates/eval_utils" }
+extension = { path = "vendor/zed/crates/extension" }
+extension_host = { path = "vendor/zed/crates/extension_host" }
+extensions_ui = { path = "vendor/zed/crates/extensions_ui" }
+feature_flags = { path = "vendor/zed/crates/feature_flags" }
+feature_flags_macros = { path = "vendor/zed/crates/feature_flags_macros" }
+feedback = { path = "vendor/zed/crates/feedback" }
+file_finder = { path = "vendor/zed/crates/file_finder" }
+file_icons = { path = "vendor/zed/crates/file_icons" }
+fs = { path = "vendor/zed/crates/fs" }
+fuzzy = { path = "vendor/zed/crates/fuzzy" }
+fuzzy_nucleo = { path = "vendor/zed/crates/fuzzy_nucleo" }
+git = { path = "vendor/zed/crates/git" }
+git_graph = { path = "vendor/zed/crates/git_graph" }
+git_hosting_providers = { path = "vendor/zed/crates/git_hosting_providers" }
+git_ui = { path = "vendor/zed/crates/git_ui" }
+go_to_line = { path = "vendor/zed/crates/go_to_line" }
+google_ai = { path = "vendor/zed/crates/google_ai" }
+grammars = { path = "vendor/zed/crates/grammars" }
+gpui = { path = "vendor/zed/crates/gpui", default-features = false }
 gpui_shared_string = { path = "vendor/zed/crates/gpui_shared_string" }
 gpui_linux = { path = "vendor/zed/crates/gpui_linux", default-features = false }
-gpui_util = { path = "vendor/zed/crates/gpui_util" }
+gpui_macos = { path = "vendor/zed/crates/gpui_macos", default-features = false }
+gpui_macros = { path = "vendor/zed/crates/gpui_macros" }
+gpui_platform = { path = "vendor/zed/crates/gpui_platform", default-features = false }
+gpui_web = { path = "vendor/zed/crates/gpui_web" }
 gpui_wgpu = { path = "vendor/zed/crates/gpui_wgpu" }
+gpui_windows = { path = "vendor/zed/crates/gpui_windows", default-features = false }
+gpui_tokio = { path = "vendor/zed/crates/gpui_tokio" }
+gpui_util = { path = "vendor/zed/crates/gpui_util" }
+html_to_markdown = { path = "vendor/zed/crates/html_to_markdown" }
 http_client = { path = "vendor/zed/crates/http_client" }
+http_client_tls = { path = "vendor/zed/crates/http_client_tls" }
+icons = { path = "vendor/zed/crates/icons" }
+image_viewer = { path = "vendor/zed/crates/image_viewer" }
+edit_prediction_types = { path = "vendor/zed/crates/edit_prediction_types" }
+edit_prediction_ui = { path = "vendor/zed/crates/edit_prediction_ui" }
+edit_prediction_context = { path = "vendor/zed/crates/edit_prediction_context" }
+input_latency_ui = { path = "vendor/zed/crates/input_latency_ui" }
+inspector_ui = { path = "vendor/zed/crates/inspector_ui" }
+install_cli = { path = "vendor/zed/crates/install_cli" }
+journal = { path = "vendor/zed/crates/journal" }
+json_schema_store = { path = "vendor/zed/crates/json_schema_store" }
+keymap_editor = { path = "vendor/zed/crates/keymap_editor" }
+language = { path = "vendor/zed/crates/language" }
+language_core = { path = "vendor/zed/crates/language_core" }
+language_extension = { path = "vendor/zed/crates/language_extension" }
+language_model = { path = "vendor/zed/crates/language_model" }
+language_model_core = { path = "vendor/zed/crates/language_model_core" }
+language_models = { path = "vendor/zed/crates/language_models" }
+language_models_cloud = { path = "vendor/zed/crates/language_models_cloud" }
+language_onboarding = { path = "vendor/zed/crates/language_onboarding" }
+language_selector = { path = "vendor/zed/crates/language_selector" }
+language_tools = { path = "vendor/zed/crates/language_tools" }
+languages = { path = "vendor/zed/crates/languages" }
+line_ending_selector = { path = "vendor/zed/crates/line_ending_selector" }
+livekit_api = { path = "vendor/zed/crates/livekit_api" }
+livekit_client = { path = "vendor/zed/crates/livekit_client" }
+lmstudio = { path = "vendor/zed/crates/lmstudio" }
+lsp = { path = "vendor/zed/crates/lsp" }
+markdown = { path = "vendor/zed/crates/markdown" }
+markdown_preview = { path = "vendor/zed/crates/markdown_preview" }
+svg_preview = { path = "vendor/zed/crates/svg_preview" }
 media = { path = "vendor/zed/crates/media" }
+menu = { path = "vendor/zed/crates/menu" }
+mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", rev = "374db9ead5426697c6c2111151d9f246899bc638", default-features = false }
+migrator = { path = "vendor/zed/crates/migrator" }
+mistral = { path = "vendor/zed/crates/mistral" }
+multi_buffer = { path = "vendor/zed/crates/multi_buffer" }
+miniprofiler_ui = { path = "vendor/zed/crates/miniprofiler_ui" }
+nc = { path = "vendor/zed/crates/nc" }
+net = { path = "vendor/zed/crates/net" }
+node_runtime = { path = "vendor/zed/crates/node_runtime" }
+notifications = { path = "vendor/zed/crates/notifications" }
+ollama = { path = "vendor/zed/crates/ollama" }
+onboarding = { path = "vendor/zed/crates/onboarding" }
+opencode = { path = "vendor/zed/crates/opencode" }
+open_ai = { path = "vendor/zed/crates/open_ai" }
+open_path_prompt = { path = "vendor/zed/crates/open_path_prompt" }
+open_router = { path = "vendor/zed/crates/open_router", features = ["schemars"] }
+outline = { path = "vendor/zed/crates/outline" }
+outline_panel = { path = "vendor/zed/crates/outline_panel" }
+panel = { path = "vendor/zed/crates/panel" }
+paths = { path = "vendor/zed/crates/paths" }
 perf = { path = "vendor/zed/tooling/perf" }
+picker = { path = "vendor/zed/crates/picker" }
+prettier = { path = "vendor/zed/crates/prettier" }
+settings_profile_selector = { path = "vendor/zed/crates/settings_profile_selector" }
+project = { path = "vendor/zed/crates/project" }
+project_panel = { path = "vendor/zed/crates/project_panel" }
+project_symbols = { path = "vendor/zed/crates/project_symbols" }
+prompt_store = { path = "vendor/zed/crates/prompt_store" }
+proto = { path = "vendor/zed/crates/proto" }
+recent_projects = { path = "vendor/zed/crates/recent_projects" }
 refineable = { path = "vendor/zed/crates/refineable" }
+release_channel = { path = "vendor/zed/crates/release_channel" }
+remote = { path = "vendor/zed/crates/remote" }
+remote_connection = { path = "vendor/zed/crates/remote_connection" }
+remote_server = { path = "vendor/zed/crates/remote_server" }
+repl = { path = "vendor/zed/crates/repl" }
+reqwest_client = { path = "vendor/zed/crates/reqwest_client" }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
+rope = { path = "vendor/zed/crates/rope" }
+rpc = { path = "vendor/zed/crates/rpc" }
+rules_library = { path = "vendor/zed/crates/rules_library" }
 scheduler = { path = "vendor/zed/crates/scheduler" }
+search = { path = "vendor/zed/crates/search" }
+session = { path = "vendor/zed/crates/session" }
+sidebar = { path = "vendor/zed/crates/sidebar" }
+settings = { path = "vendor/zed/crates/settings" }
+settings_content = { path = "vendor/zed/crates/settings_content" }
+settings_json = { path = "vendor/zed/crates/settings_json" }
+settings_macros = { path = "vendor/zed/crates/settings_macros" }
+settings_ui = { path = "vendor/zed/crates/settings_ui" }
+shell_command_parser = { path = "vendor/zed/crates/shell_command_parser" }
+snippet = { path = "vendor/zed/crates/snippet" }
+snippet_provider = { path = "vendor/zed/crates/snippet_provider" }
+snippets_ui = { path = "vendor/zed/crates/snippets_ui" }
+sqlez = { path = "vendor/zed/crates/sqlez" }
+sqlez_macros = { path = "vendor/zed/crates/sqlez_macros" }
+streaming_diff = { path = "vendor/zed/crates/streaming_diff" }
 sum_tree = { path = "vendor/zed/crates/sum_tree" }
+codestral = { path = "vendor/zed/crates/codestral" }
+system_specs = { path = "vendor/zed/crates/system_specs" }
+syntax_theme = { path = "vendor/zed/crates/syntax_theme" }
+tab_switcher = { path = "vendor/zed/crates/tab_switcher" }
+task = { path = "vendor/zed/crates/task" }
+tasks_ui = { path = "vendor/zed/crates/tasks_ui" }
+telemetry = { path = "vendor/zed/crates/telemetry" }
+telemetry_events = { path = "vendor/zed/crates/telemetry_events" }
+terminal = { path = "vendor/zed/crates/terminal" }
+terminal_view = { path = "vendor/zed/crates/terminal_view" }
+text = { path = "vendor/zed/crates/text" }
+theme = { path = "vendor/zed/crates/theme" }
+theme_extension = { path = "vendor/zed/crates/theme_extension" }
+theme_settings = { path = "vendor/zed/crates/theme_settings" }
+theme_selector = { path = "vendor/zed/crates/theme_selector" }
+time_format = { path = "vendor/zed/crates/time_format" }
+platform_title_bar = { path = "vendor/zed/crates/platform_title_bar" }
+title_bar = { path = "vendor/zed/crates/title_bar" }
+toolchain_selector = { path = "vendor/zed/crates/toolchain_selector" }
+ui = { path = "vendor/zed/crates/ui" }
+ui_input = { path = "vendor/zed/crates/ui_input" }
+ui_macros = { path = "vendor/zed/crates/ui_macros" }
+ui_prompt = { path = "vendor/zed/crates/ui_prompt" }
 util = { path = "vendor/zed/crates/util" }
 util_macros = { path = "vendor/zed/crates/util_macros" }
+vim = { path = "vendor/zed/crates/vim" }
+vim_mode_setting = { path = "vendor/zed/crates/vim_mode_setting" }
+which_key = { path = "vendor/zed/crates/which_key" }
+
+watch = { path = "vendor/zed/crates/watch" }
+web_search = { path = "vendor/zed/crates/web_search" }
+web_search_providers = { path = "vendor/zed/crates/web_search_providers" }
+workspace = { path = "vendor/zed/crates/workspace" }
+worktree = { path = "vendor/zed/crates/worktree" }
+x_ai = { path = "vendor/zed/crates/x_ai" }
+zed = { path = "vendor/zed/crates/zed" }
+zed_actions = { path = "vendor/zed/crates/zed_actions" }
+zed_credentials_provider = { path = "vendor/zed/crates/zed_credentials_provider" }
+zed_env_vars = { path = "vendor/zed/crates/zed_env_vars" }
+edit_prediction = { path = "vendor/zed/crates/edit_prediction" }
+edit_prediction_metrics = { path = "vendor/zed/crates/edit_prediction_metrics" }
+zeta_prompt = { path = "vendor/zed/crates/zeta_prompt" }
 zlog = { path = "vendor/zed/crates/zlog" }
+zlog_settings = { path = "vendor/zed/crates/zlog_settings" }
 ztracing = { path = "vendor/zed/crates/ztracing" }
 ztracing_macro = { path = "vendor/zed/crates/ztracing_macro" }
 
+#
+# External crates
+#
 
-#
-# Helix internal path crates
-#
-helix-core = { path = "vendor/helix/helix-core" }
-helix-view = { path = "vendor/helix/helix-view" }
-helix-loader = { path = "vendor/helix/helix-loader" }
-helix-stdx = { path = "vendor/helix/helix-stdx" }
-helix-event = { path = "vendor/helix/helix-event" }
-helix-lsp = { path = "vendor/helix/helix-lsp" }
-helix-lsp-types = { path = "vendor/helix/helix-lsp-types" }
-helix-parsec = { path = "vendor/helix/helix-parsec" }
-helix-vcs = { path = "vendor/helix/helix-vcs" }
-helix-dap = { path = "vendor/helix/helix-dap" }
-helix-dap-types = { path = "vendor/helix/helix-dap-types" }
-
-#
-# Terminal
-#
+agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }
+aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
-
-#
-# External crates (from Zed's workspace)
-#
+any_vec = "0.14"
 anyhow = "1.0.86"
-ashpd = { version = "0.13", default-features = false, features = ["async-io", "notification", "open_uri", "file_chooser", "settings", "trash"] }
+ashpd = { version = "0.13", default-features = false, features = [
+    "async-io",
+    "notification",
+    "open_uri",
+    "file_chooser",
+    "settings",
+    "trash"
+] }
 async-channel = "2.5.0"
+async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
+async-dispatcher = "0.1"
 async-fs = "2.1"
+async-io = "2.6.0"
+async-lock = "3.4.2"
+async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
+async-recursion = "1.0.0"
 async-tar = "0.5.1"
 async-task = "4.7"
+async-trait = "0.1"
+async-tungstenite = "0.34.1"
+async-process = "2.5.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
+aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.8", features = [
+    "hardcoded-credentials",
+] }
+aws-sdk-bedrockruntime = { version = "1.112.0", features = [
+    "behavior-version-latest",
+] }
+aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
-bitflags = "2.11"
+bitflags = "2.6.0"
+brotli = "8.0.2"
 bytes = "1.0"
+cargo_metadata = "0.19"
+cargo_toml = "0.21"
+brush-parser = "0.3"
+cfg-if = "1.0.3"
+chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+ciborium = "0.2"
+circular-buffer = "1.0"
+clap = { version = "4.4", features = ["derive", "wrap_help"] }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
+convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
+cpal = "0.17"
+crash-handler = "0.7"
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-derive_more = { version = "2.1.1", features = ["add", "add_assign", "deref", "deref_mut", "display", "from_str", "mul", "mul_assign", "not"] }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
+dashmap = "6.0"
+derive_more = { version = "2.1.1", features = [
+    "add",
+    "add_assign",
+    "deref",
+    "deref_mut",
+    "display",
+    "from_str",
+    "mul",
+    "mul_assign",
+    "not",
+] }
 dirs = "6.0"
+documented = "0.9.1"
+dotenvy = "0.15.0"
 dunce = "1.0"
+ec4rs = "1.1"
+emojis = "0.6.1"
 env_logger = "0.11"
+encoding_rs = "0.8"
+exec = "0.3.1"
+fancy-regex = "0.17.0"
+fork = "0.4.0"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
 globset = "0.4"
-hdrhistogram = "7"
 heapless = "0.9.2"
+handlebars = "4.3"
 heck = "0.5"
+hdrhistogram = "7"
+heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
+hex = "0.4.3"
+human_bytes = "0.4.1"
+html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
+ignore = "0.4.22"
 image = "0.25.1"
+imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
+indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
+json_dotpath = "1.1"
+jsonschema = "0.37.0"
+jsonwebtoken = "10.0"
+jupyter-protocol = "1.4.0"
+jupyter-websocket-client = "1.1.0"
 libc = "0.2"
+libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
+linkify = "0.10.0"
+libwebrtc = "0.3.26"
+livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f4dfa89a21ca35cd929b70354b1583fabae325f8" }
 mach2 = "0.5"
+markup5ever_rcdom = "0.3.0"
 metal = "0.33"
+minidumper = "0.9"
+moka = { version = "0.12.10", features = ["sync"] }
+nanoid = "0.4"
+nbformat = "1.2.0"
 nix = "0.29"
+nucleo = "0.5"
+num-format = "0.4.4"
 objc = "0.2"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphics"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSCoder",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSNull",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSUndoManager",
+    "NSValue",
+    "objc2-core-foundation",
+    "std",
+] }
+open = "5.0.0"
+ordered-float = "2.1.1"
+palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
+partial-json-fixer = "0.5.3"
+parse_int = "0.9"
+pciid-parser = "0.8.0"
+pathdiff = "0.2"
 percent-encoding = "2.3.2"
-pollster = "0.4.0"
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
+# replace this with main when #635 is merged
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest-derive = "0.8.0"
+prost = "0.9"
+prost-build = "0.9"
+prost-types = "0.9"
+pollster = "0.4.0"
+pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
 regex = "1.5"
+# WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
+    "charset",
+    "http2",
+    "macos-system-configuration",
+    "multipart",
+    "rustls-tls-native-roots",
+    "socks",
+    "stream",
+], package = "zed-reqwest", version = "0.12.15-zed" }
+rsa = "0.9.6"
+runtimelib = { version = "1.4.0", default-features = false, features = [
+    "async-dispatcher-runtime", "aws-lc-rs"
+] }
 rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
+rustls = { version = "0.23.26" }
+rustls-platform-verifier = "0.5.0"
+# WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
+scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.2", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.2", features = [
+    "preserve_order",
+    "raw_value",
+] }
+serde_path_to_error = "0.1.17"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
+shellexpand = "3.1"
 shlex = "1.3.0"
-slotmap = "1.1.1"
+simplelog = "0.12.2"
+slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 smol = "2.0"
+sqlformat = "0.2"
 stacksafe = "0.1"
+streaming-iterator = "0.1"
+strsim = "0.11"
 strum = { version = "0.27.2", features = ["derive"] }
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
+sys-locale = "0.3.1"
+sysinfo = "0.37.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
+time = { version = "0.3", features = [
+    "macros",
+    "parsing",
+    "serde",
+    "serde-well-known",
+    "formatting",
+    "local-offset",
+] }
+tiny_http = "0.12"
+tokio = { version = "1" }
+tokio-socks = { version = "0.5.2", default-features = false, features = [
+    "futures-io",
+    "tokio",
+] }
+toml = "0.8"
+toml_edit = { version = "0.22", default-features = false, features = [
+    "display",
+    "parse",
+    "serde",
+] }
+tower-http = "0.4.4"
+tree-sitter = { version = "0.26.8", features = ["wasm"] }
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.1"
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
+tree-sitter-css = "0.23"
+tree-sitter-diff = "0.1.0"
+tree-sitter-elixir = "0.3"
+tree-sitter-embedded-template = "0.23.0"
+tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
+tree-sitter-go = "0.25"
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", package = "tree-sitter-gomod" }
+tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
+tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
+tree-sitter-html = "0.23"
+tree-sitter-jsdoc = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
+tree-sitter-python = "0.25"
+tree-sitter-regex = "0.24"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
+tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 tracing = "0.1.40"
 unicase = "2.6"
-unicode-segmentation = "1.13"
+unicode-script = "0.5.7"
+unicode-segmentation = "1.10"
+unicode-width = "0.2"
+unindent = "0.2.0"
 url = "2.2"
+urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
+wasm-encoder = "0.221"
+wasmparser = "0.221"
+wasmtime = { version = "36", default-features = false, features = [
+    "async",
+    "demangle",
+    "runtime",
+    "cranelift",
+    "component-model",
+    "incremental-cache",
+    "parallel-compilation",
+] }
+wasmtime-wasi = "36"
+wax = "0.7"
+which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
+webrtc-sys = "0.3.23"
 wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
-which = "6.0.0"
+windows-core = "0.61"
+yaml-rust2 = "0.8"
+yawc = "0.2.5"
+zeroize = "1.8"
+zstd = "0.11"
 
-#
-# Helix-specific external crates
-#
-arc-swap = "1.9"
-etcetera = "0.11"
-foldhash = "0.2"
-futures-executor = "0.3"
-futures-util = { version = "0.3", features = ["std", "async-await"], default-features = false }
-nucleo = "0.5.0"
-ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
-sonic-rs = "0.5"
-termina = "0.3"
-tokio-stream = "0.1.18"
-toml = "1.1"
-tree-house = { version = "0.3.0", default-features = false }
 
-# Optional/platform deps referenced by Zed crates (must exist even if not compiled)
-scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap" }
+[workspace.dependencies.windows]
+version = "0.61"
+features = [
+    "Foundation_Numerics",
+    "Globalization_DateTimeFormatting",
+    "Storage_Search",
+    "Storage_Streams",
+    "System_Threading",
+    "UI_ViewManagement",
+    "Wdk_System_SystemServices",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_DirectManipulation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Graphics_Hlsl",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_DataExchange",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Performance",
+    "Win32_System_Pipes",
+    "Win32_System_RestartManager",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Media",
+]
 
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
+windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 
+[profile.dev]
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 16
+
+# mirror configuration for crates compiled for the build platform
+# (without this cargo will compile ~400 crates twice)
+[profile.dev.build-override]
+codegen-units = 16
+split-debuginfo = "unpacked"
+debug = true
+
+[profile.dev.package]
+# proc-macros start
+gpui_macros = { opt-level = 3 }
+derive_refineable = { opt-level = 3 }
+feature_flags_macros = { opt-level = 3 }
+settings_macros = { opt-level = 3 }
+sqlez_macros = { opt-level = 3, codegen-units = 1 }
+ui_macros = { opt-level = 3 }
+util_macros = { opt-level = 3 }
+quote = { opt-level = 3 }
+syn = { opt-level = 3 }
+proc-macro2 = { opt-level = 3 }
+# proc-macros end
+
+tree-sitter = { opt-level = 3 }
+taffy = { opt-level = 3 }
+resvg = { opt-level = 3 }
+wasmtime = { opt-level = 3 }
+cranelift-codegen = { opt-level = 3 }
+wasmtime-environ = { opt-level = 3 }
+wasmtime-internal-cranelift = { opt-level = 3 }
+minidumper = { opt-level = 3 }
+# Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
+activity_indicator = { codegen-units = 1 }
+assets = { codegen-units = 1 }
+breadcrumbs = { codegen-units = 1 }
+collections = { codegen-units = 1 }
+command_palette = { codegen-units = 1 }
+command_palette_hooks = { codegen-units = 1 }
+feature_flags = { codegen-units = 1 }
+file_icons = { codegen-units = 1 }
+image_viewer = { codegen-units = 1 }
+edit_prediction_ui = { codegen-units = 1 }
+install_cli = { codegen-units = 1 }
+journal = { codegen-units = 1 }
+json_schema_store = { codegen-units = 1 }
+lmstudio = { codegen-units = 1 }
+menu = { codegen-units = 1 }
+notifications = { codegen-units = 1 }
+ollama = { codegen-units = 1 }
+outline = { codegen-units = 1 }
+paths = { codegen-units = 1 }
+prettier = { codegen-units = 1 }
+project_symbols = { codegen-units = 1 }
+refineable = { codegen-units = 1 }
+release_channel = { codegen-units = 1 }
+reqwest_client = { codegen-units = 1 }
+session = { codegen-units = 1 }
+sidebar = { codegen-units = 1 }
+snippet = { codegen-units = 1 }
+snippets_ui = { codegen-units = 1 }
+telemetry_events = { codegen-units = 1 }
+theme_selector = { codegen-units = 1 }
+time_format = { codegen-units = 1 }
+ui_input = { codegen-units = 1 }
+zed_actions = { codegen-units = 1 }
+
+[profile.release]
+debug = "limited"
+lto = "thin"
+codegen-units = 1
+
+[profile.release.package]
+zed = { codegen-units = 16 }
+
+[profile.release-fast]
+inherits = "release"
+debug = "full"
+lto = false
+codegen-units = 16
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+declare_interior_mutable_const = "deny"
+
+redundant_clone = "deny"
+disallowed_methods = "deny"
+
+# We currently do not restrict any style rules
+# as it slows down shipping code to Zed.
+#
+# Running ./script/clippy can take several minutes, and so it's
+# common to skip that step and let CI do it. Any unexpected failures
+# (which also take minutes to discover) thus require switching back
+# to an old branch, manual fixing, and re-pushing.
+#
+# In the future we could improve this by either making sure
+# Zed can surface clippy errors in diagnostics (in addition to the
+# rust-analyzer errors), or by having CI fix style nits automatically.
+style = { level = "allow", priority = -1 }
+
+# Individual rules that have violations in the codebase:
+type_complexity = "allow"
+let_underscore_future = "allow"
+
+# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
+# warning on this rule produces a lot of noise.
+single_range_in_vec_init = "allow"
+
+# in Rust it can be very tedious to reduce argument count without
+# running afoul of the borrow checker.
+too_many_arguments = "allow"
+
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
+
+# Boolean expressions can be hard to read, requiring only the minimal form gets in the way
+nonminimal_bool = "allow"
+
+[workspace.metadata.cargo-machete]
+ignored = [
+    "bindgen",
+    "cbindgen",
+    "prost_build",
+    "serde",
+    "component",
+    "documented",
+    "sea-orm-macros",
+]

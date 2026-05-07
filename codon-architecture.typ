@@ -1,5 +1,5 @@
 // Codon — Architecture and Implementation Plan
-// Design document v0.1
+// Design document v0.2 — scope reduced to single-process Zed fork
 
 #set document(
   title: "Codon: Architecture and Implementation Plan",
@@ -44,19 +44,22 @@
   #v(0.3cm)
   #text(size: 14pt)[Architecture and Implementation Plan]
   #v(0.6cm)
-  #text(size: 11pt, style: "italic")[Design document v0.1 — May 2026]
+  #text(size: 11pt, style: "italic")[Design document v0.3 — May 2026]
   #v(2cm)
   #block(width: 75%)[
     #set text(size: 11pt)
     #set par(justify: true, first-line-indent: 0pt)
     #align(left)[
-      _Codon is a keyboard-driven, terminal-first development environment.
-      It combines a Zellij-style multiplexer, full Helix editing, and Zed's
-      agent and git tooling under a uniform modal UX. A persistent local
-      daemon owns all session state and editor logic; a thin window process
-      handles only rendering. The same protocol boundaries that decouple the
-      window from the daemon let session capabilities — PTYs, filesystem,
-      LSP — be served either locally or by a small remote agent over SSH._
+      _Codon is a fork of Zed restructured around a multiplexer-first UX,
+      with terminal panes (alacritty-backed) as the default pane kind and
+      Helix as the editing model for every text buffer. It runs as a single
+      process and reuses Zed's git, agent, diagnostics, diff, and
+      commit-editor stacks essentially intact — they are rewired to operate
+      over a small `Buffer` trait that Helix's `Document` implements. There
+      is no daemon split, no protocol design, no remote agent in this scope.
+      Those are deferred. A consistent selection-first / object-verb grammar
+      runs across every pane kind: terminal, editor, files, git, agent,
+      and the rest._
     ]
   ]
 ]
@@ -71,57 +74,53 @@
 
 == What Codon is
 
-Codon is a terminal multiplexer first, an IDE second. The default experience
-is a window full of typed panes, most of which are PTYs running shells, with
-some panes being graphical surfaces (editor, file browser, agent, git, diff,
-image preview) that share the same layout and key model as the terminals.
-There is no separate "editor mode" or "IDE mode" — every pane lives under the
-same modal shell with a uniform action vocabulary.
-
-Codon is built on three pre-existing codebases, all forked into a single
-monorepo and modified as needed:
-
-- *Zed* — for GPUI (the rendering framework), pickers and fuzzy search,
-  themes and settings, and the family of "vertical features" Zed has invested
-  heavily in: the agent panel, inline assistant, git panel and diff viewer,
-  diagnostics aggregation, and the AI-generated commit editor.
-- *Helix* — for everything to do with text buffers: rope storage, the
-  selection-first editing model, syntax via tree-sitter, LSP client logic.
-  Helix is the only buffer-interaction paradigm in Codon.
-- *Ghostty* — via `libghostty-vt` (terminal state and VT parsing) and the
-  community `gpui-ghostty` integration crate, providing terminal panes that
-  share the same rendering substrate as the rest of the UI.
-
-Codon contributes the integration layer above all three: a tiny kernel that
-owns sessions and dispatch, a uniform action and keymap system, a modal
-"shell" that hosts all pane kinds, two clean protocols for window/daemon and
-daemon/capability communication, and a small remote agent (`agentd`) that
-makes SSH-multiplexed remote sessions work transparently.
-
-== Design philosophy
-
-Three principles drive the architecture; everything else is a consequence.
+Codon is a single-binary desktop application built by forking Zed and
+making three changes:
 
 #set enum(numbering: "1.")
 
-+ *Keep the kernel small; orchestrate, do not engineer.* The daemon's
-  job is to route between user actions, vendored library code, and capability
-  providers. It contains no rope, no LSP state, no git repo handle, no
-  worktree cache; those live inside the vendored crates. The kernel is
-  registries and dispatch.
++ *Multiplexer UX.* The default pane kind is a terminal. Sessions
+  (workspaces) group panes under a stacked-pane layout (Zellij-style)
+  rather than buffer tabs. The window is a multiplexer first; "opening
+  the editor" is just spawning an editor pane in the current session.
 
-+ *One transport, two schemas.* The wire format between window and daemon
-  and between daemon and capability providers shares plumbing —
-  channel multiplexer, framing, sequence numbers, replay — but uses
-  separate Cap'n Proto schema sets (one for "view," one for "capabilities").
-  Local in-process and remote-over-SSH paths use the same capability schema;
-  the kernel doesn't branch on locality.
++ *Helix editing.* Every text buffer in Codon is backed by Helix's
+  `Document` and edited with Helix's selection-first command set.
+  Zed's editor crate is replaced; Zed's higher-level features that
+  consume buffers (git, agent, inline assistant, diff, diagnostics,
+  commit editor) are rewired to a small `Buffer` trait that
+  `helix_view::Document` implements.
 
-+ *Terminal first, modal everywhere, uniform across surfaces.* Most panes are
-  terminals. All panes — terminal, editor, files, agent, git, diff, image —
-  share one modal model (Normal / Insert / Command), one action registry,
-  one keymap configuration, one status/command line. Adding a new pane kind
-  is a small, well-defined change; it never breaks UX uniformity.
++ *Uniform modal shell.* Every pane — terminal, editor, files, diff,
+  git, agent, commit, image — operates under one modal model
+  (Normal / Insert / Command), one action registry, one keymap, one
+  status/command line. Adding a new pane kind is small and well-defined.
+
+Everything else from Zed is kept as-is: GPUI rendering, alacritty-backed
+terminals, picker and fuzzy infrastructure, theme and settings systems,
+git plumbing, the agent panel and inline assistant, the commit editor
+with AI-generated messages, project diagnostics.
+
+== Design philosophy
+
+Two principles drive the work; the rest follows.
+
++ *Reuse Zed maximally; replace only what's structurally incompatible.*
+  Zed's editor crate is structurally incompatible with using Helix's
+  editing model. Everything else in Zed either fits or can be made to
+  fit by rewiring buffer dependencies through a trait.
+
++ *Terminal first, modal everywhere, uniform across surfaces.* Most
+  panes are terminals. All panes share one modal model, one action
+  registry, one keymap, one status/command line. Adding a new pane
+  kind never breaks UX uniformity.
+
++ *Selection-first / object-verb everywhere it fits.* Every pane that
+  exposes typed objects (files, hunks, commits, terminal blocks,
+  conversation messages, diagnostics, …) participates in the same
+  grammar: select the noun, then apply the verb. The same alphabet
+  applies to whatever the focused pane's object set is.
+  Section 6 is dedicated to this.
 
 == Goals and non-goals
 
@@ -131,136 +130,143 @@ Three principles drive the architecture; everything else is a consequence.
   inset: 8pt,
   align: top,
   table.header(
-    [*Goals*], [*Non-goals (for v0)*],
+    [*Goals (this scope)*], [*Non-goals (this scope)*],
   ),
   [Multiplexer-first UX with typed panes],
-  [Multi-window],
+  [Multi-process daemon architecture],
   [Full Helix editing for every text buffer],
-  [Tabs as a separate concept (use stacked panes)],
-  [Persistent daemon-based sessions],
-  [WASM plugin runtime],
-  [Single-keystroke-roundtrip local UX],
-  [Predictive echo / latency hiding (deferred)],
-  [Clean SSH remote with small agent binary],
-  [Side-by-side display of multiple sessions],
-  [Per-session local OR remote capability binding],
-  [Mobile, web, or browser deployment],
-  [Reuse of Zed's agent, git, diff, diagnostics],
-  [In-tree implementation of LSP, ropes, syntax],
-  [Reuse of yazi UX idioms (no code reuse)],
-  [Stable upstream tracking of vendored projects],
+  [Custom protocol design (capnp etc.)],
+  [Reuse of Zed's agent, git, diff, diagnostics, commit editor],
+  [Remote sessions over SSH; `agentd`],
+  [Stacked panes; no buffer tabs],
+  [libghostty-vt migration; image preview in terminal panes],
+  [Session persistence across app restarts],
+  [Mosh-style transport, predictive echo],
+  [Yazi-pattern file browser pane],
+  [WASM plugins],
+  [`Buffer` trait abstraction over Helix and (eventually) other engines],
+  [Multi-window],
+  [Single-process, single-binary delivery],
+  [Cross-platform priority (Linux first; macOS likely; Windows not a goal)],
 )
 
-The non-goals matter as much as the goals. Each one is a place we are
-trading completeness for the ability to ship a coherent v0.
+== What is deferred (intentionally)
+
+These things are out of scope for v0 but the design avoids
+foreclosing them. They become possible follow-on work.
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x: none, y: 0.4pt + luma(180)),
+  inset: 8pt,
+  align: (left, left),
+  table.header([*Deferred*], [*What it would take when picked back up*]),
+  [Daemon split], [Extract sessions/layout/Helix logic into a separate process; design view protocol; first remote-eligible.],
+  [Protocol formalization (capnp)], [Comes with the daemon split. Schemas for view protocol (window↔daemon) and capability protocol (daemon↔providers).],
+  [Remote sessions over SSH], [Build `agentd`. Capability protocol over SSH `ControlMaster`.],
+  [libghostty-vt migration], [Replace `alacritty_terminal` with libghostty-vt via `gpui-ghostty`. Pulls in kitty graphics protocol support, better Unicode, etc.],
+  [Mosh-style transport], [UDP roaming + predictive echo on top of the protocol.],
+  [WASM plugins], [Plugin runtime; sandboxed pane and capability extensions.],
+)
+
+The single largest architectural decision protected by deferring all of
+these is that *Codon is a single process for v0*. The internal module
+boundaries are clean enough to extract a daemon later, but no IPC
+serialization layer is built now.
 
 // ============================================================
 = Architecture
 // ============================================================
 
-== Three processes
+== Single process
 
-Codon runs as up to three cooperating processes:
-
-```
-┌──────────────────┐    Unix socket      ┌──────────────────┐
-│  codon (window)  │◄───────────────────►│  codon-daemon    │
-│  GPUI rendering  │    view protocol    │  kernel + state  │
-│  libghostty-vt   │                     │  Helix logic     │
-│  Zed view bits   │                     │  Zed agent/git   │
-└──────────────────┘                     └────────┬─────────┘
-                                                  │
-                                                  │ in-process OR
-                                                  │ SSH-multiplexed
-                                                  │ capability protocol
-                                                  ▼
-                                     ┌─────────────────────────┐
-                                     │ local capabilities      │
-                                     │ OR agentd (remote)      │
-                                     │ pty · fs · proc · lsp   │
-                                     └─────────────────────────┘
-```
-
-*The window process* (`codon`) owns the GUI: GPUI compositing, font
-rendering, libghostty-vt for terminal panes, syntax highlighting, GPU work.
-It has no direct dependencies on Helix, no domain logic, no session state.
-When closed, sessions persist; when reopened, it reattaches.
-
-*The daemon process* (`codon-daemon`) owns everything stateful and
-authoritative: open sessions, layout trees, Helix `Document`s, LSP clients,
-git state, agent conversations. It speaks the view protocol northward to
-the window and the capability protocol southward to providers. It has no
-GPU or rendering dependencies — by design, so that a future "daemon on the
-remote" deployment is feasible without extra work.
-
-*The remote agent* (`agentd`) is a tiny binary that runs on a remote host
-over SSH. It implements only the capability protocol; it has no
-understanding of sessions, layouts, buffers, or anything UI-shaped. It
-exposes PTYs, filesystem operations, processes, file watches, and LSP
-relays. Roughly 4 kLOC of focused Rust.
-
-== Layer cake
-
-Bottom-up:
+Codon is one binary, derived from Zed's. There is no daemon, no remote
+agent, no inter-process protocol. The binary's internal structure has
+clean module boundaries, but they are linked, not networked.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ L5  UX SHELL  (window-side)                              │
-│     modal panes · status/cmd line · keymap · theme       │
-└──────────────────────────────┬───────────────────────────┘
-                               │ view protocol (capnp)
-┌──────────────────────────────▼───────────────────────────┐
-│ L4  KERNEL  (daemon-side; small)                         │
-│     sessions · layout · action registry · dispatch       │
-│     project context (lazy) · capability multiplexer      │
-└──────────────────────────────┬───────────────────────────┘
-                               │ capability protocol (capnp)
-                ┌──────────────┴──────────────┐
-                │                             │
-┌───────────────▼──────────────┐   ┌──────────▼─────────────┐
-│ L3 LOCAL CAPABILITIES         │   │ L3 REMOTE CAPABILITIES │
-│ in-process Rust handlers      │   │ agentd over SSH        │
-│ pty · fs · proc · lsp · meta  │   │ same schemas           │
-└───────────────────────────────┘   └────────────┬───────────┘
-                                                 │
-                                    ┌────────────▼──────────┐
-                                    │ L2  CHANNELS           │
-                                    │ multiplexed framed     │
-                                    │ streams w/ seq, credit │
-                                    └────────────┬───────────┘
-                                                 │
-                                    ┌────────────▼──────────┐
-                                    │ L1  TRANSPORT          │
-                                    │ Unix socket (W↔D)      │
-                                    │ SSH ControlMaster (D↔A)│
-                                    │ later: mosh-style UDP  │
-                                    └────────────────────────┘
+│                    codon (single binary)                 │
+├──────────────────────────────────────────────────────────┤
+│  UX shell — modal panes, status/cmd line, keymap         │
+├──────────────────────────────────────────────────────────┤
+│  Sessions · Layout · Action registry · Dispatch          │
+├──────────────────────────────────────────────────────────┤
+│  Pane kinds:                                             │
+│    terminal  · editor  · files  · diff                   │
+│    git       · agent   · commit · image                  │
+├──────────────────────────────────────────────────────────┤
+│  Buffer trait                                            │
+│    └─ implemented by helix_view::Document                │
+├──────────────────────────────────────────────────────────┤
+│  Engine layer (libraries, all in-process)                │
+│    Zed: gpui, picker, fuzzy, theme, settings, terminal,  │
+│         git, agent, inline_assistant, diff, diagnostics, │
+│         commit_editor, alacritty_terminal                │
+│    Helix: helix-core, helix-view, helix-lsp,             │
+│           helix-loader, helix-stdx                       │
+└──────────────────────────────────────────────────────────┘
 ```
 
-L1 and L2 are shared infrastructure: the same channel multiplexer
-implementation serves both protocol surfaces. L3 is the only layer that
-exists redundantly (in-process and over-the-wire), and the wire-side
-(`agentd`) is a thin RPC server over the in-process implementation.
+What lives in-process: everything. PTYs are spawned with
+`portable-pty` (as Zed does today). LSP servers are spawned as child
+processes via Helix's `helix-lsp`. Filesystem operations go through
+Zed's `fs` crate or direct `std::fs`. There is no abstraction layer
+between the kernel and these — they're called directly.
 
-L4 is local-only: there is no "kernel on the remote." Operations that
-look compound (open a project, stage a hunk, run a build with structured
-output) are decomposed by L4 into capability calls on L3. This is what
-keeps `agentd` small.
+This is the simplification. Internal cleanliness is enforced by Cargo
+workspace boundaries, not by serialization seams.
 
-L5 has no business logic; it renders typed render streams from L4 and
-sends action invocations and key feeds back.
+== Internal layering
+
+Module dependencies flow downward only:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ux-shell                                                 │
+│  ├── pane host (modal Normal/Insert/Command)             │
+│  ├── status & command line                               │
+│  └── keymap loader                                       │
+└─────────────────────┬────────────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────────────┐
+│ kernel                                                   │
+│  ├── sessions (cwd, layout, project context)             │
+│  ├── layout (Split/Stack/Leaf)                           │
+│  ├── action registry & dispatch                          │
+│  └── persistence to $XDG_STATE_HOME                      │
+└─────────────────────┬────────────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────────────┐
+│ panes-* (one crate per pane kind)                        │
+└─────────────────────┬────────────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────────────┐
+│ codon-buffer (trait)   + vendored Zed crates             │
+│                          + vendored Helix crates         │
+└──────────────────────────────────────────────────────────┘
+```
+
+Pane kinds depend on `codon-buffer`, on the relevant vendored Zed
+crates, and on Helix where applicable. The kernel depends only on
+panes' types and the action registry. The UX shell depends only on the
+kernel and on GPUI rendering primitives.
+
+The pane crates encapsulate all engine-specific dependencies. The
+kernel and UX shell never import `helix-*` or Zed crates other than
+GPUI directly.
 
 // ============================================================
 = Components
 // ============================================================
 
 The repository is a single Cargo workspace with three top-level
-directories: `vendor/` for forked code we did not author from scratch,
-`crates/` for original Codon code, and `apps/` for binaries.
+directories: `vendor/` for forked code we did not author from
+scratch, `crates/` for new Codon code, and `apps/` for the binary.
 
 == Vendored from Zed
 
-All forked into the monorepo. We track upstream selectively rather than
+Forked into the monorepo. We track upstream selectively rather than
 automatically; rebases happen on our schedule.
 
 #table(
@@ -269,22 +275,30 @@ automatically; rebases happen on our schedule.
   inset: 8pt,
   align: (left, left, center),
   table.header([*Crate*], [*Use*], [*Modified?*]),
-  [`gpui`, `gpui-macros`], [Rendering framework. Window-side. Used essentially as-is.], [no],
-  [`picker`, `fuzzy`], [Pickers, nucleo-backed fuzzy search. Used by the command palette and any list UI.], [no],
-  [`theme`, `settings`], [Theme system and settings infrastructure. Shared across window and daemon (settings).], [minor],
-  [`terminal_view`], [Terminal pane rendering primitives. Underlying terminal core swapped from `alacritty_terminal` to `libghostty-vt` via gpui-ghostty.], [yes],
-  [`git` †], [Git status, diff, hunk staging, log, blame. Heavily used by the git pane.], [yes — rewired to `Buffer` trait],
-  [`agent` †], [Conversation history, tool use, MCP integration, agent panel UI.], [yes — rewired],
+  [`gpui`, `gpui-macros`], [Rendering framework. Used as-is.], [no],
+  [`picker`, `fuzzy`], [Pickers, nucleo-backed fuzzy search. Powers the command palette and other list UIs.], [no],
+  [`theme`, `settings`], [Theme system and settings infrastructure.], [minor],
+  [`terminal`, `terminal_view`], [Terminal pane implementation, alacritty-backed. Used as the basis for the terminal pane kind.], [yes — wired into the new pane host],
+  [`git` †], [Git status, diff, hunk staging, log, blame.], [yes — rewired to `Buffer` trait],
+  [`agent` †], [Conversation history, tool use, MCP integration, agent panel.], [yes — rewired],
   [`inline_assistant` †], [In-buffer AI editing with diff acceptance.], [yes — rewired],
   [`diff` †], [Diff computation and rendering primitives.], [yes — rewired],
   [`diagnostics` †], [Project-level diagnostic aggregation, panel, hover. Replaces Helix's diagnostics.], [yes — rewired],
-  [`commit_editor` †], [AI-assisted commit message generation and commit editor pane.], [yes — rewired],
+  [`commit_editor` †], [AI-assisted commit message generation and commit pane.], [yes — rewired],
+  [`fs`], [Filesystem abstraction Zed already uses.], [no],
+  [`languages`], [Language definitions Zed ships. May be selectively merged with Helix's `languages.toml`.], [tbd],
 )
 
-Crates marked † depend on Zed's `Buffer`/`MultiBuffer`/`Project`. They
-are forked and re-pointed at Codon's `Buffer` trait (#ref(<sec:buffer-trait>)).
-The exact crate names and boundaries in Zed will need to be confirmed
-during fork analysis; the table reflects the conceptual carve-up.
+Crates marked † depend on Zed's `Buffer` / `MultiBuffer` / `Project`.
+They are forked and re-pointed at Codon's `Buffer` trait
+(#ref(<sec:buffer-trait>)). The exact crate names and boundaries in
+Zed will need confirmation during fork analysis; the table reflects
+the conceptual carve-up.
+
+What we *do not* vendor from Zed: the `editor`, `language`, `text`,
+`multi_buffer`, and `rope` crates. These are Zed's editor stack and
+are replaced by Helix's. Anything in Zed that imports them transitively
+needs to be either rewired (the ones marked †) or excluded.
 
 == Vendored from Helix
 
@@ -292,36 +306,25 @@ during fork analysis; the table reflects the conceptual carve-up.
 vendor/helix/
 ├── helix-core/        # ropey, selections, transactions, syntax
 ├── helix-view/        # Document, View — used; Editor.tree ignored
-├── helix-lsp/         # LSP client — fed our capability stream as if it were a process
+├── helix-lsp/         # LSP client
 ├── helix-loader/      # language config, grammar discovery
 └── helix-stdx/        # utility crate Helix depends on
 ```
 
-We do not vendor `helix-term` (the TUI renderer is replaced by GPUI). The
-canonical `Editor` struct in `helix-view` will be used for its document and
-view management but its `Tree` (Helix's pane layout) is not used; the
+We do not vendor `helix-term` (the TUI renderer is replaced by GPUI).
+The canonical `Editor` struct in `helix-view` is used for document and
+view management but its `Tree` (Helix's pane layout) is not — the
 kernel owns layout instead.
-
-== Vendored from gpui-ghostty
-
-The `gpui-ghostty` crate (terminal pane built on GPUI + libghostty-vt) is
-forked into `vendor/gpui-ghostty/`. It is window-side only; the daemon
-treats PTYs as opaque byte streams.
 
 == New Codon crates
 
 ```
 crates/
 ├── codon-buffer/         # Buffer trait + helix_view::Document adapter
-├── protocol/             # capnp schemas (view + capability)
-├── transport/            # L1: Unix socket, SSH ControlMaster (mosh-UDP later)
-├── channels/             # L2: multiplexer, credit-based flow control, replay
-├── capabilities-local/   # in-process implementations of L3
-├── capabilities-remote/  # auto-generated (or hand-written) client proxies
 ├── kernel/               # sessions, layout, action registry, dispatch
 ├── ux-shell/             # modal pane host, status/cmd line, keymap loader
-├── panes-terminal/       # daemon-side: drives PTY · window-side: gpui-ghostty wrapper
-├── panes-editor/         # daemon-side: drives Helix Document · window-side: pure renderer
+├── panes-terminal/       # wraps Zed's terminal_view as a pane kind
+├── panes-editor/         # Helix Document rendered through GPUI
 ├── panes-files/          # yazi-idiom file browser
 ├── panes-diff/           # uses vendored zed/diff
 ├── panes-git/            # uses vendored zed/git
@@ -330,453 +333,36 @@ crates/
 └── panes-commit/         # uses vendored zed/commit_editor
 ```
 
-Pane crates are split internally into `daemon` and `window` modules with
-disjoint dependencies. The window module never imports Helix; the daemon
-module never imports GPUI. This split is enforced by the Cargo workspace.
+Pane crates depend on the vendored Zed and Helix crates they need; the
+kernel and UX shell do not. This is enforced by Cargo workspace
+configuration (no path-dep cycles, explicit allow-lists per crate).
 
-== Binaries
+== Binary
 
 ```
 apps/
-├── codon/                # the window binary
-├── codon-daemon/         # the daemon binary
-└── agentd/               # the remote agent binary
+└── codon/                # the application
 ```
 
-The window binary is what the user launches. On startup it tries to
-connect to `$XDG_RUNTIME_DIR/codon.sock`; if no daemon is listening, it
-spawns one and waits ~50 ms for the socket to come up.
+One binary. Run it; it opens a window. There is no separate daemon to
+manage. State is persisted to disk on graceful shutdown and
+periodically.
 
 // ============================================================
-= Protocols
-// ============================================================
-
-Codon has two protocol surfaces, both built on the same channel
-multiplexer over a swappable transport.
-
-== L1: Transport
-
-Three transports are anticipated; only the first two are needed for v0.
-
-#table(
-  columns: (auto, 1fr, auto),
-  stroke: (x: none, y: 0.4pt + luma(180)),
-  inset: 8pt,
-  align: (left, left, center),
-  table.header([*Name*], [*Use*], [*Phase*]),
-  [`unix`], [Window ↔ daemon, on the same machine.], [v0 (Phase 3)],
-  [`ssh`], [Daemon ↔ `agentd`, multiplexed via OpenSSH `ControlMaster`.], [v0 (Phase 6)],
-  [`udp`], [Mosh-style: roaming, low-latency, lossy reorder buffer.], [Phase 7+],
-)
-
-The transport is a duplex byte stream. It does not see message boundaries.
-All transports support graceful disconnect detection and reconnect. The
-SSH transport works the way Zed's does: one persistent control master per
-remote host, with channels multiplexed inside it.
-
-== L2: Channels
-
-A channel multiplexer carves a single transport into many logical
-bidirectional streams. The design borrows from HTTP/2 and gRPC but is
-substantially simpler.
-
-A channel has:
-
-- *Channel ID* — `u32`, allocated by the opening side; even IDs from
-  client, odd from server (HTTP/2 convention).
-- *Schema ID* — `u32`, identifies which capnp schema the channel carries.
-  Negotiated via the `meta` capability at connection setup.
-- *Sequence numbers* — every message on a channel carries a monotonically
-  increasing `seq: u64`. Used for replay on reconnect.
-- *Credit-based flow control* — receiver advertises a budget in bytes;
-  sender pauses when budget is exhausted. Per-channel, not per-connection.
-- *Lifecycle* — `OpenChannel(schemaId, params)` →
-  `Opened(channelId)` | `Rejected(error)`. `CloseChannel(channelId, reason)`.
-
-Replay semantics: on reconnect, both sides exchange the highest `seq` they
-acknowledge having received per channel. Each replays anything held in its
-ring buffer above that threshold. Channels persist across reconnects; the
-caller does not need to re-open them.
-
-The wire format for the multiplexer header itself is a fixed 16-byte
-binary frame, not capnp:
-
-```
-┌────────┬────────┬────────────┬────────────────┐
-│  type  │ flags  │ channel_id │      seq       │
-│  u8    │  u8    │   u32 LE   │     u64 LE     │
-└────────┴────────┴────────────┴────────────────┘
-[ payload: capnp message, or control message  ]
-```
-
-This keeps the hot path simple. capnp is used only for typed payloads.
-
-== L3: Capability protocol
-
-Six capability domains. Total wire surface is about 150 message types
-across all of them. Each domain has a versioned schema; agents declare
-which versions they support in the `meta.Hello` exchange.
-
-#table(
-  columns: (auto, 1fr),
-  stroke: (x: none, y: 0.4pt + luma(180)),
-  inset: 8pt,
-  align: (left, left),
-  table.header([*Capability*], [*Surface*]),
-  [`meta`], [`hello`, `ping`, `goodbye`, capability discovery, version negotiation, time sync.],
-  [`pty`], [`spawn`, `feed`, `resize`, `close`, plus per-handle output stream.],
-  [`fs.io`], [`read`, `write`, `stat`, `list`, `mkdir`, `rename`, `delete`. Synchronous request/response.],
-  [`fs.watch`], [`subscribe(path, recursive)` → handle + per-handle event stream. `unsubscribe`.],
-  [`proc`], [`spawn(cmd, args, env, cwd)`, plus per-job stdout/stderr streams and exit-code response.],
-  [`lsp`], [`spawn(language)` → handle + bidirectional JSON-RPC byte stream. `kill`. The agent does no JSON parsing — it relays bytes.],
-)
-
-What is conspicuously not in the capability protocol: anything compound.
-There is no `git.status` or `workspace.open` or `buffer.edit`. Compound
-operations are composed in the kernel from these primitives. This is the
-single decision that keeps `agentd` small.
-
-A capnp sketch for `pty`:
-
-```capnp
-# pty.capnp
-@0xab12cd34;
-
-struct Size { rows @0 :UInt16; cols @1 :UInt16; }
-struct EnvVar { name @0 :Text; value @1 :Text; }
-
-struct PtyHandle { id @0 :UInt64; }
-
-# Request/response on the control channel
-struct PtySpawnRequest {
-  cmd @0 :List(Text);
-  env @1 :List(EnvVar);
-  cwd @2 :Data;          # raw bytes; no encoding assumed
-  size @3 :Size;
-}
-struct PtySpawnResponse {
-  union {
-    handle @0 :PtyHandle;
-    error  @1 :Error;
-  }
-}
-
-struct PtyFeed   { handle @0 :PtyHandle; bytes @1 :Data; }
-struct PtyResize { handle @0 :PtyHandle; size  @1 :Size; }
-struct PtyClose  { handle @0 :PtyHandle; }
-
-# Per-handle output stream channel
-struct PtyOutput {
-  handle @0 :PtyHandle;
-  bytes  @1 :Data;
-}
-struct PtyExit {
-  handle @0 :PtyHandle;
-  code   @1 :Int32;
-}
-```
-
-Schema versioning is per-domain. `pty.v1` and `pty.v2` may coexist on a
-single agent; the daemon picks the highest mutually-supported version.
-Within a major version, additions are backwards-compatible (capnp default
-behavior).
-
-== Capability protocol: in-process and over-the-wire are identical
-
-The kernel makes capability calls through a single `Capabilities` trait.
-Both `capabilities-local` (which spawns local PTYs, opens local files,
-talks to local LSP servers) and `capabilities-remote` (which serializes
-capnp messages onto an SSH-multiplexed channel set) implement this trait.
-
-```rust
-// crates/kernel/src/capabilities.rs
-trait Capabilities {
-    fn pty(&self) -> &dyn PtyCapability;
-    fn fs_io(&self) -> &dyn FsIoCapability;
-    fn fs_watch(&self) -> &dyn FsWatchCapability;
-    fn proc(&self) -> &dyn ProcCapability;
-    fn lsp(&self) -> &dyn LspCapability;
-    fn meta(&self) -> &dyn MetaCapability;
-}
-```
-
-A `Session` holds one `Box<dyn Capabilities>`. Local sessions hold a
-local-impl; remote sessions hold a remote-impl. Pane code never branches
-on locality.
-
-== L4: View protocol
-
-The view protocol is everything that flows between the window and the
-daemon. It is conceptually distinct from capabilities and uses different
-schemas, but rides the same channel multiplexer.
-
-*Window → Daemon:*
-
-```capnp
-# view.capnp (excerpt)
-struct DispatchAction {
-  name @0 :Text;            # "editor.move_word_forward", "pane.split", ...
-  args @1 :ActionArgs;      # capnp union, see actions.capnp
-  context @2 :ActionContext; # focused session, focused pane, etc.
-}
-
-struct FeedKeys {
-  paneId @0 :PaneId;
-  keys @1 :Data;            # raw bytes (UTF-8 + escape sequences)
-}
-
-struct SubscribePane   { paneId @0 :PaneId; }
-struct UnsubscribePane { paneId @0 :PaneId; }
-struct ResizePane      { paneId @0 :PaneId; rows @1 :UInt16; cols @2 :UInt16; }
-struct NotifyFocus     { sessionId @0 :SessionId; paneId @1 :PaneId; }
-```
-
-*Daemon → Window:* one `SessionTopology` stream and one render stream per
-subscribed pane. The render stream's schema depends on the pane kind:
-
-```capnp
-# view-render.capnp (excerpt)
-struct PaneRender {
-  paneId @0 :PaneId;
-  union {
-    terminal @1 :TerminalRender;
-    editor   @2 :EditorRender;
-    files    @3 :FilesRender;
-    diff     @4 :DiffRender;
-    image    @5 :ImageRender;
-    git      @6 :GitRender;
-    agent    @7 :AgentRender;
-    commit   @8 :CommitRender;
-  }
-}
-
-struct TerminalRender {
-  bytes @0 :Data;           # raw VT, parsed by libghostty-vt in the window
-}
-
-struct EditorRender {
-  # rope deltas, not full content
-  textDelta    @0 :RopeDelta;
-  selection    @1 :Selection;
-  diagnostics  @2 :List(Diagnostic);
-  highlights   @3 :HighlightDelta;
-  scroll       @4 :ScrollPosition;
-  viewportLine @5 :UInt32;
-}
-```
-
-The asymmetry is deliberate. The window never holds authoritative state;
-it derives presentation from typed deltas. For terminal panes the
-"derivation" is libghostty-vt's VT parsing; for editor panes it's GPUI's
-text layout fed by rope deltas; for image panes it's a one-shot decode.
-
-Subscriptions are explicit and bounded: the window only subscribes to
-panes that are visible (or about to be). Closing a pane unsubscribes.
-This is what keeps the daemon's outbound bandwidth tractable when, e.g.,
-multiple terminal panes are running noisy commands.
-
-== Observability and replay
-
-Every channel — view or capability — carries `seq` numbers. Either side
-may request `RequestReplayFrom(channelId, seq)` after reconnect. Each
-side maintains a ring buffer (default: 1 MiB per output channel) of
-recent messages.
-
-A `--trace` flag on `codon-daemon` writes every incoming and outgoing
-multiplexer frame as JSON-pretty-printed capnp messages to a log file.
-This is the canonical debugging surface; reading the trace tells you
-exactly what the protocols look like in motion.
-
-// ============================================================
-= The Kernel
-// ============================================================
-
-The kernel is the daemon's coordination layer. It is deliberately small.
-
-== Scope
-
-```
-crates/kernel/
-├── sessions.rs      # SessionId → Session
-├── project.rs       # lazy ProjectContext: root, git, lsp, diagnostics
-├── layout.rs        # LayoutNode tree per session
-├── panes.rs         # PaneId → typed PaneKind handle
-├── actions.rs       # action registry
-├── dispatch.rs      # unified entry: receives DispatchAction, runs handler
-├── persistence.rs   # save/load sessions to $XDG_STATE_HOME/codon/
-└── capabilities.rs  # Capabilities trait, set on each Session
-```
-
-What the kernel deliberately does not contain:
-
-- File contents — fetched on demand via `fs.io`, held by Helix `Document`s when open.
-- Worktree caches — caching, if needed, is per-capability and transparent.
-- LSP client state — owned by `helix-lsp` instances inside the daemon (not the kernel crate).
-- Git repo state — owned by Zed's vendored git crate, behind the `Buffer` trait.
-- PTY state — owned by `panes-terminal` daemon module, fed by the `pty` capability.
-- Theme/keymap — owned by `ux-shell` / window side via `settings` plumbing.
-
-In short, the kernel is a registry-and-dispatch layer. It has handles, not
-data.
-
-== Sessions and lazy promotion
-
-```rust
-struct Session {
-    id: SessionId,
-    name: String,
-    cwd: PathBuf,
-    capabilities: Box<dyn Capabilities>,  // Local or Remote
-    layout: LayoutNode,
-    panes: HashMap<PaneId, PaneKind>,
-    project: ProjectContext,              // built lazily
-    created: Instant,
-    last_attached: Option<Instant>,
-}
-
-#[derive(Default)]
-struct ProjectContext {
-    root: OnceCell<Option<PathBuf>>,
-    git: OnceCell<Option<GitRepo>>,
-    lsp_clients: HashMap<LanguageId, LspClientHandle>,
-    diagnostics: DiagnosticStore,         // shared with Zed's diagnostics crate
-}
-```
-
-A new session is cheap: a name, a cwd, a capability set, an empty layout
-with one terminal pane. Project context starts empty.
-
-Project context accretes lazily, triggered by the first pane that needs
-it:
-
-- *First editor pane opens.* The kernel walks up from `cwd` looking for
-  language manifests (`Cargo.toml`, `package.json`, etc.) and `.git`. If
-  found, `project.root` is set. The pane's language is detected; an LSP
-  client for that language is spawned via the `lsp` capability and
-  registered in `project.lsp_clients`.
-- *First git pane opens.* `project.git` is set if the cwd is inside a
-  git work tree; otherwise the pane shows a "no repo" view.
-- *First diagnostic arrives.* From any LSP client, gets stored in
-  `project.diagnostics`, which is consumed by the diagnostics panel,
-  the editor's gutter, and the agent.
-
-A session never un-promotes. The trade-off: starting a fresh session for
-work is essentially free; using an existing session inherits all its
-warmed-up state.
-
-== Layout
-
-Three node types, no tabs:
-
-```rust
-enum LayoutNode {
-    Split { dir: Direction, ratio: f32, a: Box<LayoutNode>, b: Box<LayoutNode> },
-    Stack { panes: Vec<PaneId>, visible: usize },
-    Leaf(PaneId),
-}
-
-enum Direction { Horizontal, Vertical }
-```
-
-A session has exactly one `LayoutNode` as root. Stacks substitute for
-tabs: when you want N variants in the same slot (multiple shells, an
-editor and a files pane occupying the same area), stack them and cycle
-visibility with `pane.stack.cycle`.
-
-== Action registry
-
-```rust
-type ActionFn = fn(&mut Kernel, &ActionContext, ActionArgs) -> Result<()>;
-
-struct Registry {
-    actions: HashMap<&'static str, ActionFn>,
-}
-
-struct ActionContext {
-    session: SessionId,
-    pane: Option<PaneId>,
-    mode: Mode,
-}
-```
-
-Action names are flat strings in dotted namespaces. Examples:
-
-```
-editor.move_word_forward       editor.extend_word_forward
-editor.search                  editor.write
-pane.split                     pane.focus.left
-pane.stack.add                 pane.stack.cycle
-pane.close
-session.new                    session.switch
-session.list
-file.open                      file.delete
-terminal.new                   terminal.scroll.up
-git.diff.current               git.stage.hunk
-agent.task.run                 agent.message.send
-workspace.command_palette
-```
-
-`ActionArgs` is a capnp union; specific actions take typed args. The
-keymap binds keys to `(name, args)` pairs:
-
-```toml
-[bindings.global]
-"alt-h"        = "pane.focus.left"
-"alt-l"        = "pane.focus.right"
-"alt-s"        = "session.switch"
-"ctrl-space"   = "workspace.command_palette"
-"alt-|"        = { action = "pane.split", args = { dir = "right", kind = "terminal" } }
-"alt-shift-|"  = { action = "pane.split", args = { dir = "right", kind = "files" } }
-"alt-shift-e"  = { action = "pane.split", args = { dir = "right", kind = "editor" } }
-
-[bindings.terminal.normal]
-"|"            = { action = "pane.split", args = { dir = "right", kind = "terminal" } }
-"i"            = "pane.mode.insert"
-
-[bindings.editor.normal]
-# Helix's full normal-mode keymap, imported verbatim
-# (these are populated from a generated table)
-```
-
-The default keymap for editor Normal mode is generated from Helix's own
-`languages.toml` and command set; we then overlay user overrides on top.
-
-== Dispatch
-
-The dispatcher is the single entry point for action handling on the
-daemon side:
-
-```rust
-impl Kernel {
-    fn dispatch(&mut self, ctx: ActionContext, name: &str, args: ActionArgs)
-        -> Result<()>
-    {
-        let action = self.registry.actions
-            .get(name)
-            .ok_or(Error::UnknownAction)?;
-        action(self, &ctx, args)
-    }
-}
-```
-
-`DispatchAction` messages from the window land here. `feedKeys` messages
-go directly to the focused pane's daemon-side handler (e.g. terminal pane
-forwards to `pty.feed`; editor pane runs Helix's input handler).
-
-// ============================================================
-= Buffer trait and pane integration
+= Editor split: Helix in editor panes
 // ============================================================
 
 <sec:buffer-trait>
 
 == The integration problem
 
-Codon uses Helix's editing model for all text buffers. But it also reuses
-Zed's git, agent, inline-assistant, diff, diagnostics, and commit-editor
-crates — all of which were written against Zed's own `Buffer` /
-`MultiBuffer` / `Project` types. These two stacks are not API-compatible.
+Codon uses Helix's editing model for all text buffers. But it also
+reuses Zed's git, agent, inline-assistant, diff, diagnostics, and
+commit-editor crates — all of which were written against Zed's own
+`Buffer` / `MultiBuffer` / `Project` types. These two stacks are not
+API-compatible.
 
-We have two options:
+Two options:
 
 #table(
   columns: (1fr, 1fr),
@@ -792,9 +378,10 @@ We have two options:
   [Con: need to refactor every Zed crate that touches buffers.],
 )
 
-The trait approach is preferred but the decision is provisional pending a
-detailed analysis of how deeply Zed's buffer dependencies penetrate the
-crates we want to use. That analysis is part of Phase 2 (#ref(<sec:phase-2>)).
+The trait approach is preferred but the decision is provisional pending
+a detailed analysis of how deeply Zed's buffer dependencies penetrate
+the crates we want to use. That analysis is part of Phase 3
+(#ref(<sec:phase-3>)).
 
 == Trait sketch (provisional)
 
@@ -816,51 +403,62 @@ pub trait Buffer: Send + Sync {
 ```
 
 The shape mirrors Helix's `Document`. Zed's higher-level features
-(diff hunks, inline assistant, commit editor) consume only this trait;
-they never see the concrete type.
+consume only this trait; they never see the concrete type.
 
 == Pane crate structure
 
-Every pane crate is split into two modules with disjoint dependencies:
+Pane crates are the only place engine-specific dependencies live.
+For `panes-editor`:
 
 ```
 crates/panes-editor/
-├── Cargo.toml
+├── Cargo.toml             # depends on helix-core, helix-view,
+│                          # helix-lsp, codon-buffer, gpui
 └── src/
     ├── lib.rs
-    ├── daemon.rs       # uses helix-core, helix-view, helix-lsp
-    └── window.rs       # uses gpui, theme, fuzzy
+    ├── document.rs        # owns helix_view::Document; impl Buffer
+    ├── commands.rs        # registers Helix commands as actions
+    ├── view.rs            # GPUI rendering of the rope + selections
+    └── input.rs           # routes keystrokes through Helix's keymap
 ```
 
-The Cargo workspace is configured so that the `daemon.rs` and `window.rs`
-modules compile to separate library targets with separate dependency
-sets. The window-side never transitively pulls in `helix-*`; the
-daemon-side never pulls in `gpui`. This is enforced by build configuration,
-not just convention.
+Other pane crates have analogous shapes: a part that owns authoritative
+state and a part that handles GPUI rendering. We keep these as separate
+modules with disjoint dependencies even though they're in the same
+process — when (if) we split out a daemon later, this is the natural
+seam.
 
-The daemon side of `panes-editor` runs in the daemon process; it owns the
-`helix_view::Document`, executes Helix commands when actions arrive, and
-emits `EditorRender` deltas. The window side runs in the window process;
-it consumes the deltas and renders text via GPUI (using vendored Zed text
-rendering primitives, not Helix's TUI rendering).
+For pane kinds whose authoritative state comes from a Zed crate
+(`panes-git`, `panes-agent`, `panes-inline-assistant`, `panes-commit`),
+the implementation pulls in the relevant vendored Zed crate and rewires
+its buffer dependencies to `codon_buffer::Buffer`. The rendering side
+of these panes can use Zed's existing UI components nearly verbatim,
+since the buffer trait abstracts the only divergence.
 
-For pane kinds whose daemon side uses Zed crates (`git`, `agent`,
-`inline_assistant`, `commit`), the daemon module pulls in the
-relevant vendored Zed crate and rewires its buffer dependencies to
-`codon_buffer::Buffer`. The window module has the same shape regardless
-of which engine drives it.
+== Diagnostics: Zed wins
+
+Zed's `diagnostics` crate has a project-level aggregator, a panel,
+severity rendering, hover popovers, and code-action integration.
+Helix's diagnostic store is simpler. Codon uses Zed's: Helix's LSP
+client emits diagnostics, which we forward into Zed's diagnostic store;
+both Helix's gutter rendering and Zed's panel/hover read from the same
+source.
+
+This means our Helix integration ignores `helix_view::editor::Editor::diagnostics`
+and lets Zed's diagnostics crate be canonical.
 
 // ============================================================
 = UX shell
 // ============================================================
 
-The UX shell is the window-side framework that hosts panes uniformly. It
-is small in code but defines the invariants that make Codon feel coherent.
+The UX shell is the framework that hosts panes uniformly. It is small
+in code but defines the invariants that make Codon feel coherent.
 
 == Modal model
 
 Three modes per pane: *Normal*, *Insert*, *Command*. Mode is per-pane,
-not per-window — different panes can be in different modes simultaneously.
+not per-window — different panes can be in different modes
+simultaneously.
 
 #table(
   columns: (auto, 1fr),
@@ -873,347 +471,660 @@ not per-window — different panes can be in different modes simultaneously.
   [Command], [`:` opens a command line at the bottom; tab completes against the action registry. Action invoked on Enter. Same in every pane.],
 )
 
+== Action registry
+
+```rust
+type ActionFn = fn(&mut Kernel, &ActionContext, ActionArgs) -> Result<()>;
+
+pub struct Action {
+    pub name: &'static str,
+    pub function: ActionFn,
+    pub accepts: &'static [ObjectKind],   // empty = nullary verb
+}
+
+pub struct Registry {
+    actions: HashMap<&'static str, Action>,
+}
+
+pub struct ActionContext {
+    session: SessionId,
+    pane: Option<PaneId>,
+    mode: Mode,
+    selection: Selection,                  // pulled from focused pane
+}
+```
+
+The `accepts` field is what makes object-verb work uniformly: each
+verb declares which selection kinds it accepts, and the command palette
+filters verbs by the focused pane's current selection type. This is
+covered in detail in Section 6. For the v0 phases up to Phase 4 most
+verbs have `accepts: &[]` (nullary) or single-type accepts; the
+generalization is structural rather than ambitious.
+
+Action names are flat strings in dotted namespaces:
+
+```
+editor.move_word_forward       editor.extend_word_forward
+editor.search                  editor.write
+pane.split                     pane.focus.left
+pane.stack.add                 pane.stack.cycle
+pane.close
+session.new                    session.switch
+file.open                      file.delete
+terminal.new                   terminal.scroll.up
+git.diff.current               git.stage.hunk
+agent.task.run                 agent.message.send
+workspace.command_palette
+```
+
+`ActionArgs` is a typed Rust enum (no capnp here — single process, no
+serialization). Actions take typed args; the keymap binds keys to
+`(name, args)` pairs.
+
 == Keymap layering
 
-The keymap config has four scopes, applied in order:
+Four scopes, applied in order:
 
 #set enum(numbering: "1.")
 
 + *Global* — works in every mode, every pane. Used for pane navigation,
-  session switching, command palette open, and other cross-cutting
-  operations. These bindings always win.
+  session switching, command palette open. These bindings always win.
 + *Per-pane-kind, per-mode* — `[bindings.editor.normal]`,
-  `[bindings.terminal.insert]`, etc. The pane's kind and current mode
-  select the section.
+  `[bindings.terminal.insert]`, etc.
 + *Per-mode* — `[bindings.normal]`. Applies in any pane in that mode if
   no per-pane-kind binding shadows it.
 + *Default* — Helix's keymap for editor modes, hard-coded sensible
-  defaults for everything else. User overrides displace the default.
+  defaults for everything else.
 
-The window resolves keys against this stack and either:
+Example:
 
-- Emits a `DispatchAction` to the daemon for resolved actions, or
-- Emits a `FeedKeys` to the daemon if no binding matched and the pane is
-  in a mode that accepts raw input (Insert, primarily).
+```toml
+[bindings.global]
+"alt-h"        = "pane.focus.left"
+"alt-l"        = "pane.focus.right"
+"alt-s"        = "session.switch"
+"ctrl-space"   = "workspace.command_palette"
+"alt-|"        = { action = "pane.split", args = { dir = "right", kind = "terminal" } }
+"alt-shift-|"  = { action = "pane.split", args = { dir = "right", kind = "files" } }
+"alt-shift-e"  = { action = "pane.split", args = { dir = "right", kind = "editor" } }
 
-The keymap is hot-reloadable. Changes to the config file invalidate the
-window's cached resolver.
+[bindings.terminal.normal]
+"|" = { action = "pane.split", args = { dir = "right", kind = "terminal" } }
+"i" = "pane.mode.insert"
+
+[bindings.editor.normal]
+# Helix's full normal-mode keymap, imported verbatim
+```
+
+Hot-reloadable. Changes to the config file invalidate the resolver's
+cache.
 
 == Status and command line
 
 A single bottom-line widget renders, depending on mode:
 
 - *Normal/Insert:* status — focused pane info, mode indicator, session
-  name, capability target (e.g. `local` or `remote: lab-machine`),
-  optional widgets (git branch, diagnostic counts, currently playing
-  music for the eccentric).
-- *Command:* a `:` prompt with a fuzzy-completing input.
+  name, optional widgets (git branch, diagnostic counts, current track).
+- *Command:* `:` prompt with fuzzy-completing input.
 
-The status content is sourced from a `StatusLine` view-protocol stream,
-formatted by the UX shell. Format strings live in user config, similar
-to zjstatus.
+Format strings live in user config, similar to zjstatus. Status content
+is sourced from kernel state via lightweight observers (no protocol
+needed; same process).
 
 == Pane host
 
 The pane host is the GPUI component that owns a `LayoutNode` and renders
 its children. It is recursive:
 
-- A `Split` node renders two child panes side-by-side or stacked, with a
-  draggable (keyboard-resizable) separator.
+- A `Split` node renders two child panes side-by-side or stacked, with
+  a draggable (keyboard-resizable) separator.
 - A `Stack` node renders only the visible pane, with an indicator
-  (similar to Zellij's stacked-pane indicator) showing position in the
-  stack.
-- A `Leaf` node renders a single pane via the appropriate window-side
-  pane component.
+  showing position in the stack.
+- A `Leaf` node renders a single pane via the appropriate pane crate.
 
-The host subscribes to the daemon for the focused session's topology.
-When the daemon sends a `SessionTopology` update, the host diffs against
-its current tree and animates the change.
+When the focused session changes, the host swaps trees. There is one
+pane host per window.
 
 // ============================================================
-= Sessions and capability binding
+= Selection-first interaction
 // ============================================================
 
-== Per-session capability sets
+Helix's selection-first model — *the noun is selected and visible
+before the verb fires* — generalizes beyond text. Every pane in Codon
+has a typed object set; the same modal grammar applied to that set
+yields a uniform UX where the same keys mean approximately the same
+thing everywhere. This chapter spells out how, what's typed, and which
+parts of the generalization land in v0 versus later.
 
-The kernel does not have a global capability set. Each `Session` carries
-its own:
+== The principle
+
+Vim is verb-object: `d3w` commits to "delete" before "3 words" is even
+visible. Helix is object-verb: select the 3 words, see them
+highlighted, then press `d`. The user-facing property is *no surprise*
+— the noun is inspectable before the verb fires, and not pressing the
+verb undoes nothing.
+
+This property is independent of text. It applies to any UI surface
+where (a) there is a stable, typed set of selectable objects, and
+(b) verbs operate on selections. Codon enforces it everywhere it makes
+sense.
+
+== Object-verb across pane kinds
+
+Each pane kind declares its object types and the verbs that consume
+them. A representative cut:
+
+#table(
+  columns: (auto, 1fr, 1fr),
+  stroke: (x: none, y: 0.4pt + luma(180)),
+  inset: 7pt,
+  align: (left, left, left),
+  table.header([*Pane*], [*Object types*], [*Representative verbs*]),
+  [Editor],
+  [Range, Word, Line, Function, Class, Paragraph, Bracket-pair],
+  [delete, change, yank, search-replace, format, comment, send-to-agent],
+  [Files],
+  [File, Directory, Symlink, Pattern-set],
+  [delete, copy, rename, chmod, archive, trash, open-in-editor, send-to-agent],
+  [Terminal],
+  [Block (cmd+output), Line, URL, Path, Process],
+  [copy, rerun, fork-pane, send-to-agent, open, follow-path],
+  [Git],
+  [File, Hunk, Commit, Branch, Stash, Ref],
+  [stage, unstage, discard, cherry-pick, revert, rebase-onto, push, send-to-agent],
+  [Diff],
+  [Hunk, Line, File],
+  [stage, revert, send-to-agent],
+  [Diagnostics],
+  [Diagnostic, File-with-diags, Severity-bucket],
+  [goto, suppress, fix-with-code-action, fix-all, send-to-agent],
+  [Agent],
+  [Message, Code-block, Tool-call, Tool-result, File-mention],
+  [branch-from, edit-and-retry, apply-to-buffer, save, re-run, pin],
+  [Image],
+  [Whole-image, Crop-rect],
+  [copy, save, send-to-agent],
+  [Commit],
+  [Range (msg text), Hunk (staged), File (staged)],
+  [generate-message-from, unstage, edit-hunk],
+)
+
+A few of these are quietly novel and worth calling out.
+
+*Terminal blocks.* Treating a command together with its output as one
+typed object is the Warp/Wave insight. Once blocks exist, "select the
+error block, send to agent, fix" replaces the find-copy-paste loop.
+Block detection requires shell integration (OSC 133 prompt markers) or
+heuristic boundary detection from the terminal stream — solvable but
+not free.
+
+*Agent objects.* Treating messages, tool calls, and code blocks in a
+conversation as selectable objects turns the chat log from prose into
+a navigable artifact. Re-run a tool call with edited arguments. Branch
+the conversation from a chosen message. Apply a code block to a buffer.
+All by selection plus verb.
+
+*Git objects.* This is the model magit proves out. Codon's
+contribution is consistency: the same alphabet that selects words in
+the editor selects hunks in git and messages in the agent.
+
+== Typed selections as kernel-aware state
+
+Selections are typed values, not text:
 
 ```rust
-enum CapabilitySet {
-    Local,
-    Remote { host: SshHost, agent: AgentHandle },
+pub enum ObjectKind {
+    Text, File, Dir, Hunk, Commit, Branch, Stash, Ref,
+    Block, Url, Path, Process,
+    Diagnostic, Message, ToolCall, ToolResult,
+    Image, CropRect,
+    // …
+}
+
+pub enum Selection {
+    Empty,
+    Text   { buffer: BufferId, ranges: Vec<Range> },
+    Files  ( Vec<PathBuf> ),
+    Hunks  ( Vec<HunkRef> ),
+    Commits( Vec<CommitSha> ),
+    Blocks ( Vec<TerminalBlockRef> ),
+    Messages( Vec<MessageRef> ),
+    Diagnostics( Vec<DiagnosticRef> ),
+    // …
+    Mixed( Vec<Selection> ),
+}
+
+impl Selection {
+    pub fn kind(&self) -> Option<ObjectKind> { /* … */ }
 }
 ```
 
-A new session is created with one or the other:
+A pane *owns* its current selection. The kernel queries the focused
+pane via a small trait:
+
+```rust
+pub trait SelectionSource {
+    fn current_selection(&self) -> Selection;
+    fn object_kinds(&self) -> &'static [ObjectKind];
+}
+```
+
+Every pane kind implements `SelectionSource`. Action dispatch passes
+the focused pane's selection alongside the action context; the
+registry's `Action::accepts` field tells the dispatcher (and the
+command palette) which actions are valid for the current selection
+kind. Invalid verbs are *hidden in the palette*, not errored on the
+attempt — the same affordance TypeScript intellisense gives you for
+`.`-completions.
+
+This is the load-bearing structural decision: *selection lives at the
+kernel boundary, not inside any single pane*. Without it, cross-pane
+verbs are impossible and "selection-first" becomes per-pane
+re-implementation.
+
+== The selection algebra
+
+Helix's text-Normal-mode movements aren't text-specific in their
+shape; they generalize to *selection refinement operators*
+parameterized by the pane's object grammar. The same alphabet, the
+same muscle memory:
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x: none, y: 0.4pt + luma(180)),
+  inset: 7pt,
+  align: (left, left),
+  table.header([*Helix in text*], [*Generalized refinement*]),
+  [`w` next word], [next item of same kind (next file, next hunk, next message, next block)],
+  [`mip` inner paragraph], [inner container (containing function, file, thread, severity-bucket)],
+  [`s` select-regex within selection], [predicate filter (`s '*.rs'`, `s severity=error`, `s author=carlo`)],
+  [`K` keep matching], [intersect with predicate],
+  [`A` append cursor], [union with another selection (often via register)],
+  [`,` keep first], [reduce to one],
+  [`%` whole-buffer], [select all of pane's objects],
+  [`n` / `N` repeat search], [next/prev predicate match],
+)
+
+These are not separate per-pane keymaps; they are the same operators
+realized over each pane's grammar. The user learns the alphabet once,
+and "extend selection to next thing" works in seven panes for one set
+of muscle memory.
+
+The grammar is thin. Each pane crate exposes a small trait:
+
+```rust
+pub trait ObjectGrammar {
+    fn next(&self, kind: ObjectKind, from: &Selection) -> Selection;
+    fn inner_container(&self, of: ObjectKind, from: &Selection) -> Selection;
+    fn filter_by_predicate(&self, sel: &Selection, p: Predicate) -> Selection;
+    // …
+}
+```
+
+The UX shell drives Normal-mode keys through this trait. Implementing
+it for a new pane kind is the cost of giving that pane the full
+Helix-shaped navigation model.
+
+== Cross-pane verbs
+
+Verbs that accept multiple object kinds unify workflows across panes:
 
 ```
-session.new                              # local, cwd = $HOME
-session.new { cwd = "~/projects/foo" }   # local, specific cwd
-session.new { remote = "lab-machine" }   # remote, default home on lab-machine
-session.new { remote = "lab-machine", cwd = "~/research" }
+agent.explain    accepts: [Text, Hunk, Block, Diagnostic, Message]
+agent.fix        accepts: [Diagnostic, Block]  // block = error output
+diff.against     accepts: [File, Commit, Branch]
+git.blame.show   accepts: [Text, File]
+fs.show          accepts: [Path, FileMention]  // from agent output
 ```
 
-Sessions of both kinds coexist in the same `codon-daemon`. Switching
-sessions is purely a UI operation; it does not connect or disconnect
-anything. Capabilities are connected when a session is created and
-released when it is closed (or after a configurable idle timeout for
-remote sessions).
+Concrete workflows that drop out:
 
-Within a session, all panes share that session's capability set. You
-cannot mix local and remote panes in one session — that would require the
-project context to span hosts, which doesn't make sense.
+- *Files pane:* select 12 files matching `*.ts`. Trigger
+  `agent.explain` directly (no pane switch needed). The agent receives
+  a `Files` selection and treats it as its working set.
+- *Diagnostics panel:* select all `TS2345` errors across the project.
+  Trigger `agent.fix`. The agent receives a `Diagnostics` selection
+  and produces a single patch.
+- *Git log:* select 3 commits. Trigger `agent.write_release_notes`.
+  The agent receives `Commits`.
+- *Terminal:* select the block containing a stack trace.
+  `agent.explain`. The block's command and output become the agent's
+  context.
 
-== Persistence and the daemon lifecycle
+The user binds one key for `agent.explain` once and it works in every
+applicable context. This is the primary payoff of object-verb being a
+kernel-level concept rather than per-pane.
 
-The daemon runs as a long-lived per-user process. State is persisted to
-disk in two ways:
+== Selection registers
+
+Helix's registers (`"a`, `"b`, …) hold yanked text. Generalized: any
+typed selection can be stored in a register. Registers persist for the
+session; named registers (declared in config) persist across sessions.
+
+```
+"f          "files I always review together"  → Files(...)
+"e          last-error set                    → Diagnostics(...)
+"c          cherry-pick candidates            → Commits(...)
+```
+
+Verbs that produce selections (`select-pattern`, `select-by-author`,
+or the result of an agent query) can write into registers. Verbs that
+consume selections can read from them: `"f open` opens all files in
+register `f`; `"e fix` fixes all diagnostics in register `e`.
+
+Registers are the pipeline-composition mechanism: they make the user's
+working set inspectable, named, and reusable instead of fleeting.
+
+== Where the model doesn't fit
+
+An honest list of cases where forcing object-verb is wrong:
+
+- *Insert mode in editor and terminal.* No noun is being constructed;
+  characters are being emitted. Insert mode is the escape hatch and
+  isn't subject to the model.
+- *Configuration verbs.* "Toggle word wrap," "increase font size."
+  No object. These live in Command mode (`:`) as nullary verbs in
+  the registry (`accepts: &[]`).
+- *Verb arguments that aren't selection-shaped.* `:write some/path.rs`
+  takes a string, not a noun in the grammar. Command mode has free-form
+  arguments. We don't pretend everything is selection-shaped.
+- *Continuous mouse-style operations.* Drag-resize, scrub a scrollbar.
+  Awkward in object-verb. The few mouse-friendly affordances live
+  outside the modal grammar.
+
+The principle: *selection-first wherever there's a stable typed object
+set; Command mode for the rest.* Don't force everything into the
+noun-verb model when the verb is genuinely arity-1 and the argument
+isn't selection-shaped.
+
+== v0 scope and the path to full generality
+
+Full kernel-level typed selection with the algebra and registers is
+more ambition than v0 requires. The phase compromise:
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x: none, y: 0.4pt + luma(180)),
+  inset: 7pt,
+  align: (left, left),
+  table.header([*Phase*], [*Selection-first scope*]),
+  [Phase 1], [Editor pane only — i.e., Helix's standard model verbatim. Other panes are pre-grammar; their actions are pane-local.],
+  [Phase 3], [Files pane and git pane participate. `Selection::Files`, `Selection::Hunks`, `Selection::Commits` defined. First cross-pane verb (e.g. `git.blame.show` accepting `Text | File`).],
+  [Phase 4], [Diagnostics, Diff, Image. Refinement operators (`w`, `mip`-style) implemented for each pane's grammar.],
+  [Phase 5], [Agent and Terminal. Block detection (OSC 133 if available, heuristics otherwise). `agent.explain` becomes the universal cross-pane verb.],
+  [Post-v0], [Selection algebra completion (`s` predicate filter syntax, `K` intersect). Registers. Named persistent registers. Full object-grammar trait implementation across all panes.],
+)
+
+The architectural commitment in v0 is *not* deferring this — it is
+*shaping the interfaces now so the generalization is additive later*.
+Specifically:
 
 #set enum(numbering: "1.")
 
-+ *In-memory authoritative state* — all sessions, layouts, open buffers,
-  capability connections. Survives window closes.
-+ *Periodic snapshots to disk* — written to
-  `$XDG_STATE_HOME/codon/sessions/<session-id>/` every 30 seconds and
-  on graceful shutdown. Used to rehydrate after daemon restart (planned
-  upgrades, crashes).
++ `Action::accepts` is in the registry from day one (Phase 1), even
+  though most early verbs have empty or single-type accepts.
++ `SelectionSource` and `ObjectGrammar` traits are declared in the
+  kernel's pane interface from Phase 1, even if early implementations
+  return placeholder values.
++ The command palette's filtering by selection kind is implemented from
+  Phase 1 (filtering an empty-or-single-type selection set is trivial).
 
-What gets persisted per session:
+The cost of doing this correctly from day one is small; the cost of
+retrofitting it is high. This is the one place the "single process,
+single binary" simplification of v0 doesn't slacken — the abstractions
+have to be right early because they shape what the UX feels like at the
+keyboard.
 
-- Session metadata (name, cwd, capability target, creation time)
-- Layout tree
-- Per-pane state:
-  - Terminal: the PTY does not survive daemon restart; on rehydrate,
-    the pane is replaced with a "session restored — press Enter to
-    respawn" placeholder showing the last 1 MiB of scrollback.
-  - Editor: open file paths and view state; rope content is re-read.
-    Unsaved changes are persisted as a swap file.
-  - Files / git / diff / image: just enough to recreate the pane.
-  - Agent: full conversation history (this is large — Zed's agent
-    crate already persists this).
+// ============================================================
+= Sessions and layout
+// ============================================================
 
-The first time the window connects after a daemon restart, the user sees
-their session list as before. Terminals show placeholders; editors are
-rehydrated; agent conversations resume.
+== Sessions
 
-Disconnect from a remote session:
+```rust
+pub struct Session {
+    id: SessionId,
+    name: String,
+    cwd: PathBuf,
+    layout: LayoutNode,
+    panes: HashMap<PaneId, PaneKind>,
+    project: ProjectContext,    // built lazily
+    created: Instant,
+    last_attached: Option<Instant>,
+}
 
-- *Window closes:* daemon keeps the session, capability connection stays
-  open until idle timeout.
-- *Network drops:* daemon detects loss, marks the session as
-  "disconnected," holds it for `remote.reconnect_timeout` (default 5
-  minutes), then closes the SSH connection but keeps the local session
-  state. On user attempt to use the session, daemon reconnects SSH and
-  replays from sequence numbers.
-- *Daemon restart while disconnected:* on rehydrate, remote sessions
-  start in a "disconnected" state; reconnect on first use.
+#[derive(Default)]
+pub struct ProjectContext {
+    root: OnceCell<Option<PathBuf>>,
+    git: OnceCell<Option<GitRepo>>,
+    lsp_clients: HashMap<LanguageId, LspClientHandle>,
+    diagnostics: DiagnosticStore,
+}
+```
+
+Sessions are workspaces. There is no separate "is this a workspace"
+concept; project context accretes lazily as features are used.
+
+A new session is cheap: a name, a cwd, an empty layout with one
+terminal pane. Project context starts empty.
+
+Project context accretes lazily, triggered by the first pane that needs
+it:
+
+- *First editor pane opens.* The kernel walks up from `cwd` looking for
+  language manifests and `.git`. If found, `project.root` is set.
+  An LSP client for the file's language is spawned via `helix-lsp`.
+- *First git pane opens.* `project.git` is set if cwd is inside a git
+  work tree.
+- *First diagnostic arrives.* From any LSP client, gets stored in
+  `project.diagnostics`, consumed by the diagnostics panel, the editor
+  gutter, and the agent.
+
+A session never un-promotes. Starting fresh is essentially free; using
+an existing session inherits its warmed-up state.
+
+== Layout
+
+Three node types, no buffer tabs:
+
+```rust
+pub enum LayoutNode {
+    Split { dir: Direction, ratio: f32, a: Box<LayoutNode>, b: Box<LayoutNode> },
+    Stack { panes: Vec<PaneId>, visible: usize },
+    Leaf(PaneId),
+}
+
+pub enum Direction { Horizontal, Vertical }
+```
+
+A session has exactly one `LayoutNode` as root. Stacks substitute for
+tabs: when you want N variants in the same slot, stack them and cycle
+visibility with `pane.stack.cycle`.
+
+Replacing Zed's existing tab-strip UI with stack indicators is the
+biggest UI surgery in the project; it is concentrated in one place
+(the pane host).
+
+== Persistence
+
+Sessions persist across application restarts. State is written to disk:
+
+- *Periodic snapshots* every 30 seconds.
+- *Graceful shutdown* writes a final snapshot.
+
+Persisted per session: metadata (name, cwd, creation time), layout
+tree, per-pane minimal state.
+
+Per-pane handling on rehydrate:
+
+- *Terminal:* PTY does not survive process restart; on rehydrate, the
+  pane is replaced with a placeholder showing the last 1 MiB of
+  scrollback and a "press Enter to respawn" prompt.
+- *Editor:* open file path and view state; rope content is re-read.
+  Unsaved changes are persisted as a swap file.
+- *Files / git / diff / image:* enough state to recreate.
+- *Agent:* full conversation history (Zed's agent crate already
+  persists this; we use its mechanism).
+- *Commit:* in-progress commit message text.
 
 == Session list and switching
 
-The session list is a UI concept rendered as a picker (using vendored
-Zed `picker`/`fuzzy`). It shows session name, cwd, capability target,
-last-attached time, and a preview snapshot.
+The session list is a picker (vendored Zed `picker` + `fuzzy`), opened
+by `session.switch`. It shows session name, cwd, last-attached time,
+and a preview snapshot of the layout.
 
-`session.switch` opens the picker; `session.new` opens a "create session"
-flow with cwd and remote-host fields. There is no "current session"
-hierarchy beyond what the user sees in the picker.
+`session.new` opens a "create session" flow with a cwd field. There is
+no current-session hierarchy beyond what the user sees in the picker;
+one session is shown in the window at a time.
 
 // ============================================================
 = Implementation plan
 // ============================================================
 
-The plan is sequential phases, each ending in a usable artifact. No phase
-leaves the codebase in an unshipping state.
+Sequential phases, each ending in a usable artifact.
 
 == Phase 0 — Walking skeleton
 
-*Goal:* a window that opens, contains one terminal pane (gpui-ghostty)
-and one editor pane (Helix `Document` rendered through GPUI).
+*Goal:* A Zed fork that builds, opens a window with one terminal pane
+(alacritty-backed) and one editor pane that renders Helix's `Document`
+through GPUI.
 
 Build steps:
 
-- Set up the monorepo. Vendor Zed (`gpui`, `gpui-macros`, `picker`,
-  `fuzzy`, `theme`, `settings`, `terminal_view`). Vendor Helix
-  (`helix-core`, `helix-view`, `helix-lsp`, `helix-loader`,
-  `helix-stdx`). Vendor `gpui-ghostty`.
-- Replace `terminal_view`'s `alacritty_terminal` dependency with
-  `libghostty-vt` via gpui-ghostty.
-- Build a minimal window that opens a single GPUI surface containing
-  one terminal pane and one editor pane, side-by-side.
-- Hardcode the editor pane to open one file (`/etc/hostname` or
-  similar). Render Helix's `Document` content through a small custom
-  GPUI element that produces text from the rope. No Helix commands
-  yet — read-only.
-- Hardcode the terminal pane to spawn `$SHELL`.
+- Set up the monorepo. Fork Zed wholesale into `vendor/zed/`. Vendor
+  Helix (`helix-core`, `helix-view`, `helix-lsp`, `helix-loader`,
+  `helix-stdx`) into `vendor/helix/`.
+- Strip out (or stub) Zed's `editor`, `language`, `text`,
+  `multi_buffer`, and `rope` crates from the build. The app won't
+  build yet; that's fine.
+- Build a minimal `panes-editor` crate that holds a
+  `helix_view::Document`, exposes its rope through GPUI's text
+  rendering, and renders selections.
+- Build a minimal `panes-terminal` that wraps Zed's existing
+  `terminal_view`.
+- Replace Zed's main workspace with a minimal pane host that opens one
+  terminal pane and one editor pane side-by-side. Hardcode the editor
+  to open `/etc/hostname` or similar; read-only.
 
-*Deliverable:* `cargo run` opens a window. You see a shell on the left,
-a file's contents on the right. Nothing is configurable yet.
-
-This phase establishes that GPUI, libghostty-vt, and Helix can coexist
-in one binary.
+*Deliverable:* `cargo run` opens a window with shell + Helix-rendered
+file. Nothing is interactive in the editor pane yet.
 
 == Phase 1 — Action layer and modal shell
 
-*Goal:* Helix's full editing model works in the editor pane; pane
-focus, splits, and the command palette work uniformly across pane kinds;
-the keymap is configurable.
+*Goal:* Helix's full editing model works in editor panes; pane focus,
+splits, and command palette work uniformly across pane kinds; keymap
+is configurable.
 
 Build steps:
 
 - Build `crates/ux-shell` with the modal pane host (Normal / Insert /
-  Command), the status/command line, and the keymap loader.
+  Command), status/command line, keymap loader.
 - Build `crates/kernel` minimally: action registry only. No sessions
-  yet, no protocol; the kernel runs in-process inside the window.
-- Wire Helix's command set into the registry under `editor.*`. Generate
-  the registration from Helix's existing command tables.
-- Add the cross-cutting actions: `pane.focus.*`, `pane.split.*`,
-  `pane.close`, `workspace.command_palette`, `editor.write` (calls
-  `fs.io.write` directly).
+  yet.
+- Wire Helix's command set into the registry under `editor.*`.
+  Generate registration from Helix's existing command tables.
+- Add cross-cutting actions: `pane.focus.*`, `pane.split.*`,
+  `pane.close`, `workspace.command_palette`, `editor.write`.
 - Implement the command palette using vendored `picker`/`fuzzy`.
-- Implement a TOML keymap loader; ship a default keymap that imports
+- Implement the TOML keymap loader; ship a default keymap that imports
   Helix's normal-mode bindings verbatim.
+- Define the `Selection`, `ObjectKind`, `SelectionSource`, and
+  `ObjectGrammar` interfaces (Section 6). Register actions with
+  `accepts` (mostly empty in this phase). The command palette filters
+  by selection kind. Editor pane is the only `SelectionSource`
+  implementation; others return `Selection::Empty`.
 
 *Deliverable:* a one-window Codon with a working Helix editor (full
-keymap, modal model, save), a working terminal, and a working command
-palette. Single binary, no daemon yet, no protocol yet, no sessions.
+keymap, modal model, save), working terminal, working command palette.
+No sessions yet; one fixed layout.
 
-== Phase 2 — Kernel split and Buffer trait
+== Phase 2 — Sessions, layout, persistence
 
-<sec:phase-2>
-
-*Goal:* the kernel is a separate `codon-daemon` process; the window
-talks to it over a Unix socket; the `Buffer` trait is in place; Zed's
-git crate is forked, rewired, and integrated as the first
-buffer-consuming feature.
+*Goal:* multiplexer UX. Sessions exist, can be created, switched,
+persisted. Stacked panes work. Default new pane is terminal.
 
 Build steps:
 
-- Spin out `codon-daemon` as a separate binary. Implement the local
-  view-protocol transport (Unix socket) without channel multiplexing
-  yet — just one persistent stream with simple framing. This is
-  temporary; Phase 3 replaces it.
-- Define `crates/codon-buffer` with the `Buffer` trait. Implement
-  it for `helix_view::Document`. Document the trait surface.
-- *Analyze fork impact:* survey Zed's git crate for buffer
-  dependencies. Decide trait-vs-wrapper based on what we find. Update
-  this design doc with the decision before proceeding.
-- Fork Zed's git crate into `vendor/zed/git/`. Rewire its buffer
-  dependencies to `codon-buffer::Buffer`. Wire it into Codon as the
-  `panes-git` daemon module.
-- Add a `panes-git` window module that renders git status, diff,
-  log, and hunk staging using GPUI.
+- Add session management to the kernel: `Session`, layout tree,
+  pane registry.
+- Replace the fixed layout with the recursive `LayoutNode` host.
+- Implement stacked panes. Repurpose or strip Zed's tab strip in favor
+  of stack indicators.
+- Add session actions: `session.new`, `session.switch`, `session.list`.
+  Wire the session picker.
+- Implement disk persistence: periodic snapshots, graceful-shutdown
+  write, rehydrate on launch. Terminal placeholders on rehydrate.
+- Add `pane.split` parametric action; default kind = terminal.
+- Verify: open Codon → land in last session → close window → reopen →
+  layout intact, scrollback shown, terminals respawnable.
 
-*Deliverable:* Codon is now a window-and-daemon pair. You can open a
-git pane, see status, view diffs, and stage hunks for any file open in
-an editor pane. The `Buffer` trait abstraction is proven.
+*Deliverable:* Codon as a multiplexer. Same shape as Zellij/tmux for
+terminal usage, but with Helix-backed editor panes available.
 
-Risks: the git rewire reveals that Zed's git crate has buffer
-dependencies deeper than the trait can express. Mitigation: the
-analysis step is a deliverable; if the trait can't bridge, we adopt the
-wrapper approach and revise the plan.
+== Phase 3 — Buffer trait + git rewire
 
-== Phase 3 — Protocol formalization
+<sec:phase-3>
 
-*Goal:* both protocols (view and capability) use capnp on a shared
-channel multiplexer. Local capabilities go through the same wire format
-as remote ones will. No remote yet.
+*Goal:* the `Buffer` trait is in place; Zed's git crate is forked,
+rewired, and integrated as the first buffer-consuming feature.
 
 Build steps:
 
-- Define capnp schemas for both protocols. Build the codegen pipeline.
-- Implement `crates/channels`: the multiplexer, sequence numbers,
-  credit-based flow control, replay buffers.
-- Implement `crates/transport`: the Unix-socket transport. Replace the
-  Phase-2 ad-hoc framing.
-- Implement `crates/capabilities-local`: local capability handlers
-  (PTY, fs, proc, lsp) that integrate with the channel multiplexer.
-- Refactor the kernel's existing capability calls to go through the
-  multiplexer. Performance penalty: irrelevant; correctness gain:
-  large.
-- Add the `--trace` flag and the JSON-pretty-printed log output.
+- *Analyze fork impact:* survey Zed's `git` crate for buffer
+  dependencies. Decide trait-vs-wrapper based on what we find.
+  Update this design doc with the decision before proceeding.
+- Define `crates/codon-buffer` with the `Buffer` trait. Implement it
+  for `helix_view::Document`.
+- Fork Zed's `git` crate into `vendor/zed/git/`. Rewire its buffer
+  dependencies. Wire it into Codon as the `panes-git` crate.
+- Add hunk-staging actions; verify integration with editor panes.
 
-*Deliverable:* protocols are formalized; observability tooling works;
-the architecture is correct. User-visible: nothing changes. This phase
-exists to make Phase 6 a small effort instead of a large one.
+*Deliverable:* git pane works. Status, log, diff, hunk staging all
+function over Helix-backed buffers. The trait abstraction is proven.
+
+Risk: the git rewire reveals deeper buffer dependencies than the trait
+can express. Mitigation: the analysis step is a real deliverable; if
+the trait can't bridge, we adopt the wrapper approach and revise.
 
 == Phase 4 — Native UX coverage
 
-*Goal:* the file browser, diff viewer, and image preview panes work.
-Diagnostics are wired in. Codon is a coherent local IDE.
+*Goal:* file browser, diff viewer, image preview panes work.
+Diagnostics are wired in.
 
 Build steps:
 
-- Build `panes-files`: yazi-idiom three-column file browser. Uses
-  `fs.io` and `fs.watch`. Modal: Normal mode for navigation, Insert
-  for fuzzy filter, Command for `:`-actions (`:rename`, `:delete`,
-  `:trash`, `:archive`).
-- Build `panes-diff`: integrates Zed's vendored diff crate. Renders
-  diff hunks with syntax highlighting from Helix.
-- Build `panes-image`: local image decode with the `image` crate;
-  rendered through GPUI. The daemon serves bytes via `fs.io.read`;
-  decode and display happen in the window.
+- Build `panes-files`: yazi-idiom three-column file browser. Modal:
+  Normal for navigation, Insert for fuzzy filter, Command for `:` actions.
+- Build `panes-diff`: integrates Zed's vendored diff crate, rewired.
+- Build `panes-image`: local image decode (image crate) + GPUI render.
 - Fork and rewire Zed's `diagnostics` crate. Replace Helix's
-  diagnostics throughout. Editor pane gutters and the diagnostics
-  panel both consume the same store.
+  diagnostics throughout. Editor gutter and the diagnostics panel
+  consume the same store.
 - Add a status-line widget for diagnostic summary.
 
-*Deliverable:* end-to-end coherent IDE. File browse, edit, diff, view,
-session-aware. Single user-visible binary.
+*Deliverable:* coherent local IDE. File browse, edit, diff, view,
+diagnose, all session-aware.
 
-== Phase 5 — Git, Agent, Inline Assistant, Commit Editor
+== Phase 5 — Agent, inline assistant, commit editor
 
 *Goal:* AI-augmented coding works. Conversations persist. Inline edits
-roundtrip through the daemon. Git commit messages can be auto-generated.
+roundtrip. Git commit messages can be auto-generated.
 
 Build steps:
 
 - Fork Zed's `agent`, `inline_assistant`, and `commit_editor` crates;
-  rewire to `codon-buffer::Buffer`.
-- Build `panes-agent` and `panes-commit`. Rewire MCP integration if
-  needed. Verify conversation persistence works through the daemon's
-  on-disk state.
-- Wire the inline assistant to the editor pane: keybinding triggers a
-  ranged AI edit; resulting diff is shown inline; user accepts/rejects
-  per hunk.
-- Wire commit-message auto-generation in the commit editor pane.
+  rewire to `Buffer`.
+- Build `panes-agent` and `panes-commit`. Verify conversation
+  persistence works through Codon's session persistence.
+- Wire the inline assistant to the editor pane: a binding triggers a
+  ranged AI edit; the resulting diff is shown inline; the user accepts
+  or rejects per hunk.
+- Wire commit-message auto-generation in the commit pane.
 - Add agent-aware status-line widgets (running task indicator,
   notification on completion).
 
-*Deliverable:* Codon is feature-competitive with Zed for local
-agentic coding, but with Helix as the editor and a multiplexer-first
-UX.
-
-== Phase 6 — Remote
-
-*Goal:* a session can be remote. SSH transport works. `agentd` is
-deployed. Reconnect-and-replay handles flaky links.
-
-Build steps:
-
-- Build `apps/agentd`: the remote binary. Implements the L2 channel
-  multiplexer and the L3 capability handlers. ~4 kLOC target.
-- Build `crates/capabilities-remote`: client-side proxies that
-  serialize capability calls onto channels.
-- Add the SSH transport to `crates/transport`. Use OpenSSH
-  `ControlMaster` for connection persistence and multiplexing
-  (Zed's pattern).
-- Implement automatic `agentd` deployment to the remote: detect arch,
-  upload the binary, exec via SSH, handshake.
-- Add session-creation flow for remote sessions:
-  `session.new { remote = "host" }`.
-- Implement reconnect-and-replay end to end. Test with simulated
-  network drops.
-
-*Deliverable:* remote sessions work. The same key model, the same UI,
-the same agent-and-git tooling, transparently against a remote box.
-
-== Phase 7 — Mosh-equivalent (deferred)
-
-*Goal:* roaming, low-latency remote operation over UDP. Predictive
-local echo for terminal panes.
-
-Out of scope for v0. Listed for completeness.
+*Deliverable:* feature parity with Zed for local agentic coding, plus
+the multiplexer-first UX and Helix editing.
 
 == Summary of phases
 
@@ -1223,317 +1134,113 @@ Out of scope for v0. Listed for completeness.
   inset: 8pt,
   align: (left, left, left),
   table.header([*Phase*], [*Outcome*], [*Shippable as*]),
-  [0], [GPUI + libghostty-vt + Helix coexist in one window.], [internal demo],
-  [1], [Helix editing + uniform modal shell + command palette.], [single-binary "graphical Helix"],
-  [2], [Daemon split, `Buffer` trait, git pane.], [Codon v0.1],
-  [3], [capnp-on-channel-mux protocols, observability.], [Codon v0.2],
+  [0], [Zed fork builds; Helix Document renders in a pane.], [internal demo],
+  [1], [Helix editing + modal shell + command palette.], [single-binary "graphical Helix in a Zed shell"],
+  [2], [Sessions, stacked panes, terminal-first layout, persistence.], [Codon v0.1 — usable as a multiplexer with editor pane],
+  [3], [Buffer trait + git pane.], [Codon v0.2],
   [4], [Files, diff, image, diagnostics.], [Codon v0.3],
-  [5], [Agent, inline assistant, commit editor.], [Codon v0.4],
-  [6], [Remote sessions over SSH.], [Codon v0.5],
-  [7], [Mosh-equivalent.], [Codon v0.6+],
+  [5], [Agent, inline assistant, commit editor.], [Codon v0.4 — feature-complete v0],
 )
 
 // ============================================================
 = Open questions and decisions deferred
 // ============================================================
 
-== Confirmed decisions
+== Confirmed for v0
 
-For reference, these are locked in for v0 and not up for re-litigation:
-
+- Single process, single binary. No daemon, no protocol, no remote.
 - Project name: *Codon*.
-- Wire format: *Cap'n Proto*.
-- Editing model: *Helix everywhere*.
-- Protocol shape: *two schemas (view, capability), one channel
-  multiplexer, one transport abstraction*.
-- Process model: *window + codon-daemon + agentd (remote only)*.
-- Layout: *Split / Stack / Leaf, no tabs*.
-- Default pane kind: *terminal*.
-- Display model: *one session shown at a time, no side-by-side*.
-- Window helix dependency: *zero — window only renders typed schemas*.
-- Multi-window: *deferred*.
-- WASM plugins: *deferred*.
-- Predictive echo: *deferred*.
-- yazi reuse: *patterns only, no code*.
-- Vendoring strategy: *fork everything into the monorepo*.
-- Diagnostics: *Zed's, not Helix's*.
+- Editing model: *Helix* everywhere there's a text buffer.
+- Terminal backend: *alacritty_terminal*, as Zed uses today.
+- Reuse: maximum of Zed's product features; minimum of its editor stack.
+- Layout: Split / Stack / Leaf. No tabs.
+- Default pane kind: terminal.
+- Display model: one session shown at a time.
+- *Selection-first / object-verb across panes.* Interfaces
+  (`Selection`, `ObjectKind`, `SelectionSource`, `ObjectGrammar`,
+  `Action::accepts`) are declared from Phase 1; full grammar
+  implementation rolls out per pane in Phases 3–5; selection algebra
+  and registers are post-v0. See Section 6.
+- Multi-window, WASM plugins, predictive echo: deferred.
 
 == Provisional / to be analyzed
 
-- *Buffer trait vs wrapper.* Phase 2 includes a survey of Zed's
-  buffer-dependent crates. The decision is provisional pending that
-  analysis. If trait can't express what's needed, we revisit.
+- *Buffer trait vs wrapper.* Phase 3 includes a survey of Zed's
+  buffer-dependent crates. Decision provisional pending that analysis.
 - *Helix gutter rendering.* Helix's gutter (line numbers,
-  diagnostic markers, breakpoints, change indicators) is currently
-  TUI-rendered. We need to either (a) reimplement the gutter as a GPUI
-  component reading from Codon's diagnostic store and Helix's
-  `Document` state, or (b) delegate to vendored Zed gutter
-  rendering. Likely (a); decide in Phase 1.
-- *vim-style shell hook for editor invocation.* Detecting `vim foo.rs`
-  in a terminal and routing to an editor pane — opt-in, planned but
-  not blocking; design in Phase 4.
-- *Settings storage location and format.* Zed uses a JSON config; Helix
-  uses TOML. Codon is TOML-first (matches keymap config). Where does
-  the settings file live; how do per-project settings overlay user
-  settings; how do remote sessions resolve settings.
+  diagnostic markers, change indicators) is currently TUI-rendered.
+  We need to either reimplement it as a GPUI component reading from
+  Codon's diagnostic store and Helix's `Document` state, or delegate
+  to vendored Zed gutter rendering. Likely the former; decide in
+  Phase 1.
+- *vim-style shell hook.* Detecting `vim foo.rs` in a terminal and
+  routing to an editor pane — opt-in, not blocking. Design in Phase 4.
+- *Settings storage and format.* Zed uses JSON; Helix uses TOML.
+  Codon is TOML-first (matches keymap). Decide where the settings file
+  lives and how per-project settings overlay user settings.
 - *Theme system.* Zed's theme infrastructure works; Helix has its own
   themes. We use Zed's; Helix's TOML themes need to be importable.
+- *Languages config merge.* Zed ships its own languages list; Helix
+  ships `languages.toml`. Probably we want Helix's (since it drives
+  Helix's syntax), with Zed's as supplementary. Decide in Phase 1.
+- *Terminal block detection.* Object-verb in the terminal pane
+  (Section 6) requires identifying command-and-output as one unit.
+  Two strategies: OSC 133 prompt markers (requires shell integration —
+  user opt-in) and heuristic boundary detection from the byte stream
+  (works for everyone but lossy). Likely both, with OSC 133 preferred
+  when present. Decide in Phase 5.
 
-== Out of scope, not deferred
+== Deferred to v0.next (with notes)
 
-These are decisions we are not making:
+The architecture is intentionally daemon-extractable. When (if) we pick
+these up, here is the rough cost.
 
-- Cross-platform support for the daemon. Linux first; macOS likely
-  works for free; Windows is not a goal and may never be one.
-- A web client. Zed has one; Codon does not.
-- Collaboration (multi-user editing). Zed has it; Codon does not aim
-  to. The architecture would not preclude it but we do not optimize
-  for it.
-- Browser-based remote terminal access (in the manner of `ttyd` or
-  Zellij's web client). Possible later via the existing transport
-  abstraction; not in scope.
+#table(
+  columns: (auto, 1fr),
+  stroke: (x: none, y: 0.4pt + luma(180)),
+  inset: 8pt,
+  align: (left, left),
+  table.header([*Deferred*], [*Approximate cost when picked up*]),
+  [Daemon split], [Extract `kernel` and the state-owning halves of `panes-*` into a `codon-daemon` binary. Define view protocol schemas. The pane-crate split into "owns state" vs "renders" was set up to make this tractable.],
+  [Capnp protocol formalization], [Comes with the daemon split. Two schema sets; one channel multiplexer over a Unix socket.],
+  [Remote sessions over SSH], [Build `agentd` (~4 kLOC). Capability protocol over SSH ControlMaster. Per-session capability binding (local OR remote).],
+  [libghostty-vt migration], [Replace `alacritty_terminal` with `libghostty-vt` via `gpui-ghostty`. Pulls in better Unicode, kitty graphics protocol parsing. Some work in `panes-terminal`; small surface.],
+  [Mosh-style transport], [UDP-based transport with state replay. Predictive echo for editor and terminal panes.],
+  [WASM plugin runtime], [A `plugin` capability and an in-app sandboxed WASM host. Plugins can register actions, define pane kinds, or proxy capabilities.],
+)
+
+The single largest design decision protected by deferring all of these
+is that Codon stays one process for v0. Doing the daemon extraction
+later means we ship something usable sooner; doing it now would be the
+right architecture for the eventual full vision but a much longer road
+to a working system.
+
+== Out of scope
+
+- Cross-platform priority. Linux first; macOS likely; Windows is not
+  a goal and may never be one.
+- Web client.
+- Collaboration (multi-user editing).
+- Browser-based remote terminal access.
 
 // ============================================================
-= Appendices
+= Appendix: glossary
 // ============================================================
-
-== Schema sketches
-
-This section collects the most salient capnp schema fragments from
-across the document for reference.
-
-=== Channel envelope (binary, not capnp)
-
-```
-┌────────┬────────┬────────────┬────────────────┐
-│  type  │ flags  │ channel_id │      seq       │
-│  u8    │  u8    │   u32 LE   │     u64 LE     │
-└────────┴────────┴────────────┴────────────────┘
-[ payload — capnp framed message or control ]
-```
-
-`type` discriminates: control frame (open, close, replay-request, ack)
-vs. payload frame.
-
-=== meta.capnp
-
-```capnp
-@0x...;
-
-struct Hello {
-  protocolVersion @0 :UInt32;
-  agentVersion @1 :Text;
-  capabilities @2 :List(CapabilityVersion);
-  hostInfo @3 :HostInfo;
-}
-
-struct CapabilityVersion {
-  name @0 :Text;          # "pty", "fs.io", ...
-  versions @1 :List(UInt32);
-}
-
-struct HostInfo {
-  os @0 :Text;
-  arch @1 :Text;
-  hostname @2 :Text;
-  uptime @3 :UInt64;
-}
-
-struct Ping { nonce @0 :UInt64; sentAt @1 :UInt64; }
-struct Pong { nonce @0 :UInt64; sentAt @1 :UInt64; recvAt @2 :UInt64; }
-```
-
-=== fs.capnp (excerpt)
-
-```capnp
-@0x...;
-
-struct ReadRequest {
-  path @0 :Data;
-  offset @1 :UInt64;
-  length @2 :UInt64;       # 0 means "to end"
-}
-struct ReadResponse {
-  union {
-    bytes @0 :Data;
-    error @1 :Error;
-  }
-}
-
-struct WriteRequest {
-  path @0 :Data;
-  offset @1 :UInt64;
-  bytes @2 :Data;
-  truncate @3 :Bool;
-  createMode @4 :UInt32;
-}
-
-struct ListRequest {
-  path @0 :Data;
-  recursive @1 :Bool;
-  followSymlinks @2 :Bool;
-  globPattern @3 :Text;    # optional
-}
-struct ListResponse {
-  union {
-    entries @0 :List(DirEntry);
-    error @1 :Error;
-  }
-}
-
-struct DirEntry {
-  name @0 :Data;
-  kind @1 :EntryKind;
-  size @2 :UInt64;
-  mtime @3 :UInt64;
-  mode @4 :UInt32;
-}
-enum EntryKind { file @0; dir @1; symlink @2; other @3; }
-
-struct WatchSubscribe {
-  path @0 :Data;
-  recursive @1 :Bool;
-}
-# Subscribe response opens an output stream channel.
-
-struct FsEvent {
-  path @0 :Data;
-  kind @1 :EventKind;
-}
-enum EventKind {
-  created @0;
-  modified @1;
-  deleted @2;
-  renamed @3;
-  metadataChanged @4;
-}
-```
-
-=== view.capnp (excerpt)
-
-```capnp
-@0x...;
-
-# ---- window → daemon ----
-
-struct DispatchAction {
-  name @0 :Text;
-  args @1 :ActionArgs;
-  context @2 :ActionContext;
-}
-
-struct ActionArgs {
-  union {
-    none @0 :Void;
-    paneSplit @1 :PaneSplitArgs;
-    paneFocus @2 :PaneFocusArgs;
-    sessionNew @3 :SessionNewArgs;
-    # ... many more
-  }
-}
-
-struct PaneSplitArgs {
-  dir @0 :Direction;
-  kind @1 :PaneKind;
-  args @2 :PaneOpenArgs;   # kind-specific
-}
-
-enum Direction { right @0; down @1; left @2; up @3; }
-enum PaneKind {
-  terminal @0; editor @1; files @2; diff @3;
-  image @4; git @5; agent @6; commit @7;
-}
-
-# ---- daemon → window ----
-
-struct SessionTopology {
-  sessions @0 :List(SessionEntry);
-  focused @1 :SessionId;
-  layout @2 :LayoutNode;       # for the focused session only
-  paneModes @3 :List(PaneMode); # for all panes in the focused session
-}
-
-struct LayoutNode {
-  union {
-    leaf @0 :PaneId;
-    split @1 :SplitNode;
-    stack @2 :StackNode;
-  }
-}
-
-struct SplitNode {
-  dir @0 :Direction;
-  ratio @1 :Float32;
-  a @2 :LayoutNode;
-  b @3 :LayoutNode;
-}
-
-struct StackNode {
-  panes @0 :List(PaneId);
-  visible @1 :UInt32;
-}
-```
-
-=== Per-pane render schemas (excerpt)
-
-```capnp
-struct PaneRender {
-  paneId @0 :PaneId;
-  generation @1 :UInt64;        # for debugging out-of-order arrivals
-  union {
-    terminal @2 :TerminalRender;
-    editor @3 :EditorRender;
-    files @4 :FilesRender;
-    # ... others
-  }
-}
-
-struct TerminalRender {
-  bytes @0 :Data;               # raw VT, libghostty-vt parses
-}
-
-struct EditorRender {
-  union {
-    full @0 :EditorFullState;   # initial subscribe
-    delta @1 :EditorDelta;      # incremental
-  }
-}
-
-struct EditorFullState {
-  text @0 :Text;
-  selection @1 :Selection;
-  diagnostics @2 :List(Diagnostic);
-  language @3 :Text;
-  scroll @4 :ScrollPosition;
-}
-
-struct EditorDelta {
-  textChanges @0 :List(TextChange);
-  selection @1 :Selection;
-  diagnosticsDelta @2 :DiagnosticsDelta;
-  scroll @3 :ScrollPosition;
-}
-
-struct TextChange {
-  range @0 :Range;
-  newText @1 :Text;
-}
-```
-
-== Glossary
 
 #table(
   columns: (auto, 1fr),
   stroke: (x: none, y: 0.4pt + luma(180)),
   inset: 6pt,
   align: (left, left),
-  [*Action*], [A named operation in the kernel's registry; invoked by keymap or command palette.],
-  [*Capability*], [A typed RPC surface (PTY, fs, proc, lsp, …) provided by either local handlers or `agentd`.],
-  [*Channel*], [A logical bidirectional stream over the transport, with sequence numbers and flow control.],
-  [*Daemon*], [The persistent local Codon process; owns sessions and authoritative state.],
+  [*Action*], [A named operation in the kernel's registry; invoked by keymap or command palette. Carries an `accepts: &[ObjectKind]` declaration.],
+  [*Buffer trait*], [The small Rust trait that abstracts buffer access. Implemented by `helix_view::Document`; consumed by vendored Zed crates after rewire.],
+  [*Object grammar*], [A pane kind's declaration of its object types and the refinement operators (next, inner, filter, …) over them.],
+  [*ObjectKind*], [The discriminant of `Selection` — Text, File, Hunk, Commit, Block, Message, Diagnostic, etc. Used by `Action::accepts` to gate verb applicability.],
   [*Pane*], [A typed leaf in a session's layout; one of terminal, editor, files, diff, git, agent, image, commit.],
-  [*Session*], [A unit of context: cwd, capability set, layout, project state. Equivalent to a Zellij workspace.],
+  [*Pane host*], [The GPUI component that recursively renders a `LayoutNode`.],
+  [*Register*], [A named slot holding a typed `Selection`. Per-session by default; named registers persist across sessions.],
+  [*Selection*], [A typed value representing the currently-targeted nouns in the focused pane. Pulled into action context by the kernel via `SelectionSource`.],
+  [*Session*], [A unit of context: cwd, layout, project state. The Codon equivalent of a Zellij workspace.],
   [*Stack*], [A layout node containing N panes in the same slot, one visible at a time. Replaces tabs.],
-  [*View protocol*], [The schema set used between window and daemon.],
-  [*Window*], [The GUI process; renders only.],
+  [*Vendored*], [Forked into Codon's monorepo under `vendor/`. We modify freely; we re-base from upstream on our schedule.],
 )
