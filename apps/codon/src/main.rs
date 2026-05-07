@@ -754,6 +754,40 @@ fn main() {
             wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
         });
         codon_mode::init(cx);
+
+        // Global pane navigation and management keybindings
+        use gpui::KeyBinding;
+        cx.bind_keys([
+            KeyBinding::new("alt-h", workspace::ActivatePaneLeft, None),
+            KeyBinding::new("alt-j", workspace::ActivatePaneDown, None),
+            KeyBinding::new("alt-k", workspace::ActivatePaneUp, None),
+            KeyBinding::new("alt-l", workspace::ActivatePaneRight, None),
+            KeyBinding::new(
+                "alt-|",
+                workspace::pane::SplitRight::default(),
+                None,
+            ),
+            KeyBinding::new(
+                "alt--",
+                workspace::pane::SplitDown::default(),
+                None,
+            ),
+            KeyBinding::new(
+                "alt-w",
+                workspace::CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                None,
+            ),
+            KeyBinding::new(
+                "alt-t",
+                workspace::NewTerminal { local: false },
+                None,
+            ),
+            KeyBinding::new("alt-e", file_manager::Open, None),
+        ]);
+
         vim::init(cx);
         file_manager::init(cx);
         terminal_view::init(cx);

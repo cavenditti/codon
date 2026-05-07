@@ -1,6 +1,6 @@
 mod file_manager;
 
-pub use file_manager::FileManager;
+pub use file_manager::{FileManager, Open};
 
 use gpui::App;
 
