@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+codon-mode.workspace = true
 fs.workspace = true
 gpui.workspace = true
 log.workspace = true

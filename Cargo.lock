@@ -3268,6 +3268,7 @@ dependencies = [
  "cli",
  "client",
  "codestral",
+ "codon-mode",
  "collab_ui",
  "collections",
  "command_palette",
@@ -3405,6 +3406,16 @@ dependencies = [
  "zlog",
  "zlog_settings",
  "ztracing",
+]
+
+[[package]]
+name = "codon-mode"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "ui",
+ "vim",
+ "workspace",
 ]
 
 [[package]]
@@ -6542,6 +6553,7 @@ name = "file-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-mode",
  "fs",
  "gpui",
  "log",

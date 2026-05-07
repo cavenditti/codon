@@ -753,6 +753,7 @@ fn main() {
             },
             wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
         });
+        codon_mode::init(cx);
         vim::init(cx);
         file_manager::init(cx);
         terminal_view::init(cx);

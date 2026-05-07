@@ -1,6 +1,7 @@
+use codon_mode::{CodonModeTracker, PaneMode};
 use gpui::{
     actions, div, prelude::*, px, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Styled, Task, Window,
+    IntoElement, KeyBinding, KeyContext, Render, SharedString, Styled, Task, Window,
 };
 use std::cmp;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,6 @@ struct DirEntry {
     path: PathBuf,
     is_dir: bool,
     is_hidden: bool,
-    is_symlink: bool,
 }
 
 #[derive(Clone)]
@@ -37,12 +37,12 @@ enum Preview {
     Directory(Vec<DirEntry>),
     FileContent(String),
     Binary,
-    Loading,
     Empty,
 }
 
 pub struct FileManager {
     focus_handle: FocusHandle,
+    mode: PaneMode,
     current_dir: PathBuf,
     entries: Vec<DirEntry>,
     selected_index: usize,
@@ -67,13 +67,16 @@ impl FileManager {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, window, |this: &mut Self, window, cx| {
-            this.reload_entries(window, cx);
+        cx.on_focus(&focus_handle, window, |this: &mut Self, _window, cx| {
+            let tracker = cx.global_mut::<CodonModeTracker>();
+            tracker.mode = this.mode;
+            tracker.detail = None;
         })
         .detach();
 
         let mut this = Self {
             focus_handle,
+            mode: PaneMode::Normal,
             current_dir: initial_dir,
             entries: Vec::new(),
             selected_index: 0,
@@ -84,6 +87,17 @@ impl FileManager {
         };
         this.reload_entries_sync();
         this
+    }
+
+    fn dispatch_context(&self) -> KeyContext {
+        let mut context = KeyContext::new_with_defaults();
+        context.add("FileManager");
+        match self.mode {
+            PaneMode::Normal => context.set("pane_mode", "normal"),
+            PaneMode::Insert => context.set("pane_mode", "insert"),
+            PaneMode::Command => context.set("pane_mode", "command"),
+        }
+        context
     }
 
     fn reload_entries_sync(&mut self) {
@@ -128,7 +142,7 @@ impl FileManager {
         }
     }
 
-    fn navigate_down(&mut self, _: &NavigateDown, window: &mut Window, cx: &mut Context<Self>) {
+    fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
             self.update_preview_sync();
@@ -136,7 +150,7 @@ impl FileManager {
         }
     }
 
-    fn navigate_up(&mut self, _: &NavigateUp, window: &mut Window, cx: &mut Context<Self>) {
+    fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
         self.update_preview_sync();
         cx.notify();
@@ -157,18 +171,22 @@ impl FileManager {
             self.selected_index = 0;
             self.reload_entries(window, cx);
         } else {
-            // Open file in editor
             let path = entry.path.clone();
             cx.spawn_in(window, async move |_this, cx| {
-                cx.update(|_, cx| {
-                    if let Some(workspace_handle) = cx.active_window()
+                let _ = cx.update(|_, cx| {
+                    if let Some(workspace_handle) = cx
+                        .active_window()
                         .and_then(|w| w.downcast::<workspace::MultiWorkspace>())
                     {
-                        workspace_handle.update(cx, |multi_workspace, window, cx| {
-                            multi_workspace.workspace().update(cx, |workspace, cx| {
-                                workspace.open_abs_path(path, Default::default(), window, cx).detach();
-                            });
-                        }).ok();
+                        workspace_handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                multi_workspace.workspace().update(cx, |workspace, cx| {
+                                    workspace
+                                        .open_abs_path(path, Default::default(), window, cx)
+                                        .detach();
+                                });
+                            })
+                            .ok();
                     }
                 });
             })
@@ -191,7 +209,6 @@ impl FileManager {
             self.selected_index = 0;
             self.reload_entries(window, cx);
 
-            // Try to select the directory we came from
             if let Some(name) = old_dir_name {
                 if let Some(idx) = self.entries.iter().position(|e| e.name == name) {
                     self.selected_index = idx;
@@ -219,30 +236,6 @@ impl FileManager {
     fn toggle_hidden(&mut self, _: &ToggleHidden, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
         self.reload_entries(window, cx);
-    }
-
-    fn handle_key_down(
-        &mut self,
-        event: &gpui::KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let key = event.keystroke.key.as_str();
-        let shift = event.keystroke.modifiers.shift;
-        let handled = match key {
-            "j" if !shift => { self.navigate_down(&NavigateDown, window, cx); true }
-            "k" if !shift => { self.navigate_up(&NavigateUp, window, cx); true }
-            "l" if !shift => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "enter" => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "h" if !shift => { self.parent_directory(&ParentDirectory, window, cx); true }
-            "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
-            "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
-            "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
-            _ => false,
-        };
-        if handled {
-            cx.stop_propagation();
-        }
     }
 
     fn render_column(
@@ -304,7 +297,12 @@ impl FileManager {
                     div().children(
                         names
                             .into_iter()
-                            .map(|n| div().px(px(6.)).py(px(1.)).child(Label::new(n).color(Color::Muted))),
+                            .map(|n| {
+                                div()
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .child(Label::new(n).color(Color::Muted))
+                            }),
                     )
                 }
                 Preview::FileContent(content) => div().child(
@@ -313,15 +311,8 @@ impl FileManager {
                         .py(px(1.))
                         .child(Label::new(content.clone()).color(Color::Muted)),
                 ),
-                Preview::Binary => {
-                    div().child(Label::new("[binary file]").color(Color::Muted))
-                }
-                Preview::Loading => {
-                    div().child(Label::new("Loading...").color(Color::Muted))
-                }
-                Preview::Empty => {
-                    div().child(Label::new("[empty]").color(Color::Muted))
-                }
+                Preview::Binary => div().child(Label::new("[binary file]").color(Color::Muted)),
+                Preview::Empty => div().child(Label::new("[empty]").color(Color::Muted)),
             })
     }
 }
@@ -344,8 +335,15 @@ impl Render for FileManager {
 
         v_flex()
             .size_full()
+            .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::handle_key_down))
+            .on_action(cx.listener(Self::navigate_down))
+            .on_action(cx.listener(Self::navigate_up))
+            .on_action(cx.listener(Self::enter_directory))
+            .on_action(cx.listener(Self::parent_directory))
+            .on_action(cx.listener(Self::go_to_top))
+            .on_action(cx.listener(Self::go_to_bottom))
+            .on_action(cx.listener(Self::toggle_hidden))
             .child(
                 div()
                     .px(px(8.))
@@ -428,26 +426,37 @@ fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
                 return None;
             }
             let metadata = e.metadata().ok()?;
-            let is_symlink = e.file_type().ok().map(|ft| ft.is_symlink()).unwrap_or(false);
             Some(DirEntry {
                 name,
                 path: e.path(),
                 is_dir: metadata.is_dir(),
                 is_hidden,
-                is_symlink,
             })
         })
         .collect();
 
     entries.sort_by(|a, b| {
-        // Directories first, then alphabetical
-        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
     entries
 }
 
 pub fn init(cx: &mut App) {
+    let context = Some("FileManager && pane_mode == normal");
+    cx.bind_keys([
+        KeyBinding::new("j", NavigateDown, context),
+        KeyBinding::new("k", NavigateUp, context),
+        KeyBinding::new("l", EnterDirectory, context),
+        KeyBinding::new("enter", EnterDirectory, context),
+        KeyBinding::new("h", ParentDirectory, context),
+        KeyBinding::new("g g", GoToTop, context),
+        KeyBinding::new("shift-g", GoToBottom, context),
+        KeyBinding::new(".", ToggleHidden, context),
+    ]);
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
             let fs = workspace.app_state().fs.clone();
