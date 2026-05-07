@@ -1952,6 +1952,7 @@ pub fn handle_keymap_file_changes(
     }
 
     load_default_keymap(cx);
+    load_codon_keymap(cx);
 
     struct KeymapParseErrorNotification;
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
@@ -2083,6 +2084,7 @@ fn show_markdown_app_notification<F>(
 fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+    load_codon_keymap(cx);
 
     for key_binding in &mut user_key_bindings {
         key_binding.set_meta(KeybindSource::User.meta());
@@ -2120,6 +2122,28 @@ pub fn load_default_keymap(cx: &mut App) {
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
     }
+}
+
+pub fn load_codon_keymap(cx: &mut App) {
+    use gpui::KeyBinding;
+    cx.bind_keys([
+        // Pane navigation: cmd-k h/j/k/l
+        KeyBinding::new("cmd-k h", workspace::ActivatePaneLeft, None),
+        KeyBinding::new("cmd-k j", workspace::ActivatePaneDown, None),
+        KeyBinding::new("cmd-k k", workspace::ActivatePaneUp, None),
+        KeyBinding::new("cmd-k l", workspace::ActivatePaneRight, None),
+        // Splits: cmd-k |/-
+        KeyBinding::new("cmd-k |", workspace::pane::SplitRight::default(), None),
+        KeyBinding::new("cmd-k -", workspace::pane::SplitDown::default(), None),
+        // New terminal as center pane item: cmd-k t
+        KeyBinding::new(
+            "cmd-k t",
+            workspace::NewTerminal { local: false },
+            None,
+        ),
+        // File manager: cmd-k e
+        KeyBinding::new("cmd-k e", file_manager::Open, None),
+    ]);
 }
 
 pub fn open_new_ssh_project_from_project(

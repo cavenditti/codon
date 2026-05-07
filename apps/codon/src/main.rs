@@ -886,29 +886,6 @@ fn main() {
         })
         .detach();
 
-        // Global pane keybindings using cmd-k prefix (like Zed's native pattern).
-        // Registered last so they take priority over default keymaps.
-        use gpui::KeyBinding;
-        cx.bind_keys([
-            // Pane navigation: cmd-k h/j/k/l
-            KeyBinding::new("cmd-k h", workspace::ActivatePaneLeft, None),
-            KeyBinding::new("cmd-k j", workspace::ActivatePaneDown, None),
-            KeyBinding::new("cmd-k k", workspace::ActivatePaneUp, None),
-            KeyBinding::new("cmd-k l", workspace::ActivatePaneRight, None),
-            // Splits: cmd-k |/-
-            KeyBinding::new("cmd-k |", workspace::pane::SplitRight::default(), None),
-            KeyBinding::new("cmd-k -", workspace::pane::SplitDown::default(), None),
-            // New terminal as pane item: cmd-k t
-            KeyBinding::new(
-                "cmd-k t",
-                workspace::NewTerminal { local: false },
-                None,
-            ),
-            // File manager: cmd-k e
-            KeyBinding::new("cmd-k e", file_manager::Open, None),
-            // Close pane: cmd-w (already exists, but ensure it works)
-        ]);
-
         cx.activate(true);
 
         cx.spawn({
