@@ -886,41 +886,27 @@ fn main() {
         })
         .detach();
 
-        // Global pane navigation and management keybindings.
+        // Global pane keybindings using cmd-k prefix (like Zed's native pattern).
         // Registered last so they take priority over default keymaps.
         use gpui::KeyBinding;
         cx.bind_keys([
-            // Pane navigation
-            KeyBinding::new("ctrl-shift-h", workspace::ActivatePaneLeft, None),
-            KeyBinding::new("ctrl-shift-j", workspace::ActivatePaneDown, None),
-            KeyBinding::new("ctrl-shift-k", workspace::ActivatePaneUp, None),
-            KeyBinding::new("ctrl-shift-l", workspace::ActivatePaneRight, None),
-            // Splits
+            // Pane navigation: cmd-k h/j/k/l
+            KeyBinding::new("cmd-k h", workspace::ActivatePaneLeft, None),
+            KeyBinding::new("cmd-k j", workspace::ActivatePaneDown, None),
+            KeyBinding::new("cmd-k k", workspace::ActivatePaneUp, None),
+            KeyBinding::new("cmd-k l", workspace::ActivatePaneRight, None),
+            // Splits: cmd-k |/-
+            KeyBinding::new("cmd-k |", workspace::pane::SplitRight::default(), None),
+            KeyBinding::new("cmd-k -", workspace::pane::SplitDown::default(), None),
+            // New terminal as pane item: cmd-k t
             KeyBinding::new(
-                "ctrl-shift-|",
-                workspace::pane::SplitRight::default(),
-                None,
-            ),
-            KeyBinding::new(
-                "ctrl-shift--",
-                workspace::pane::SplitDown::default(),
-                None,
-            ),
-            // Pane management
-            KeyBinding::new(
-                "ctrl-shift-w",
-                workspace::CloseActiveItem {
-                    save_intent: None,
-                    close_pinned: false,
-                },
-                None,
-            ),
-            KeyBinding::new(
-                "ctrl-shift-t",
+                "cmd-k t",
                 workspace::NewTerminal { local: false },
                 None,
             ),
-            KeyBinding::new("ctrl-shift-e", file_manager::Open, None),
+            // File manager: cmd-k e
+            KeyBinding::new("cmd-k e", file_manager::Open, None),
+            // Close pane: cmd-w (already exists, but ensure it works)
         ]);
 
         cx.activate(true);
