@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/codon",
+    "crates/file-manager",
     "vendor/zed/crates/acp_thread",
     "vendor/zed/crates/acp_tools",
     "vendor/zed/crates/action_log",
@@ -333,6 +334,7 @@ feature_flags_macros = { path = "vendor/zed/crates/feature_flags_macros" }
 feedback = { path = "vendor/zed/crates/feedback" }
 file_finder = { path = "vendor/zed/crates/file_finder" }
 file_icons = { path = "vendor/zed/crates/file_icons" }
+file-manager = { path = "crates/file-manager" }
 fs = { path = "vendor/zed/crates/fs" }
 fuzzy = { path = "vendor/zed/crates/fuzzy" }
 fuzzy_nucleo = { path = "vendor/zed/crates/fuzzy_nucleo" }

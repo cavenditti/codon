@@ -3296,6 +3296,7 @@ dependencies = [
  "extensions_ui",
  "feature_flags",
  "feedback",
+ "file-manager",
  "file_finder",
  "fs",
  "futures 0.3.32",
@@ -6534,6 +6535,24 @@ checksum = "d013fc25338cc558c5c2cfbad646908fb23591e2404481826742b651c9af7160"
 dependencies = [
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "file-manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "gpui",
+ "log",
+ "menu",
+ "paths",
+ "project",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
