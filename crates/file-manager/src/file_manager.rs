@@ -1,7 +1,7 @@
 use codon_mode::{CodonModeTracker, PaneMode};
 use gpui::{
     actions, div, prelude::*, px, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, KeyBinding, KeyContext, Render, SharedString, Styled, Task, Window,
+    IntoElement, KeyContext, Render, SharedString, Styled, Task, Window,
 };
 use std::cmp;
 use std::path::{Path, PathBuf};
@@ -238,6 +238,33 @@ impl FileManager {
         self.reload_entries(window, cx);
     }
 
+    fn handle_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != PaneMode::Normal {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        let shift = event.keystroke.modifiers.shift;
+        let handled = match key {
+            "j" if !shift => { self.navigate_down(&NavigateDown, window, cx); true }
+            "k" if !shift => { self.navigate_up(&NavigateUp, window, cx); true }
+            "l" if !shift => { self.enter_directory(&EnterDirectory, window, cx); true }
+            "enter" => { self.enter_directory(&EnterDirectory, window, cx); true }
+            "h" if !shift => { self.parent_directory(&ParentDirectory, window, cx); true }
+            "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
+            "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
+            "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
+            _ => false,
+        };
+        if handled {
+            cx.stop_propagation();
+        }
+    }
+
     fn render_column(
         &self,
         entries: &[DirEntry],
@@ -337,13 +364,7 @@ impl Render for FileManager {
             .size_full()
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::navigate_down))
-            .on_action(cx.listener(Self::navigate_up))
-            .on_action(cx.listener(Self::enter_directory))
-            .on_action(cx.listener(Self::parent_directory))
-            .on_action(cx.listener(Self::go_to_top))
-            .on_action(cx.listener(Self::go_to_bottom))
-            .on_action(cx.listener(Self::toggle_hidden))
+            .on_key_down(cx.listener(Self::handle_key_down))
             .child(
                 div()
                     .px(px(8.))
@@ -445,18 +466,6 @@ fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
 }
 
 pub fn init(cx: &mut App) {
-    let context = Some("FileManager && pane_mode == normal");
-    cx.bind_keys([
-        KeyBinding::new("j", NavigateDown, context),
-        KeyBinding::new("k", NavigateUp, context),
-        KeyBinding::new("l", EnterDirectory, context),
-        KeyBinding::new("enter", EnterDirectory, context),
-        KeyBinding::new("h", ParentDirectory, context),
-        KeyBinding::new("g g", GoToTop, context),
-        KeyBinding::new("shift-g", GoToBottom, context),
-        KeyBinding::new(".", ToggleHidden, context),
-    ]);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
             let fs = workspace.app_state().fs.clone();
