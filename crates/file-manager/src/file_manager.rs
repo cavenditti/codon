@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{h_flex, v_flex, Color, Icon, IconName, Label, LabelCommon, StyledExt};
+use util::ResultExt;
 use workspace::{Item, item::ItemEvent, Workspace};
 
 actions!(
@@ -177,11 +178,11 @@ impl FileManager {
             let path = entry.path.clone();
             let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, cx| {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.open_abs_path(path, Default::default(), window, cx)
-                    })
-                    .ok();
+                if let Ok(task) = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.open_abs_path(path, Default::default(), window, cx)
+                }) {
+                    task.await.log_err();
+                }
             })
             .detach();
         }
