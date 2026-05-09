@@ -486,12 +486,18 @@ fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
-        // Force Helix mode as Codon's default editing model.
+        // Codon default settings overrides.
         // Users can still override in their settings file.
         settings::SettingsStore::update_global(cx, |store, cx| {
             let defaults = settings::default_settings()
                 .replace(r#""vim_mode": false"#, r#""vim_mode": true"#)
-                .replace(r#""helix_mode": false"#, r#""helix_mode": true"#);
+                .replace(r#""helix_mode": false"#, r#""helix_mode": true"#)
+                .replace(r#""which_key": {
+    // Whether to show the which-key popup when holding down key combinations.
+    "enabled": false,"#,
+                    r#""which_key": {
+    // Whether to show the which-key popup when holding down key combinations.
+    "enabled": true,"#);
             store.set_default_settings(&defaults, cx).ok();
         });
         zlog_settings::init(cx);
@@ -869,22 +875,6 @@ fn main() {
         }
 
         initialize_workspace(app_state.clone(), cx);
-
-        // Open terminal as a center pane item (not in the bottom dock)
-        cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-            workspace.register_action(
-                |workspace, _: &workspace::NewTerminal, window, cx| {
-                    terminal_view::terminal_panel::TerminalPanel::add_center_terminal(
-                        workspace,
-                        window,
-                        cx,
-                        |project, cx| project.create_terminal_shell(None, cx),
-                    )
-                    .detach_and_log_err(cx);
-                },
-            );
-        })
-        .detach();
 
         cx.activate(true);
 

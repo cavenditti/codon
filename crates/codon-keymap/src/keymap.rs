@@ -43,15 +43,28 @@ struct ModeBindings {
 }
 
 const DEFAULT_KEYMAP: &str = r#"
+# Codon default keybindings
+# Override in ~/.config/codon/keymap.toml
+
 [bindings.global]
+# Pane navigation
 "cmd-k h" = "workspace::ActivatePaneLeft"
 "cmd-k j" = "workspace::ActivatePaneDown"
 "cmd-k k" = "workspace::ActivatePaneUp"
 "cmd-k l" = "workspace::ActivatePaneRight"
+
+# Pane splitting
 "cmd-k |" = "pane::SplitRight"
 "cmd-k -" = "pane::SplitDown"
+"cmd-k \\" = "pane::SplitRight"
+
+# Pane management
 "cmd-k t" = "workspace::NewTerminal"
 "cmd-k e" = "file_manager::Open"
+"cmd-k w" = "pane::CloseActiveItem"
+
+# Command palette
+"cmd-shift-p" = "command_palette::Toggle"
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
