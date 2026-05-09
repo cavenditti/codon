@@ -479,6 +479,15 @@ fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
 }
 
 pub fn init(cx: &mut App) {
+    // Register which selections file manager actions accept
+    let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
+    registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
+    registry.register::<NavigateDown>(&[ObjectKind::File, ObjectKind::Dir]);
+    registry.register::<EnterDirectory>(&[ObjectKind::File, ObjectKind::Dir]);
+    registry.register::<ParentDirectory>(&[ObjectKind::Dir]);
+    registry.register::<ToggleHidden>(&[]); // nullary
+    registry.register::<Open>(&[]); // nullary
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
             let fs = workspace.app_state().fs.clone();

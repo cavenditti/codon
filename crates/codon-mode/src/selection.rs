@@ -1,35 +1,5 @@
+use command_palette_hooks::ObjectKind;
 use std::path::PathBuf;
-
-/// The kind of object a selection refers to.
-/// Used by actions to declare what they accept (via `Action::accepts`)
-/// and by the command palette to filter applicable verbs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ObjectKind {
-    // Editor
-    Text,
-    // Files
-    File,
-    Dir,
-    // Git
-    Hunk,
-    Commit,
-    Branch,
-    Stash,
-    Ref,
-    // Terminal
-    Block,
-    Url,
-    Path,
-    Process,
-    // Diagnostics
-    Diagnostic,
-    // Agent
-    Message,
-    ToolCall,
-    ToolResult,
-    // Image
-    Image,
-}
 
 /// A typed selection representing the currently-targeted nouns
 /// in the focused pane. Each pane kind produces selections of
