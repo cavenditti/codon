@@ -176,9 +176,8 @@ impl FileManager {
     }
 
     fn ensure_visible_down(&self) {
-        // When moving down, keep scrolloff items below the selection
         let scrolloff = 5;
-        self.scroll_handle.scroll_to_item_with_offset(
+        self.scroll_handle.scroll_to_item_strict_with_offset(
             self.selected_index,
             ScrollStrategy::Bottom,
             scrolloff,
@@ -186,9 +185,8 @@ impl FileManager {
     }
 
     fn ensure_visible_up(&self) {
-        // When moving up, keep scrolloff items above the selection
         let scrolloff = 5;
-        self.scroll_handle.scroll_to_item_with_offset(
+        self.scroll_handle.scroll_to_item_strict_with_offset(
             self.selected_index,
             ScrollStrategy::Top,
             scrolloff,
@@ -709,9 +707,11 @@ impl Render for FileManager {
         // Clone entries for the uniform_list closure
         let entries = self.entries.clone();
         let marked = self.marked.clone();
+        let this = cx.entity().downgrade();
+        let focus = self.focus_handle.clone();
 
         let current_col = uniform_list("file-list", entries.len(), {
-            move |range, _window, cx| {
+            move |range, window, cx| {
                 let theme = cx.theme();
                 let selected_bg = theme.colors().ghost_element_selected;
 
@@ -742,18 +742,32 @@ impl Render for FileManager {
                         };
 
                         let marked_bg = theme.colors().ghost_element_hover;
+                        let this = this.clone();
+                        let focus = focus.clone();
 
-                        h_flex()
-                            .w_full()
-                            .px(px(4.))
-                            .py(px(1.))
-                            .gap(px(4.))
-                            .when(is_marked && !is_selected, |d| d.bg(marked_bg))
-                            .when(is_selected, |d| d.bg(selected_bg))
-                            .child(icon_element)
-                            .child(Label::new(entry.name.clone()).size(LabelSize::Small).color(text_color).single_line())
-                            .when(entry.is_symlink, |el| {
-                                el.child(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
+                        div()
+                            .id(("file-entry", i))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .px(px(4.))
+                                    .py(px(1.))
+                                    .gap(px(4.))
+                                    .when(is_marked && !is_selected, |d| d.bg(marked_bg))
+                                    .when(is_selected, |d| d.bg(selected_bg))
+                                    .child(icon_element)
+                                    .child(Label::new(entry.name.clone()).size(LabelSize::Small).color(text_color).single_line())
+                                    .when(entry.is_symlink, |el| {
+                                        el.child(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
+                                    }),
+                            )
+                            .on_click(move |_event, window, cx| {
+                                focus.focus(window, cx);
+                                this.update(cx, |fm, cx| {
+                                    fm.selected_index = i;
+                                    fm.update_preview_sync();
+                                    cx.notify();
+                                }).ok();
                             })
                     })
                     .collect()
