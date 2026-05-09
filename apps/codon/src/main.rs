@@ -1560,7 +1560,13 @@ pub(crate) async fn restore_or_create_workspace(
                         match restore_on_startup {
                             workspace::RestoreOnStartupBehavior::Launchpad => {}
                             _ => {
-                                Editor::new_file(workspace, &Default::default(), window, cx);
+                                terminal_view::terminal_panel::TerminalPanel::add_center_terminal(
+                                workspace,
+                                window,
+                                cx,
+                                |project, cx| project.create_terminal_shell(None, cx),
+                            )
+                            .detach_and_log_err(cx);
                             }
                         }
                     },
@@ -1568,9 +1574,8 @@ pub(crate) async fn restore_or_create_workspace(
             })
             .await?;
         }
-    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
+        // Skip onboarding — Codon opens with a terminal
         cx.update(|cx| {
             workspace::open_new(
                 Default::default(),
@@ -1581,7 +1586,13 @@ pub(crate) async fn restore_or_create_workspace(
                     match restore_on_startup {
                         workspace::RestoreOnStartupBehavior::Launchpad => {}
                         _ => {
-                            Editor::new_file(workspace, &Default::default(), window, cx);
+                            terminal_view::terminal_panel::TerminalPanel::add_center_terminal(
+                                workspace,
+                                window,
+                                cx,
+                                |project, cx| project.create_terminal_shell(None, cx),
+                            )
+                            .detach_and_log_err(cx);
                         }
                     }
                 },
