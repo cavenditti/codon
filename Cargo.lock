@@ -3268,6 +3268,7 @@ dependencies = [
  "cli",
  "client",
  "codestral",
+ "codon-keymap",
  "codon-mode",
  "collab_ui",
  "collections",
@@ -3409,9 +3410,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-keymap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "file-manager",
+ "fs",
+ "gpui",
+ "log",
+ "serde",
+ "settings",
+ "toml 0.8.23",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "codon-mode"
 version = "0.1.0"
 dependencies = [
+ "command_palette_hooks",
  "gpui",
  "ui",
  "vim",
@@ -6565,6 +6584,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -18152,6 +18172,7 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "breadcrumbs",
+ "codon-mode",
  "collections",
  "db",
  "dirs",
