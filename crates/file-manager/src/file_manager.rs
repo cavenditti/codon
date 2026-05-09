@@ -1,7 +1,8 @@
 use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
 use gpui::{
-    actions, div, prelude::*, px, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, Render, SharedString, Styled, Task, WeakEntity, Window,
+    actions, div, prelude::*, px, uniform_list, App, ClipboardItem, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, KeyContext, Render, ScrollStrategy, SharedString, Styled,
+    Task, UniformListScrollHandle, WeakEntity, Window,
 };
 use std::cmp;
 use std::collections::BTreeSet;
@@ -64,6 +65,8 @@ pub struct FileManager {
     preview: Preview,
     show_hidden: bool,
     fs: Arc<dyn fs::Fs>,
+    scroll_handle: UniformListScrollHandle,
+    visible_lines: usize,
     pending_input: Option<PendingInput>,
 }
 
@@ -109,6 +112,8 @@ impl FileManager {
             preview: Preview::Empty,
             show_hidden: false,
             fs,
+            scroll_handle: UniformListScrollHandle::new(),
+            visible_lines: 30,
             pending_input: None,
         };
         this.reload_entries_sync();
@@ -143,6 +148,7 @@ impl FileManager {
 
     fn reload_entries(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.reload_entries_sync();
+        self.scroll_to_selected();
         cx.emit(FileManagerEvent::PathChanged);
         cx.notify();
     }
@@ -169,9 +175,15 @@ impl FileManager {
         }
     }
 
+    fn scroll_to_selected(&self) {
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, ScrollStrategy::Top);
+    }
+
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
+            self.scroll_to_selected();
             self.update_preview_sync();
             cx.notify();
         }
@@ -179,6 +191,44 @@ impl FileManager {
 
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
+        self.scroll_to_selected();
+        self.update_preview_sync();
+        cx.notify();
+    }
+
+    fn half_page_down(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.entries.is_empty() {
+            let half = self.visible_lines / 2;
+            self.selected_index = cmp::min(self.selected_index + half, self.entries.len() - 1);
+            self.scroll_to_selected();
+            self.update_preview_sync();
+            cx.notify();
+        }
+    }
+
+    fn half_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let half = self.visible_lines / 2;
+        self.selected_index = self.selected_index.saturating_sub(half);
+        self.scroll_to_selected();
+        self.update_preview_sync();
+        cx.notify();
+    }
+
+    fn page_down(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.entries.is_empty() {
+            self.selected_index = cmp::min(
+                self.selected_index + self.visible_lines,
+                self.entries.len() - 1,
+            );
+            self.scroll_to_selected();
+            self.update_preview_sync();
+            cx.notify();
+        }
+    }
+
+    fn page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_index = self.selected_index.saturating_sub(self.visible_lines);
+        self.scroll_to_selected();
         self.update_preview_sync();
         cx.notify();
     }
@@ -238,6 +288,7 @@ impl FileManager {
 
     fn go_to_top(&mut self, _: &GoToTop, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = 0;
+        self.scroll_to_selected();
         self.update_preview_sync();
         cx.notify();
     }
@@ -245,6 +296,7 @@ impl FileManager {
     fn go_to_bottom(&mut self, _: &GoToBottom, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = self.entries.len() - 1;
+            self.scroll_to_selected();
             self.update_preview_sync();
             cx.notify();
         }
@@ -402,21 +454,31 @@ impl FileManager {
         }
         let key = event.keystroke.key.as_str();
         let shift = event.keystroke.modifiers.shift;
+        let ctrl = event.keystroke.modifiers.control;
         let handled = match key {
-            "j" if !shift => { self.navigate_down(&NavigateDown, window, cx); true }
-            "k" if !shift => { self.navigate_up(&NavigateUp, window, cx); true }
-            "l" if !shift => { self.enter_directory(&EnterDirectory, window, cx); true }
+            // Navigation
+            "j" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
+            "k" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
+            "l" if !shift && !ctrl => { self.enter_directory(&EnterDirectory, window, cx); true }
             "enter" | "\n" => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "h" if !shift => { self.parent_directory(&ParentDirectory, window, cx); true }
+            "h" if !shift && !ctrl => { self.parent_directory(&ParentDirectory, window, cx); true }
             "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
             "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
-            "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
-            " " => { self.toggle_mark(window, cx); true }
+            // Scrolling
+            "d" if ctrl => { self.half_page_down(window, cx); true }
+            "u" if ctrl => { self.half_page_up(window, cx); true }
+            "pagedown" => { self.page_down(window, cx); true }
+            "pageup" => { self.page_up(window, cx); true }
+            // Selection
+            "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
+            // File operations
             "y" if !shift => { self.yank_path(window, cx); true }
             "a" if !shift => { self.create_file(window, cx); true }
             "a" if shift => { self.create_directory(window, cx); true }
-            "d" if !shift => { self.delete_entry(window, cx); true }
+            "d" if !shift && !ctrl => { self.delete_entry(window, cx); true }
             "r" if !shift => { self.rename_entry(window, cx); true }
+            // Toggles
+            "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
             // Command mode
             ";" if shift => {
                 window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
@@ -508,10 +570,9 @@ impl FileManager {
             })
     }
 
-    fn render_column(
+    fn render_column_static(
         &self,
         entries: &[DirEntry],
-        selected: Option<usize>,
         dimmed: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -524,7 +585,7 @@ impl FileManager {
             .bg(bg)
             .py(px(2.))
             .children(entries.iter().enumerate().map(|(i, entry)| {
-                self.render_entry(entry, i, selected, dimmed, cx)
+                self.render_entry(entry, i, None, dimmed, cx)
             }))
     }
 
@@ -599,22 +660,23 @@ impl Focusable for FileManager {
 
 impl Render for FileManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let parent_col = self.render_column(&self.parent_entries, None, true, cx);
-        let current_col = self.render_column(&self.entries, Some(self.selected_index), false, cx);
+        let parent_col = self.render_column_static(&self.parent_entries, true, cx);
         let preview_col = self.render_preview(cx);
         let input_bar = self.render_input_bar(cx);
 
         let theme = cx.theme();
         let border_color = theme.colors().border;
+        let bg = theme.colors().surface_background;
         let dir_display = self.current_dir.display().to_string();
         let entry_count = self.entries.len();
         let marked_count = self.marked.len();
+        let selected_index = self.selected_index;
 
         let status_text = if marked_count > 0 {
             format!(
                 "{} | {}/{} | {} marked",
                 dir_display,
-                self.selected_index + 1,
+                selected_index + 1,
                 entry_count,
                 marked_count
             )
@@ -622,10 +684,67 @@ impl Render for FileManager {
             format!(
                 "{} | {}/{}",
                 dir_display,
-                if entry_count > 0 { self.selected_index + 1 } else { 0 },
+                if entry_count > 0 { selected_index + 1 } else { 0 },
                 entry_count
             )
         };
+
+        // Clone entries for the uniform_list closure
+        let entries = self.entries.clone();
+        let marked = self.marked.clone();
+
+        let current_col = uniform_list("file-list", entries.len(), {
+            move |range, _window, cx| {
+                let theme = cx.theme();
+                let selected_bg = theme.colors().ghost_element_selected;
+
+                range
+                    .map(|i| {
+                        let entry = &entries[i];
+                        let is_selected = i == selected_index;
+                        let is_marked = marked.contains(&i);
+
+                        let text_color = if is_marked {
+                            Color::Accent
+                        } else if entry.is_dir {
+                            Color::Accent
+                        } else {
+                            Color::Default
+                        };
+
+                        let icon_element = if entry.is_dir {
+                            match file_icons::FileIcons::get_folder_icon(false, &entry.path, cx) {
+                                Some(p) => Icon::from_path(p).size(IconSize::Small).color(Color::Muted).into_any_element(),
+                                None => Icon::new(IconName::Folder).size(IconSize::Small).color(Color::Muted).into_any_element(),
+                            }
+                        } else {
+                            match file_icons::FileIcons::get_icon(&entry.path, cx) {
+                                Some(p) => Icon::from_path(p).size(IconSize::Small).color(Color::Muted).into_any_element(),
+                                None => Icon::new(IconName::File).size(IconSize::Small).color(Color::Muted).into_any_element(),
+                            }
+                        };
+
+                        let mark_indicator = if is_marked { "*" } else { " " };
+
+                        h_flex()
+                            .px(px(4.))
+                            .py(px(1.))
+                            .gap(px(4.))
+                            .when(is_selected, |d| d.bg(selected_bg).rounded_sm())
+                            .child(Label::new(mark_indicator).size(LabelSize::Small).color(Color::Accent))
+                            .child(icon_element)
+                            .child(Label::new(entry.name.clone()).size(LabelSize::Small).color(text_color).single_line())
+                            .when(entry.is_symlink, |el| {
+                                el.child(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
+                            })
+                    })
+                    .collect()
+            }
+        })
+        .flex_1()
+        .bg(bg)
+        .py(px(2.))
+        .track_scroll(&self.scroll_handle);
 
         v_flex()
             .size_full()
