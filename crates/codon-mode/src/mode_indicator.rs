@@ -9,6 +9,7 @@ use vim::{Vim, VimEvent, state::VimGlobals};
 
 pub struct CodonModeIndicator {
     vim: Option<WeakEntity<Vim>>,
+    vim_focused: bool,
     pending_keys: Option<String>,
     vim_subscription: Option<Subscription>,
     _tracker_subscription: Subscription,
@@ -40,6 +41,7 @@ impl CodonModeIndicator {
                 .update(cx, |_, cx| {
                     cx.subscribe(&vim, |indicator, vim, event, cx| match event {
                         VimEvent::Focused => {
+                            indicator.vim_focused = true;
                             indicator.vim_subscription =
                                 Some(cx.observe(&vim, |_, _, cx| cx.notify()));
                             indicator.vim = Some(vim.downgrade());
@@ -52,6 +54,7 @@ impl CodonModeIndicator {
 
         Self {
             vim: None,
+            vim_focused: false,
             pending_keys: None,
             vim_subscription: None,
             _tracker_subscription,
@@ -102,7 +105,7 @@ impl CodonModeIndicator {
 
 impl Render for CodonModeIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (pane_mode, detail, pending, temp_mode) = if let Some(vim) = self.vim() {
+        let (pane_mode, detail, pending, temp_mode) = if self.vim_focused && let Some(vim) = self.vim() {
             let vim_readable = vim.read(cx);
             let mode = vim_readable.mode;
             let temp = vim_readable.temp_mode;
@@ -185,7 +188,11 @@ impl StatusItemView for CodonModeIndicator {
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
+        // When the active pane item changes, clear vim_focused.
+        // If the new item has a Vim, VimEvent::Focused will fire and set it back.
+        self.vim_focused = false;
+        cx.notify();
     }
 }
