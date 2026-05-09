@@ -2,47 +2,48 @@
 
 ## Current State Summary
 
-Working: Zed fork builds, Helix editing in editors, terminal with Normal mode (double-escape), file manager (three-column), mode indicator, tab hiding for single items, pane splits/navigation (cmd-k prefix).
+A Zed fork restructured as a terminal-first, always-modal multiplexer editor with Helix keybindings. Fully borderless window. All pane types are equal (no bottom dock). TOML keymap config. Selection-first interfaces defined. Action::accepts wired into command palette.
 
-Custom code: ~644 lines across `codon-mode` (150), `file-manager` (484), plus vendored changes (~100 lines across 4 Zed commits).
+Custom crates: `codon-mode` (~200 lines), `codon-keymap` (~200 lines), `file-manager` (~500 lines). Vendored Zed changes: ~12 commits across terminal_view, workspace, vim, command_palette, command_palette_hooks, ui, which_key, title_bar.
 
-Architecture phases 0-1 are complete, phases 2-5 are 0%.
+Architecture phase 0 complete, phase 1 complete, phases 2-5 are 0%.
 
 ---
 
 ## Phase 1 — Modal Shell & Action Layer ✓ COMPLETE
 
-### 1.1 Fix & polish what exists ✓
-- [x] Verify cmd-k keybindings actually fire
-- [x] Terminal Normal mode works (double-escape, j/k scroll, i to return)
-- [x] Terminal opens as center pane (NewTerminal override, not bottom dock)
+### 1.1 Core UX ✓
+- [x] Helix mode force-enabled by default
 - [x] Terminal as default first pane (new windows open with terminal)
-- [x] Mode indicator shows correctly for all pane types
+- [x] Terminal opens as center pane (NewTerminal always uses add_center_terminal)
+- [x] Tab bar hidden for single-item panes
+- [x] Title bar removed — project name and git branch in status bar
+- [x] Borderless window (no OS decorations)
+- [x] Compact UI (reduced tab bar, status bar, which-key padding)
+- [x] Which-key enabled by default (500ms delay)
+- [x] UI font reduced to 14
 
-### 1.2 Command mode (`:` prefix) ✓
-- [x] `:` opens command palette in terminal Normal mode and file manager Normal mode
-- [x] Action completion via Zed's command palette
+### 1.2 Modal system ✓
+- [x] PaneMode (Normal/Insert/Command) — crates/codon-mode
+- [x] Mode indicator in left status bar, works for all pane types
+- [x] Editor: vim/helix handles mode natively
+- [x] Terminal: Insert default, Normal via double-escape (j/k/Ctrl-u/d/gg/G scrollback, i to return)
+- [x] File manager: Normal default, three-column yazi layout, j/k/h/l navigation
+- [x] Command mode (:) opens command palette in terminal and file manager Normal mode
 
 ### 1.3 Keybinding system ✓
-- [x] TOML keymap config — crates/codon-keymap loads from `~/.config/codon/keymap.toml`
-- [x] Layered resolution — global + per-pane-kind per-mode
-- [x] Default keymap ships embedded in the binary
+- [x] TOML keymap config — crates/codon-keymap, loads from ~/.config/codon/keymap.toml
+- [x] Default keymap embedded (cmd-k h/j/k/l, cmd-k |/-, cmd-k t/e/w)
+- [x] Survives keymap reloads (load_codon_keymap called from reload_keymaps)
 - [ ] Hot-reload — watch keymap file for changes (follow-up)
 
-### 1.4 Selection-first foundation (interfaces only) ✓
-- [x] Selection enum with Text, Files, Hunks, Commits, Blocks, Diagnostics, Messages
-- [x] ObjectKind enum with all pane object types
-- [x] SelectionSource trait — current_selection() + object_kinds()
+### 1.4 Selection-first foundation ✓
+- [x] ObjectKind enum (Text, File, Dir, Hunk, Commit, Branch, Block, Url, Diagnostic, Message) — in command_palette_hooks
+- [x] Selection enum + SelectionSource trait — in codon-mode
 - [x] FileManager implements SelectionSource
-- [ ] Action::accepts field (follow-up — needs action registry)
-- [ ] Command palette filters by selection kind (follow-up)
-
-### 1.5 Pane abstraction ✓
-- [x] Unified PaneMode (Normal/Insert/Command) across all pane types
-- [x] Editor: vim handles mode switching natively
-- [x] Terminal: Insert default, Normal via double-escape
-- [x] File manager: Normal default
-- [x] Mode indicator never blank — tracks vim_focused flag
+- [x] ActionAcceptsRegistry — actions register accepted ObjectKinds
+- [x] Command palette checks registry when building action list
+- [ ] Wire SelectionSource into CodonModeTracker so palette actively filters (currently defaults to None = show all)
 
 ---
 
@@ -50,77 +51,73 @@ Architecture phases 0-1 are complete, phases 2-5 are 0%.
 
 ### 2.1 Session management
 - [ ] Session struct — name, cwd, layout tree, pane registry, project context
-- [ ] Session creation — `session.new` action opens a "create session" flow with cwd picker
-- [ ] Session switching — `session.switch` opens picker (using Zed's picker infrastructure)
-- [ ] Session list — shows name, cwd, last-attached time
-- [ ] One session visible at a time — switching swaps the layout tree
+- [ ] Session creation — `session.new` action with cwd picker
+- [ ] Session switching — `session.switch` with picker
+- [ ] Session list — name, cwd, last-attached time
+- [ ] One session visible at a time
 
 ### 2.2 Layout system
-- [ ] LayoutNode enum — `Split { dir, ratio, a, b }`, `Stack { panes, visible }`, `Leaf(PaneId)`
-- [ ] Replace Zed's tab strip with stack indicators — when items are stacked, show position (e.g., "2/5") instead of full tab bar
-- [ ] pane.stack.cycle action — cycle through stacked items
-- [ ] pane.stack.add action — add current item to stack
-- [ ] Keyboard-resizable separators — resize splits without mouse
+- [ ] LayoutNode enum — Split, Stack, Leaf
+- [ ] Stack indicators replacing full tab bar (show "2/5" position)
+- [ ] pane.stack.cycle / pane.stack.add actions
+- [ ] Keyboard-resizable separators
 
 ### 2.3 Persistence
-- [ ] Periodic snapshots — save session state every 30 seconds
-- [ ] Graceful shutdown write — save on quit
-- [ ] Rehydrate on launch — restore last session's layout
-- [ ] Terminal rehydrate — show last scrollback with "press Enter to respawn" placeholder
-- [ ] Editor rehydrate — restore open file paths and view state
-- [ ] Swap files — persist unsaved editor changes
+- [ ] Periodic snapshots (30s) + graceful shutdown write
+- [ ] Rehydrate on launch — restore layout
+- [ ] Terminal: last scrollback + "press Enter to respawn"
+- [ ] Editor: restore open files + view state
+- [ ] Swap files for unsaved changes
 
-### 2.4 Default terminal-first behavior
-- [ ] New session opens with terminal — not empty editor
-- [ ] Default split kind is terminal — `pane.split` without args creates terminal
-- [ ] Terminal cwd follows session — new terminals inherit session's cwd
+### 2.4 Terminal-first defaults
+- [ ] Default split kind is terminal
+- [ ] Terminal cwd follows session
 
 ---
 
 ## Phase 3 — Buffer Trait & Git Integration
 
 ### 3.1 Buffer trait
-- [ ] Analyze Zed's buffer dependencies — survey git, diagnostics, diff, agent crates for buffer usage
-- [ ] Decide trait vs wrapper — based on analysis
-- [ ] Define `codon_buffer::Buffer` trait
-- [ ] Implement for `helix_view::Document` or wrapper
+- [ ] Analyze Zed's buffer dependencies
+- [ ] Define codon_buffer::Buffer trait
+- [ ] Implement for helix_view::Document or wrapper
 
 ### 3.2 Git pane
-- [ ] Fork Zed's git crate — rewire buffer dependencies to Buffer trait
-- [ ] Build `panes-git` — status, log, diff, hunk staging
-- [ ] Hunk staging actions
-- [ ] Selection::Hunks — first typed selection beyond text
-- [ ] Cross-pane verb — `git.blame.show` accepting Text | File
+- [ ] Fork Zed's git crate, rewire to Buffer trait
+- [ ] Build panes-git — status, log, diff, hunk staging
+- [ ] Selection::Hunks + cross-pane git.blame.show
 
 ---
 
 ## Phase 4 — Native UX Coverage
 
 ### 4.1 File manager polish
-- [ ] Fuzzy filter mode — press `/` to filter entries by name (Insert mode)
+- [ ] Fuzzy filter (/ enters Insert mode for filtering)
 - [ ] File operations — create (a), mkdir (A), delete (d), rename (r), copy (c), move (m)
-- [ ] Marks — select multiple files with space, operate on marked set
-- [ ] Git status in file listing
-- [ ] Yank path — `y` copies path to clipboard
-- [ ] Scrolling — scrollable columns for large directories
+- [ ] Multi-select with space, operate on marked set
+- [ ] Git status indicators in listings
+- [ ] Yank path (y)
+- [ ] Scrollable columns
 
-### 4.2 Diff viewer, Image preview, Diagnostics panes
+### 4.2 Additional panes
+- [ ] Diff viewer pane
+- [ ] Image preview pane
+- [ ] Diagnostics pane with j/k navigation
 
 ---
 
 ## Phase 5 — Agent, Inline Assistant, Commit Editor
 
-- [ ] Fork and rewire Zed's agent, inline_assistant, commit_editor crates
-- [ ] Cross-pane `agent.explain` verb
+- [ ] Fork and rewire Zed's agent, inline_assistant, commit_editor
+- [ ] Cross-pane agent.explain verb
 - [ ] AI commit message generation
 
 ---
 
 ## Immediate next steps (priority order)
 
-1. Terminal as default pane — new windows start with terminal
-2. Command mode (:) — `:` in Normal mode opens command palette
-3. File manager operations — create/delete/rename files
-4. TOML keymap config — replace hardcoded bind_keys
-5. Selection-first interfaces (types only, no implementation)
-6. Unified pane mode switching
+1. Wire SelectionSource into tracker for active palette filtering
+2. File manager operations (create/delete/rename)
+3. Keymap hot-reload
+4. Session management basics (named sessions, switch, persist)
+5. Stack indicators replacing tab bar
