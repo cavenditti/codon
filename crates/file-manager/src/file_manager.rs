@@ -561,19 +561,16 @@ impl FileManager {
             }
         };
 
-        let mark_indicator = if is_marked { "*" } else { " " };
         let symlink_indicator = entry.is_symlink;
+        let marked_bg = theme.colors().ghost_element_hover;
 
         h_flex()
+            .w_full()
             .px(px(4.))
             .py(px(1.))
             .gap(px(4.))
-            .when(is_selected, |d| d.bg(selected_bg).rounded_sm())
-            .child(
-                Label::new(mark_indicator)
-                    .size(LabelSize::Small)
-                    .color(Color::Accent),
-            )
+            .when(is_marked && !is_selected, |d| d.bg(marked_bg))
+            .when(is_selected, |d| d.bg(selected_bg))
             .child(icon_element)
             .child(
                 Label::new(entry.name.clone())
@@ -744,14 +741,15 @@ impl Render for FileManager {
                             }
                         };
 
-                        let mark_indicator = if is_marked { "*" } else { " " };
+                        let marked_bg = theme.colors().ghost_element_hover;
 
                         h_flex()
+                            .w_full()
                             .px(px(4.))
                             .py(px(1.))
                             .gap(px(4.))
-                            .when(is_selected, |d| d.bg(selected_bg).rounded_sm())
-                            .child(Label::new(mark_indicator).size(LabelSize::Small).color(Color::Accent))
+                            .when(is_marked && !is_selected, |d| d.bg(marked_bg))
+                            .when(is_selected, |d| d.bg(selected_bg))
                             .child(icon_element)
                             .child(Label::new(entry.name.clone()).size(LabelSize::Small).color(text_color).single_line())
                             .when(entry.is_symlink, |el| {
