@@ -2143,6 +2143,12 @@ pub fn load_codon_keymap(cx: &mut App) {
         ),
         // File manager: cmd-k e
         KeyBinding::new("cmd-k e", file_manager::Open, None),
+        // Command mode: : opens command palette in non-editor Normal mode
+        KeyBinding::new(
+            "shift-;",
+            zed_actions::command_palette::Toggle,
+            Some("FileManager && pane_mode == normal"),
+        ),
     ]);
 }
 

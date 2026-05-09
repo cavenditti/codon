@@ -252,6 +252,11 @@ impl FileManager {
             "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
             "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
             "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
+            // Command mode: : opens command palette
+            ";" if shift => {
+                window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
+                true
+            }
             _ => false,
         };
         if handled {
