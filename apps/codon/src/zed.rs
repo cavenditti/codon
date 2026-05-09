@@ -2125,31 +2125,7 @@ pub fn load_default_keymap(cx: &mut App) {
 }
 
 pub fn load_codon_keymap(cx: &mut App) {
-    use gpui::KeyBinding;
-    cx.bind_keys([
-        // Pane navigation: cmd-k h/j/k/l
-        KeyBinding::new("cmd-k h", workspace::ActivatePaneLeft, None),
-        KeyBinding::new("cmd-k j", workspace::ActivatePaneDown, None),
-        KeyBinding::new("cmd-k k", workspace::ActivatePaneUp, None),
-        KeyBinding::new("cmd-k l", workspace::ActivatePaneRight, None),
-        // Splits: cmd-k |/-
-        KeyBinding::new("cmd-k |", workspace::pane::SplitRight::default(), None),
-        KeyBinding::new("cmd-k -", workspace::pane::SplitDown::default(), None),
-        // New terminal as center pane item: cmd-k t
-        KeyBinding::new(
-            "cmd-k t",
-            workspace::NewTerminal { local: false },
-            None,
-        ),
-        // File manager: cmd-k e
-        KeyBinding::new("cmd-k e", file_manager::Open, None),
-        // Command mode: : opens command palette in non-editor Normal mode
-        KeyBinding::new(
-            "shift-;",
-            zed_actions::command_palette::Toggle,
-            Some("FileManager && pane_mode == normal"),
-        ),
-    ]);
+    codon_keymap::load_codon_keymap(cx);
 }
 
 pub fn open_new_ssh_project_from_project(
