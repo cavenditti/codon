@@ -1,4 +1,4 @@
-use codon_mode::{CodonModeTracker, PaneMode};
+use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
 use gpui::{
     actions, div, prelude::*, px, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, KeyContext, Render, SharedString, Styled, Task, WeakEntity, Window,
@@ -430,6 +430,19 @@ impl Item for FileManager {
 
     fn can_split(&self) -> bool {
         true
+    }
+}
+
+impl SelectionSource for FileManager {
+    fn current_selection(&self) -> Selection {
+        match self.entries.get(self.selected_index) {
+            Some(entry) => Selection::Files(vec![entry.path.clone()]),
+            None => Selection::Empty,
+        }
+    }
+
+    fn object_kinds(&self) -> &'static [ObjectKind] {
+        &[ObjectKind::File, ObjectKind::Dir]
     }
 }
 
