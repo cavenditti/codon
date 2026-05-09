@@ -741,7 +741,7 @@ impl Render for FileManager {
                     .collect()
             }
         })
-        .flex_1()
+        .size_full()
         .bg(bg)
         .py(px(2.))
         .track_scroll(&self.scroll_handle);
@@ -754,11 +754,12 @@ impl Render for FileManager {
             .child(
                 h_flex()
                     .flex_1()
-                    .overflow_hidden()
+                    .min_h_0()
                     .child(
                         div()
                             .w_1_4()
                             .h_full()
+                            .overflow_hidden()
                             .border_r_1()
                             .border_color(border_color)
                             .child(parent_col),
@@ -767,11 +768,18 @@ impl Render for FileManager {
                         div()
                             .flex_1()
                             .h_full()
+                            .min_h_0()
                             .border_r_1()
                             .border_color(border_color)
                             .child(current_col),
                     )
-                    .child(div().w_1_3().h_full().child(preview_col)),
+                    .child(
+                        div()
+                            .w_1_3()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(preview_col),
+                    ),
             )
             .child(input_bar)
             .child(
