@@ -1,6 +1,9 @@
 mod file_manager;
 
-pub use file_manager::{FileManager, Open};
+pub use file_manager::{
+    CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, MoveMarked, Open,
+    RenameEntry, ToggleMark, YankPath,
+};
 
 use gpui::App;
 
