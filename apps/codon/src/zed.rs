@@ -558,6 +558,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let active_toolchain_language =
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| codon_mode::CodonModeIndicator::new(window, cx));
+        let project_info = cx.new(|_| project_info::ProjectInfo::new(workspace));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
 
         let lsp_button_menu_handle = PopoverMenuHandle::default();
@@ -588,6 +589,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_left_item(vim_mode_indicator, window, cx);
+            status_bar.add_left_item(project_info, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
         });
@@ -6631,5 +6633,97 @@ mod tests {
             keys.is_empty(),
             "project group should be removed after CloseProject: {keys:?}"
         );
+    }
+}
+
+/// Status bar item showing project name and git branch.
+/// Replaces the title bar's project/branch display.
+mod project_info {
+    use gpui::*;
+    use ui::prelude::*;
+    use workspace::{StatusItemView, Workspace, item::ItemHandle};
+
+    pub struct ProjectInfo {
+        workspace: WeakEntity<Workspace>,
+    }
+
+    impl ProjectInfo {
+        pub fn new(workspace: &Workspace) -> Self {
+            Self {
+                workspace: workspace.weak_handle(),
+            }
+        }
+    }
+
+    impl Render for ProjectInfo {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let Some(workspace) = self.workspace.upgrade() else {
+                return div().into_any_element();
+            };
+            let workspace = workspace.read(cx);
+            let project = workspace.project().read(cx);
+
+            let project_name = project
+                .worktrees(cx)
+                .next()
+                .map(|wt| wt.read(cx).root_name_str().to_string())
+                .unwrap_or_default();
+
+            let branch = project
+                .active_repository(cx)
+                .and_then(|repo| {
+                    let snapshot = repo.read(cx).snapshot();
+                    snapshot
+                        .branch
+                        .as_ref()
+                        .map(|b| b.ref_name.to_string())
+                });
+
+            h_flex()
+                .gap_2()
+                .when(!project_name.is_empty(), |el| {
+                    el.child(
+                        Label::new(project_name)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                })
+                .when_some(branch, |el, branch| {
+                    el.child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                ui::Icon::new(ui::IconName::GitBranch)
+                                    .size(ui::IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(branch)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                })
+                .into_any_element()
+        }
+    }
+
+    impl EventEmitter<()> for ProjectInfo {}
+
+    impl Focusable for ProjectInfo {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            unreachable!("ProjectInfo is not focusable")
+        }
+    }
+
+    impl StatusItemView for ProjectInfo {
+        fn set_active_pane_item(
+            &mut self,
+            _: Option<&dyn ItemHandle>,
+            _: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            cx.notify();
+        }
     }
 }
