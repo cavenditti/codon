@@ -492,12 +492,17 @@ fn main() {
             let defaults = settings::default_settings()
                 .replace(r#""vim_mode": false"#, r#""vim_mode": true"#)
                 .replace(r#""helix_mode": false"#, r#""helix_mode": true"#)
+                .replace(r#""ui_font_size": 16"#, r#""ui_font_size": 14"#)
                 .replace(r#""which_key": {
     // Whether to show the which-key popup when holding down key combinations.
-    "enabled": false,"#,
+    "enabled": false,
+    // Delay in milliseconds before showing the which-key popup.
+    "delay_ms": 1000,"#,
                     r#""which_key": {
     // Whether to show the which-key popup when holding down key combinations.
-    "enabled": true,"#);
+    "enabled": true,
+    // Delay in milliseconds before showing the which-key popup.
+    "delay_ms": 500,"#);
             store.set_default_settings(&defaults, cx).ok();
         });
         zlog_settings::init(cx);

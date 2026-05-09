@@ -346,11 +346,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         });
 
     WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: None,
-            appears_transparent: true,
-            traffic_light_position: Some(point(px(9.0), px(9.0))),
-        }),
+        // Codon: no title bar — maximize screen real estate
+        titlebar: None,
         window_bounds: None,
         focus: false,
         show: false,
@@ -361,7 +358,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         app_id: Some(app_id.to_owned()),
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         icon: APP_ICON.as_ref().cloned(),
-        window_decorations: Some(window_decorations),
+        window_decorations: None,
         window_min_size: Some(gpui::Size {
             width: px(360.0),
             height: px(240.0),
