@@ -148,7 +148,7 @@ impl FileManager {
 
     fn reload_entries(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.reload_entries_sync();
-        self.scroll_to_selected();
+        self.ensure_visible_center();
         cx.emit(FileManagerEvent::PathChanged);
         cx.notify();
     }
@@ -175,15 +175,35 @@ impl FileManager {
         }
     }
 
-    fn scroll_to_selected(&self) {
+    fn ensure_visible_down(&self) {
+        // When moving down, keep scrolloff items below the selection
+        let scrolloff = 5;
+        self.scroll_handle.scroll_to_item_with_offset(
+            self.selected_index,
+            ScrollStrategy::Bottom,
+            scrolloff,
+        );
+    }
+
+    fn ensure_visible_up(&self) {
+        // When moving up, keep scrolloff items above the selection
+        let scrolloff = 5;
+        self.scroll_handle.scroll_to_item_with_offset(
+            self.selected_index,
+            ScrollStrategy::Top,
+            scrolloff,
+        );
+    }
+
+    fn ensure_visible_center(&self) {
         self.scroll_handle
-            .scroll_to_item(self.selected_index, ScrollStrategy::Top);
+            .scroll_to_item(self.selected_index, ScrollStrategy::Center);
     }
 
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
-            self.scroll_to_selected();
+            self.ensure_visible_down();
             self.update_preview_sync();
             cx.notify();
         }
@@ -191,7 +211,7 @@ impl FileManager {
 
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
-        self.scroll_to_selected();
+        self.ensure_visible_up();
         self.update_preview_sync();
         cx.notify();
     }
@@ -200,7 +220,7 @@ impl FileManager {
         if !self.entries.is_empty() {
             let half = self.visible_lines / 2;
             self.selected_index = cmp::min(self.selected_index + half, self.entries.len() - 1);
-            self.scroll_to_selected();
+            self.ensure_visible_center();
             self.update_preview_sync();
             cx.notify();
         }
@@ -209,7 +229,7 @@ impl FileManager {
     fn half_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let half = self.visible_lines / 2;
         self.selected_index = self.selected_index.saturating_sub(half);
-        self.scroll_to_selected();
+        self.ensure_visible_center();
         self.update_preview_sync();
         cx.notify();
     }
@@ -220,7 +240,7 @@ impl FileManager {
                 self.selected_index + self.visible_lines,
                 self.entries.len() - 1,
             );
-            self.scroll_to_selected();
+            self.ensure_visible_center();
             self.update_preview_sync();
             cx.notify();
         }
@@ -228,7 +248,7 @@ impl FileManager {
 
     fn page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(self.visible_lines);
-        self.scroll_to_selected();
+        self.ensure_visible_center();
         self.update_preview_sync();
         cx.notify();
     }
@@ -288,7 +308,7 @@ impl FileManager {
 
     fn go_to_top(&mut self, _: &GoToTop, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = 0;
-        self.scroll_to_selected();
+        self.ensure_visible_center();
         self.update_preview_sync();
         cx.notify();
     }
@@ -296,7 +316,7 @@ impl FileManager {
     fn go_to_bottom(&mut self, _: &GoToBottom, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = self.entries.len() - 1;
-            self.scroll_to_selected();
+            self.ensure_visible_center();
             self.update_preview_sync();
             cx.notify();
         }
