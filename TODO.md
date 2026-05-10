@@ -113,11 +113,11 @@ Architecture phase 0 complete, phase 1 complete, phases 2-5 are 0%.
 
 ### 2.5 Persistence
 
-- [ ] Periodic snapshots (30s) + graceful shutdown write
+- [x] Periodic snapshots (30s) + graceful shutdown write (`codon_session::registry::spawn_heartbeat` + `cx.on_app_quit` flush)
 - [x] Rehydrate on launch — registry loads from KVP at codon_session::init; per-window layouts restore via SerializedPaneGroup deserialize
 - [ ] Terminal: last scrollback + "press Enter to respawn" — DEFERRED (needs invasive terminal_view changes; alacritty grid serialization)
 - [x] Editor: restore open files + view state (already provided by Zed's SerializableItem; survives codon-session swaps because item ids are preserved)
-- [ ] Swap files for unsaved changes
+- [x] Swap files for unsaved changes — already covered by Zed's existing SerializableItem flow: dirty buffers get `contents: Some(text)` written to EditorDb on every edit/save event; on restore, `ProjectSettings::session.restore_unsaved_buffers` (default true) replays them. Filesystem `.swp` sidecars not added since the SQLite-based mechanism already provides crash recovery.
 
 ---
 
