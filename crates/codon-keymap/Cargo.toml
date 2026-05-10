@@ -9,8 +9,10 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+codon-agent.workspace = true
 codon-session.workspace = true
 dirs.workspace = true
+git.workspace = true
 gpui.workspace = true
 fs.workspace = true
 log.workspace = true

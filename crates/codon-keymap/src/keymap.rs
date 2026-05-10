@@ -92,6 +92,15 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-w h" = "codon_session::WindowPrev"
 "cmd-k shift-w c" = "codon_session::WindowClose"
 
+# Agent (cmd-k a prefix)
+"cmd-k a a" = "assistant::FocusAgent"
+"cmd-k a e" = "codon_agent::AgentExplain"
+"cmd-k a s" = "codon_agent::AgentSummarize"
+"cmd-k a r" = "codon_agent::AgentRefactor"
+
+# Git (cmd-k g prefix)
+"cmd-k g m" = "git::GenerateCommitMessage"
+
 # Command palette
 "cmd-shift-p" = "command_palette::Toggle"
 "#;
@@ -222,6 +231,15 @@ fn resolve_binding(
         "codon_session::WindowNext" => bind!(codon_session::WindowNext),
         "codon_session::WindowPrev" => bind!(codon_session::WindowPrev),
         "codon_session::WindowClose" => bind!(codon_session::WindowClose),
+
+        // Codon agent
+        "codon_agent::AgentExplain" => bind!(codon_agent::AgentExplain),
+        "codon_agent::AgentSummarize" => bind!(codon_agent::AgentSummarize),
+        "codon_agent::AgentRefactor" => bind!(codon_agent::AgentRefactor),
+        "assistant::FocusAgent" => bind!(zed_actions::assistant::FocusAgent),
+
+        // Git
+        "git::GenerateCommitMessage" => bind!(git::GenerateCommitMessage),
 
         // Command palette
         "command_palette::Toggle" => bind!(zed_actions::command_palette::Toggle),

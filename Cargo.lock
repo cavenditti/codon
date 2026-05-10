@@ -3268,6 +3268,7 @@ dependencies = [
  "cli",
  "client",
  "codestral",
+ "codon-agent",
  "codon-keymap",
  "codon-mode",
  "codon-session",
@@ -3411,14 +3412,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-agent"
+version = "0.1.0"
+dependencies = [
+ "agent_ui",
+ "codon-mode",
+ "command_palette_hooks",
+ "gpui",
+ "log",
+ "ui",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "codon-keymap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-agent",
  "codon-session",
  "dirs",
  "file-manager",
  "fs",
+ "git",
  "gpui",
  "log",
  "serde",
