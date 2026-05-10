@@ -30,7 +30,7 @@ struct PersistedRegistry {
     active: Option<SessionId>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SessionRegistry {
     inner: Arc<RwLock<PersistedRegistry>>,
 }
@@ -38,8 +38,11 @@ pub struct SessionRegistry {
 impl Global for SessionRegistry {}
 
 impl SessionRegistry {
-    pub fn global(cx: &App) -> &SessionRegistry {
-        cx.global::<SessionRegistry>()
+    /// Get a cheap (Arc-cloned) handle to the registry. Cloning detaches from
+    /// the `App` borrow so callers can hold the handle across `cx.notify()`,
+    /// `swap::capture(..)`, etc.
+    pub fn global(cx: &App) -> SessionRegistry {
+        cx.global::<SessionRegistry>().clone()
     }
 
     pub fn sessions(&self) -> Vec<Session> {

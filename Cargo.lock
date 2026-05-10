@@ -3270,6 +3270,7 @@ dependencies = [
  "codestral",
  "codon-keymap",
  "codon-mode",
+ "codon-session",
  "collab_ui",
  "collections",
  "command_palette",
