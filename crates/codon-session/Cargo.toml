@@ -1,0 +1,29 @@
+[package]
+name = "codon-session"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_session.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+db.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+picker.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ui.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace.workspace = true

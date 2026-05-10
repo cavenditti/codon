@@ -1,0 +1,18 @@
+pub mod actions;
+pub mod registry;
+pub mod session;
+pub mod status_item;
+pub mod swap;
+
+pub use actions::*;
+pub use registry::{SessionRegistry, SessionRegistryError};
+pub use session::{Session, SessionId, Window, WindowId};
+pub use status_item::SessionStatusItem;
+pub use workspace::codon_bridge::LayoutSnapshot;
+
+use gpui::App;
+
+pub fn init(cx: &mut App) {
+    actions::register(cx);
+    registry::init(cx);
+}
