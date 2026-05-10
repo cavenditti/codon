@@ -6573,6 +6573,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "codon-mode",
+ "file_icons",
  "fs",
  "gpui",
  "log",
