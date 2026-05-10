@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod picker;
 pub mod registry;
+pub mod runtime;
 pub mod session;
 pub mod status_item;
 pub mod swap;
@@ -19,4 +20,5 @@ use gpui::App;
 pub fn init(cx: &mut App) {
     actions::register(cx);
     registry::init(cx);
+    runtime::init(cx);
 }

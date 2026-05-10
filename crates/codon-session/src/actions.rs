@@ -5,7 +5,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
-use crate::{picker::SessionSwitchModal, registry::SessionRegistry, session::Session, swap};
+use crate::{
+    picker::SessionSwitchModal,
+    registry::SessionRegistry,
+    runtime::{WindowRuntime, WindowRuntimeCache},
+    session::Session,
+    swap,
+};
 
 actions!(
     codon_session,
@@ -133,6 +139,7 @@ fn handle_session_close(
         log::warn!("could not close session: {err:?}");
         return;
     }
+    WindowRuntimeCache::global(cx).drop_session(active);
     if let Some(next) = registry.active_id() {
         workspace.set_session_id(Some(next.to_string()));
     } else {
@@ -157,9 +164,14 @@ fn handle_window_new(
         return;
     };
 
+    let outgoing_id = session.active().map(|w| w.id);
     let snapshot = swap::capture(workspace, window, cx);
+    let runtime = capture_runtime(workspace, cx);
     if let Some(active_window) = session.active_mut() {
         active_window.layout = Some(snapshot);
+    }
+    if let (Some(outgoing_window_id), Some(rt)) = (outgoing_id, runtime) {
+        WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
     }
 
     session.add_window(None);
@@ -170,9 +182,7 @@ fn handle_window_new(
     }
     persist_async(cx);
 
-    let blank = workspace::codon_bridge::LayoutSnapshot::empty_pane();
-    let weak = workspace.weak_handle();
-    swap::apply(workspace, blank, window, cx).detach_and_notify_err(weak, window, cx);
+    workspace.replace_center_with_empty_pane(window, cx);
 }
 
 fn handle_window_next(
@@ -237,22 +247,46 @@ fn cycle_window(
     }
     let len = session.windows.len() as i32;
     let new_idx = ((session.active_window as i32 + delta).rem_euclid(len)) as usize;
+
+    let outgoing_id = session.active().map(|w| w.id);
     let snapshot = swap::capture(workspace, window, cx);
+    let runtime = capture_runtime(workspace, cx);
     if let Some(active) = session.active_mut() {
         active.layout = Some(snapshot);
     }
+    if let (Some(outgoing_window_id), Some(rt)) = (outgoing_id, runtime) {
+        WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
+    }
+
     session.active_window = new_idx;
-    let target_layout = session
-        .windows
-        .get(new_idx)
-        .and_then(|w| w.layout.clone())
-        .unwrap_or_else(workspace::codon_bridge::LayoutSnapshot::empty_pane);
+    let incoming_window_id = session.windows.get(new_idx).map(|w| w.id);
+    let incoming_layout = session.windows.get(new_idx).and_then(|w| w.layout.clone());
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
     persist_async(cx);
-    let weak = workspace.weak_handle();
-    swap::apply(workspace, target_layout, window, cx).detach_and_notify_err(weak, window, cx);
+
+    let cache = WindowRuntimeCache::global(cx);
+    let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
+    if let Some(rt) = cached_runtime {
+        workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+    } else if let Some(layout) = incoming_layout {
+        // Fall back to the persisted snapshot (cross-restart restore). If
+        // the snapshot can't be hydrated (e.g. items missing from sqlite),
+        // workspace::replace_center_with_snapshot now creates a fresh empty
+        // pane instead of erroring.
+        let weak = workspace.weak_handle();
+        swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+    } else {
+        workspace.replace_center_with_empty_pane(window, cx);
+    }
+}
+
+fn capture_runtime(workspace: &Workspace, cx: &App) -> Option<WindowRuntime> {
+    let root = workspace.center().root.clone();
+    let active_pane = Some(workspace.active_pane().clone());
+    let _ = cx;
+    Some(WindowRuntime { root, active_pane })
 }
 
 fn unique_name(base: &str, cx: &App) -> String {
