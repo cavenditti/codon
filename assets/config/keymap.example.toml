@@ -1,0 +1,115 @@
+# Codon keymap — example user configuration
+#
+# Copy this file to ~/.config/codon/keymap.toml (or its platform equivalent
+# under XDG_CONFIG_HOME) and edit. Codon loads its embedded defaults first,
+# then merges this file on top, so anything declared here overrides the
+# default. Re-run :reload-keymap or restart Codon to pick up changes.
+#
+# Bindings live in three sections:
+#
+#   [bindings.global]               — active everywhere
+#   [bindings.<pane>.normal]        — pane mode = Normal (Helix/Vim-style)
+#   [bindings.<pane>.insert]        — pane mode = Insert
+#
+# Pane is one of: editor, terminal, file_manager.
+#
+# Keystroke syntax mirrors Zed's: lowercase letters, modifiers separated with
+# `-`, chords separated with spaces. Examples:
+#
+#   "cmd-shift-p"         single chord
+#   "cmd-k h"             two-chord sequence
+#   "ctrl-h"              ctrl modifier
+#   "cmd-k shift-w n"     three-chord sequence with shift on the second
+#
+# Action names are `<namespace>::<ActionName>`. To discover every available
+# action and its current binding, press `cmd-k F1` from inside Codon — the
+# cheatsheet modal lists everything reachable in the current context.
+
+# ─── Pane focus & layout ───────────────────────────────────────────────────
+[bindings.global]
+
+# Pane focus (vim/helix muscle memory)
+"ctrl-h" = "workspace::ActivatePaneLeft"
+"ctrl-j" = "workspace::ActivatePaneDown"
+"ctrl-k" = "workspace::ActivatePaneUp"
+"ctrl-l" = "workspace::ActivatePaneRight"
+
+# Pane move — swap the active pane with its neighbour
+"ctrl-shift-h" = "workspace::SwapPaneLeft"
+"ctrl-shift-j" = "workspace::SwapPaneDown"
+"ctrl-shift-k" = "workspace::SwapPaneUp"
+"ctrl-shift-l" = "workspace::SwapPaneRight"
+
+# Pane resize — held under cmd-k to avoid clashing with the move actions
+"cmd-k shift-h" = "vim::ResizePaneLeft"
+"cmd-k shift-j" = "vim::ResizePaneDown"
+"cmd-k shift-k" = "vim::ResizePaneUp"
+"cmd-k shift-l" = "vim::ResizePaneRight"
+
+# Pane splitting (tmux-flavoured)
+"cmd-k |"  = "pane::SplitRight"
+"cmd-k -"  = "pane::SplitDown"
+"cmd-k \\" = "pane::SplitRight"
+
+# Pane lifecycle
+"cmd-k t" = "workspace::NewTerminal"
+"cmd-k e" = "file_manager::Open"
+"cmd-k w" = "pane::CloseActiveItem"
+
+# ─── Sessions (cmd-k s prefix) ─────────────────────────────────────────────
+"cmd-k s n" = "codon_session::SessionNew"
+"cmd-k s s" = "codon_session::SessionSwitch"
+"cmd-k s c" = "codon_session::SessionClose"
+
+# ─── Windows within a session (cmd-k W prefix) ─────────────────────────────
+# Lowercase `w` is "close active item"; we use shift-w for window verbs.
+"cmd-k shift-w n" = "codon_session::WindowNew"
+"cmd-k shift-w l" = "codon_session::WindowNext"
+"cmd-k shift-w h" = "codon_session::WindowPrev"
+"cmd-k shift-w c" = "codon_session::WindowClose"
+
+# ─── Agent (cmd-k a prefix) ────────────────────────────────────────────────
+# `Explain`/`Summarize`/`Refactor` capture the current selection (text from the
+# focused editor or terminal), open the agent panel, and seed the message
+# editor with a corresponding prompt prefix.
+"cmd-k a a" = "assistant::FocusAgent"
+"cmd-k a e" = "codon_agent::AgentExplain"
+"cmd-k a s" = "codon_agent::AgentSummarize"
+"cmd-k a r" = "codon_agent::AgentRefactor"
+
+# ─── Git (cmd-k g prefix) ──────────────────────────────────────────────────
+"cmd-k g m" = "git::GenerateCommitMessage"
+
+# ─── Help / cheatsheet ─────────────────────────────────────────────────────
+# Opens a full-screen modal listing every binding in the current context.
+"cmd-k f1" = "codon_keymap::ShowKeymap"
+
+# ─── Command palette ───────────────────────────────────────────────────────
+"cmd-shift-p" = "command_palette::Toggle"
+
+# ─── File manager mode-specific bindings ───────────────────────────────────
+# These only fire when the file manager pane is focused and in the given
+# mode. They override globals while the file manager has focus.
+[bindings.file_manager.normal]
+# Example: re-bind navigation. Defaults are good; here for reference.
+# "j" = "file_manager::NavigateDown"
+# "k" = "file_manager::NavigateUp"
+# "h" = "file_manager::ParentDirectory"
+# "l" = "file_manager::EnterDirectory"
+# "/" = "file_manager::FuzzyFilter"
+
+# ─── Terminal mode-specific bindings ───────────────────────────────────────
+[bindings.terminal.normal]
+# Example: vim-style scrollback nav (defaults already set these).
+# "j" = "terminal::ScrollLineDown"
+# "k" = "terminal::ScrollLineUp"
+# "ctrl-d" = "terminal::ScrollHalfPageDown"
+# "ctrl-u" = "terminal::ScrollHalfPageUp"
+
+# ─── Editor mode-specific bindings ─────────────────────────────────────────
+[bindings.editor.normal]
+# Helix mode is force-enabled; defaults match upstream Helix. Override here.
+
+[bindings.editor.insert]
+# Override insert-mode bindings here. Most users leave this empty so the
+# editor behaves like a plain text editor when typing.

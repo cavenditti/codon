@@ -101,6 +101,9 @@ const DEFAULT_KEYMAP: &str = r#"
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
 
+# Help / cheatsheet
+"cmd-k f1" = "codon_keymap::ShowKeymap"
+
 # Command palette
 "cmd-shift-p" = "command_palette::Toggle"
 "#;
@@ -240,6 +243,9 @@ fn resolve_binding(
 
         // Git
         "git::GenerateCommitMessage" => bind!(git::GenerateCommitMessage),
+
+        // Help / cheatsheet
+        "codon_keymap::ShowKeymap" => bind!(crate::ShowKeymap),
 
         // Command palette
         "command_palette::Toggle" => bind!(zed_actions::command_palette::Toggle),
