@@ -55,6 +55,15 @@ fn handle_session_new(
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    create_session_for_workspace(workspace, cx);
+}
+
+/// Create a session anchored at the workspace's first visible worktree (or
+/// `cwd` as a fallback) and mark it active. Returns the new session id.
+fn create_session_for_workspace(
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) -> Option<crate::session::SessionId> {
     let project = workspace.project().read(cx);
     let cwd: PathBuf = project
         .visible_worktrees(cx)
@@ -73,7 +82,7 @@ fn handle_session_new(
     let registry = SessionRegistry::global(cx);
     if let Err(err) = registry.upsert(session) {
         log::error!("could not create session: {err:?}");
-        return;
+        return None;
     }
     if let Err(err) = registry.set_active(id) {
         log::warn!("could not set active session: {err:?}");
@@ -82,6 +91,20 @@ fn handle_session_new(
     persist_async(cx);
     cx.notify();
     log::info!("created session '{unique}' ({id})");
+    Some(id)
+}
+
+/// Return the active session id, auto-creating one if none exists. Used by
+/// commands like `WindowNew` that should always work — pressing a window key
+/// from a fresh launch shouldn't be a no-op.
+fn ensure_active_session(
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) -> Option<crate::session::SessionId> {
+    if let Some(id) = SessionRegistry::global(cx).active_id() {
+        return Some(id);
+    }
+    create_session_for_workspace(workspace, cx)
 }
 
 fn handle_session_switch(
@@ -125,11 +148,11 @@ fn handle_window_new(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let registry = SessionRegistry::global(cx);
-    let Some(active_id) = registry.active_id() else {
-        log::info!("no active session, ignoring WindowNew");
+    let Some(active_id) = ensure_active_session(workspace, cx) else {
+        log::warn!("could not establish a session, ignoring WindowNew");
         return;
     };
+    let registry = SessionRegistry::global(cx);
     let Some(mut session) = registry.get(active_id) else {
         return;
     };
