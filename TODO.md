@@ -123,10 +123,25 @@ Architecture phase 0 complete, phase 1 complete, phases 2-5 are 0%.
 
 ## Phase 3 — Agent, Inline Assistant, Commit Editor
 
-- [ ] Fork and rewire Zed's agent, inline_assistant, commit_editor
-- [ ] Turn agentic editing into a pane type
-- [ ] Cross-pane agent.explain verb
-- [ ] AI commit message generation
+- [x] Cross-pane agent verbs — `codon_agent::AgentExplain` / `AgentSummarize` /
+      `AgentRefactor` (selection-aware via ActionAcceptsRegistry, route through
+      new `AgentPanel::seed_explain_with_selection` vendored helper)
+- [x] AI commit message generation — already wired in `git_ui::git_panel`
+      (uses `language_model::LanguageModelRegistry`); exposed in default
+      keymap as `cmd-k g m` → `git::GenerateCommitMessage`
+- [ ] Turn agentic editing into a pane type — DEFERRED. AgentPanel is currently
+      `impl Panel` (sidebar dock). Conversion to `impl Item` (workspace pane)
+      is a 2,400-line file refactor with knock-on changes to dock state,
+      serialization, focus handling, and every caller of `panel::<AgentPanel>()`.
+      Tracked separately; codon-agent verbs work against the panel-shaped
+      AgentPanel today.
+- [ ] Inline-assistant rewire — DEFERRED. Inline assistant is already an
+      overlay system (not a pane), works as-is from any editor. Rewiring it
+      to consume `Selection` from `SelectionSource` is a small follow-up.
+- [ ] Fork agent / commit_editor crates — partial. Vendored a single helper
+      method (`AgentPanel::seed_explain_with_selection`) rather than forking
+      the crates outright. Full fork is on the table when there's a
+      structural change that can't be expressed as additive helpers.
 
 ---
 
