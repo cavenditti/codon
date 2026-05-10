@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use gpui::{App, AppContext as _, Context, Window, actions};
+use gpui::{Action, App, AppContext as _, Context, Window, actions};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
 use crate::{picker::SessionSwitchModal, registry::SessionRegistry, session::Session, swap};
@@ -26,6 +28,12 @@ actions!(
         WindowClose,
     ]
 );
+
+/// Switch to the window at the given zero-based index in the active session.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = codon_session)]
+#[serde(deny_unknown_fields)]
+pub struct WindowGoto(pub usize);
 
 pub fn register(_cx: &mut App) {}
 

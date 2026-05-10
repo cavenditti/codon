@@ -577,8 +577,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
         let session_indicator = cx.new(|_| codon_session::SessionStatusItem::new());
+        let windows_indicator =
+            cx.new(|_| codon_session::WindowsStatusItem::new(workspace.weak_handle()));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(session_indicator, window, cx);
+            status_bar.add_left_item(windows_indicator, window, cx);
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
@@ -597,6 +600,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         });
 
         codon_session::actions::register_for_workspace(workspace);
+        codon_session::window_indicator::register_for_workspace(workspace);
 
         let panels_task = initialize_panels(window, cx);
         workspace.set_panels_task(panels_task);
