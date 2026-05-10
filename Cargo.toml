@@ -258,6 +258,7 @@ members = [
     "vendor/zed/tooling/perf",
     "vendor/zed/tooling/xtask",
 ]
+exclude = ["vendor/forge-spec"]
 default-members = ["vendor/zed/crates/zed"]
 
 [workspace.package]

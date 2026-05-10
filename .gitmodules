@@ -7,3 +7,6 @@
 [submodule "vendor/gpui-ghostty"]
 	path = vendor/gpui-ghostty
 	url = https://github.com/Xuanwo/gpui-ghostty
+[submodule "vendor/forge-spec"]
+	path = vendor/forge-spec
+	url = https://github.com/daedal-one/forge-spec.git
