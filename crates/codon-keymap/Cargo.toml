@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+codon-session.workspace = true
 dirs.workspace = true
 gpui.workspace = true
 fs.workspace = true
@@ -16,6 +17,7 @@ log.workspace = true
 serde.workspace = true
 settings.workspace = true
 toml.workspace = true
+vim.workspace = true
 workspace.workspace = true
 file-manager.workspace = true
 zed_actions.workspace = true

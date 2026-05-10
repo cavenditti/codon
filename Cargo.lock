@@ -3415,6 +3415,7 @@ name = "codon-keymap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-session",
  "dirs",
  "file-manager",
  "fs",
@@ -3423,6 +3424,7 @@ dependencies = [
  "serde",
  "settings",
  "toml 0.8.23",
+ "vim",
  "workspace",
  "zed_actions",
 ]
@@ -3451,6 +3453,7 @@ dependencies = [
  "parking_lot",
  "picker",
  "project",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
