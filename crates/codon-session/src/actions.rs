@@ -269,15 +269,23 @@ fn cycle_window(
     let cache = WindowRuntimeCache::global(cx);
     let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
     if let Some(rt) = cached_runtime {
+        log::debug!(
+            "restoring window {:?} from in-memory runtime cache",
+            incoming_window_id
+        );
         workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
     } else if let Some(layout) = incoming_layout {
-        // Fall back to the persisted snapshot (cross-restart restore). If
-        // the snapshot can't be hydrated (e.g. items missing from sqlite),
-        // workspace::replace_center_with_snapshot now creates a fresh empty
-        // pane instead of erroring.
+        log::debug!(
+            "restoring window {:?} from persisted snapshot (no runtime cache hit)",
+            incoming_window_id
+        );
         let weak = workspace.weak_handle();
         swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
     } else {
+        log::debug!(
+            "no state for window {:?}; opening fresh empty pane",
+            incoming_window_id
+        );
         workspace.replace_center_with_empty_pane(window, cx);
     }
 }
