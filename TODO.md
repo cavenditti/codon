@@ -74,39 +74,57 @@ Architecture phase 0 complete, phase 1 complete, phases 2-5 are 0%.
 
 ### 2.1 Session management
 
-- [ ] Session struct — name, cwd, layout tree, pane registry, project context
-- [ ] Session creation — `session.new` action with cwd picker
-- [ ] Session switching — `session.switch` with picker
-- [ ] Session list — name, cwd, last-attached time
-- [ ] Session indicators in status bar (current session name)
-- [ ] One session visible at a time
+- [x] Session struct — name, cwd, layout tree, pane registry, project context (`crates/codon-session`)
+- [x] Session creation — `codon_session::SessionNew` (uses current project cwd)
+- [x] Session switching — `codon_session::SessionSwitch` with fuzzy picker
+- [x] Session list — name, cwd, last-attached time (in-memory + KVP-persisted)
+- [x] Session indicators in status bar (current session name)
+- [x] One session visible at a time
+- [ ] Cwd picker for session.new (defaults to current project cwd; full in-app dir picker deferred)
 
 ### 2.2 Layout system
 
-- [ ] LayoutNode enum — Split, Stack, Leaf
-- [ ] Simplify indicators in tab bar (remove "X")
-- [ ] pane.stack.cycle / pane.stack.add actions
-- [ ] Keyboard-resizable separators
+- [x] LayoutSnapshot enum — Group, Stack, Pane (workspace::codon_bridge); Stack present in serde shape, falls back to active member when applied
+- [x] Keyboard-resizable separators (binds `vim::ResizePane*` to `cmd-k shift-{h,j,k,l}`)
+- [ ] Stack live rendering — needs new `Member::Stack` variant in vendored pane_group; deferred (15+ match-site updates)
+- [ ] Stack actions: pane.stack.cycle / pane.stack.add (deferred with above)
+- [ ] Simplify indicators in tab bar (remove "X") on stacked-pane indicator (deferred with above)
+- [ ] Status bar elements are modal and dynamic depending on selected pane type
 
-### 2.3 Persistence
+### 2.3 Windows
 
-- [ ] Periodic snapshots (30s) + graceful shutdown write
-- [ ] Rehydrate on launch — restore layout
-- [ ] Terminal: last scrollback + "press Enter to respawn"
-- [ ] Editor: restore open files + view state
-- [ ] Swap files for unsaved changes
+- [x] Windows group panes into sets, only one window visible at a time (Vec<Window> in Session)
+- [x] Window indicator in the status bar (`WindowsStatusItem`, tab-bar-style, no close X)
+- [x] Keyboard switching (`WindowNew`/`WindowNext`/`WindowPrev`/`WindowGoto(usize)`/`WindowClose`)
+- [x] Mouse switching (click on window indicator tabs)
+- [x] Tab component reused for windows indicator (close slot omitted via `Tab::end_slot(None)`)
 
 ### 2.4 UX
 
 - [x] Default split kind is terminal
-- [ ] NEVER use native dialogs for OS
-- [ ] 
+- [x] Ctrl+h/j/k/l to select panes (binds to `workspace::ActivatePane*`)
+- [x] Ctrl+Shift+h/j/k/l to move panes around (binds to `workspace::SwapPane*`)
+- [x] Native-dialog audit — confirmed 5 callsites in vendored Zed (`workspace.rs:2972`,
+      `project_panel:3301`, `git_ui::clone:17`, `agent_ui::threads_archive_view:1237`,
+      `agent_ui::message_editor:1423`); all route through `cx.prompt_for_paths`. Replacement
+      requires building an in-app dir picker modal (deferred to Phase 5)
+- [ ] Group status bar buttons to save space (keep diagnostic visible)
+- [ ] Remove search button from status bar (has its own shortcut and already behaves as a pane)
+
+### 2.5 Persistence
+
+- [ ] Periodic snapshots (30s) + graceful shutdown write
+- [x] Rehydrate on launch — registry loads from KVP at codon_session::init; per-window layouts restore via SerializedPaneGroup deserialize
+- [ ] Terminal: last scrollback + "press Enter to respawn" — DEFERRED (needs invasive terminal_view changes; alacritty grid serialization)
+- [x] Editor: restore open files + view state (already provided by Zed's SerializableItem; survives codon-session swaps because item ids are preserved)
+- [ ] Swap files for unsaved changes
 
 ---
 
 ## Phase 3 — Agent, Inline Assistant, Commit Editor
 
 - [ ] Fork and rewire Zed's agent, inline_assistant, commit_editor
+- [ ] Turn agentic editing into a pane type
 - [ ] Cross-pane agent.explain verb
 - [ ] AI commit message generation
 

@@ -183,4 +183,30 @@ pub fn init(cx: &mut App) {
         }
     }
     cx.set_global(registry);
+
+    spawn_heartbeat(cx);
+
+    cx.on_app_quit(|cx| {
+        let snapshot = SessionRegistry::global(cx).snapshot();
+        async move {
+            if let Err(err) = snapshot.write().await {
+                log::warn!("failed to persist session registry on quit: {err:?}");
+            }
+        }
+    })
+    .detach();
+}
+
+fn spawn_heartbeat(cx: &App) {
+    let interval = std::time::Duration::from_secs(30);
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(interval).await;
+            let snapshot = cx.update(|cx| SessionRegistry::global(cx).snapshot());
+            if let Err(err) = snapshot.write().await {
+                log::warn!("session registry heartbeat persist failed: {err:?}");
+            }
+        }
+    })
+    .detach();
 }
