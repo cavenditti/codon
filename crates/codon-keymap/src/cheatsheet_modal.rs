@@ -1,15 +1,16 @@
 //! Full-screen modal listing every keybinding currently reachable from the
 //! workspace context. Bound to `cmd-k F1` by default.
 
+use std::rc::Rc;
+
 use gpui::{
     Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement,
-    IntoElement, KeyContext, ParentElement, Render, ScrollHandle, SharedString, Styled, Window,
-    actions, div, px,
+    IntoElement, KeyContext, KeybindingKeystroke, ParentElement, Render, ScrollHandle,
+    SharedString, Styled, Window, actions, div, prelude::FluentBuilder, px,
 };
 use ui::{
-    ActiveTheme, Color, Divider, DividerColor, Headline, HeadlineSize, IconName, Label,
-    LabelCommon, LabelSize, StatefulInteractiveElement, WithScrollbar, h_flex, text_for_keystrokes,
-    v_flex,
+    ActiveTheme, Color, Headline, HeadlineSize, IconName, KeyBinding, Label, LabelCommon,
+    LabelSize, StatefulInteractiveElement, WithScrollbar, h_flex, text_for_keystrokes, v_flex,
 };
 use workspace::{ModalView, Workspace};
 
@@ -30,7 +31,10 @@ pub struct KeybindingsCheatsheetModal {
 
 #[derive(Clone)]
 struct BindingRow {
-    keystrokes: SharedString,
+    keystrokes: Rc<[KeybindingKeystroke]>,
+    /// Pre-rendered text used for sorting and dedup so visually-equivalent
+    /// rows collapse into one.
+    keystrokes_text: SharedString,
     action_name: SharedString,
     namespace: SharedString,
 }
@@ -59,40 +63,62 @@ fn collect_bindings(
     let mut rows: Vec<BindingRow> = raw
         .iter()
         .filter_map(|binding| {
-            let keystrokes: Vec<_> = binding
-                .keystrokes()
-                .iter()
-                .map(|k| k.inner().to_owned())
-                .collect();
+            let keystrokes = binding.keystrokes();
             if keystrokes.is_empty() {
                 return None;
             }
+            let raw_keystrokes: Vec<_> = keystrokes.iter().map(|k| k.inner().to_owned()).collect();
             let raw_name = binding.action().name();
             let humanized = command_palette::humanize_action_name(raw_name);
-            let (namespace, _) = split_namespace(raw_name);
+            let namespace = humanize_namespace(raw_name);
             Some(BindingRow {
-                keystrokes: SharedString::from(text_for_keystrokes(&keystrokes, cx)),
+                keystrokes: Rc::from(keystrokes),
+                keystrokes_text: SharedString::from(text_for_keystrokes(&raw_keystrokes, cx)),
                 action_name: SharedString::from(humanized),
                 namespace: SharedString::from(namespace),
             })
         })
         .collect();
     rows.sort_by(|a, b| {
-        a.namespace
-            .cmp(&b.namespace)
-            .then_with(|| a.keystrokes.cmp(&b.keystrokes))
+        namespace_priority(&a.namespace)
+            .cmp(&namespace_priority(&b.namespace))
+            .then_with(|| a.namespace.cmp(&b.namespace))
+            .then_with(|| chord_sort_key(&a.keystrokes_text).cmp(&chord_sort_key(&b.keystrokes_text)))
             .then_with(|| a.action_name.cmp(&b.action_name))
     });
-    rows.dedup_by(|a, b| a.keystrokes == b.keystrokes && a.action_name == b.action_name);
+    rows.dedup_by(|a, b| {
+        a.keystrokes_text == b.keystrokes_text && a.action_name == b.action_name
+    });
     rows
 }
 
-fn split_namespace(raw_name: &str) -> (String, String) {
-    if let Some((ns, _)) = raw_name.split_once("::") {
-        (ns.replace('_', " "), raw_name.to_string())
+fn humanize_namespace(raw_name: &str) -> String {
+    let ns = raw_name.split_once("::").map(|(ns, _)| ns).unwrap_or("global");
+    let pretty = ns.replace('_', " ");
+    let mut chars = pretty.chars();
+    chars
+        .next()
+        .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+        .unwrap_or(pretty)
+}
+
+/// Codon-defined namespaces float to the top.
+fn namespace_priority(namespace: &SharedString) -> u8 {
+    let lower = namespace.to_ascii_lowercase();
+    if lower.starts_with("codon") {
+        0
+    } else if lower == "global" {
+        1
     } else {
-        (String::from("global"), raw_name.to_string())
+        2
     }
+}
+
+/// Sort by chord length (shorter first), then by text. So `cmd-k a` sorts
+/// before `cmd-k a a`, and bindings without a chord prefix come first within
+/// a section.
+fn chord_sort_key(text: &str) -> (usize, String) {
+    (text.split_whitespace().count(), text.to_string())
 }
 
 impl Render for KeybindingsCheatsheetModal {
@@ -100,7 +126,9 @@ impl Render for KeybindingsCheatsheetModal {
         let viewport = window.viewport_size();
         let theme = cx.theme();
         let panel_bg = theme.colors().elevated_surface_background;
+        let row_bg = theme.colors().surface_background;
         let border = theme.colors().border;
+        let border_faded = theme.colors().border_variant;
 
         let mut grouped: Vec<(SharedString, Vec<BindingRow>)> = Vec::new();
         for row in &self.bindings {
@@ -120,18 +148,24 @@ impl Render for KeybindingsCheatsheetModal {
             .pb_3()
             .child(
                 v_flex()
-                    .gap_1()
+                    .gap_0p5()
                     .child(Headline::new("Keybindings").size(HeadlineSize::Medium))
                     .child(
                         Label::new(format!(
-                            "{} bindings — Esc to close",
+                            "{} bindings · Esc to dismiss",
                             self.bindings.len()
                         ))
                         .color(Color::Muted)
                         .size(LabelSize::Small),
                     ),
             )
-            .child(ui::Icon::new(IconName::Command).color(Color::Muted));
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Label::new("⌘ K  F1").color(Color::Muted).size(LabelSize::Small))
+                    .child(ui::Icon::new(IconName::Command).color(Color::Muted)),
+            );
 
         let body = if grouped.is_empty() {
             v_flex().py_8().child(
@@ -140,35 +174,70 @@ impl Render for KeybindingsCheatsheetModal {
                     .size(LabelSize::Default),
             )
         } else {
-            let mut column = v_flex().gap_4();
+            let mut column = v_flex().gap_5();
             for (ns, items) in grouped {
+                let count = items.len();
+                let header_row = h_flex()
+                    .items_center()
+                    .gap_2()
+                    .pb_1()
+                    .child(
+                        div()
+                            .w(px(3.))
+                            .h(px(14.))
+                            .rounded_full()
+                            .bg(theme.colors().text_accent),
+                    )
+                    .child(
+                        Label::new(ns.clone())
+                            .color(Color::Default)
+                            .size(LabelSize::Default)
+                            .weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        Label::new(format!("{count}"))
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    );
+
+                let mut rows_column = v_flex().gap_0p5();
+                for (idx, row) in items.into_iter().enumerate() {
+                    let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
+                        .size(ui::rems_from_px(13.));
+                    let row_el = h_flex()
+                        .items_center()
+                        .gap_4()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .when(idx % 2 == 1, |el| el.bg(row_bg))
+                        .child(
+                            div()
+                                .min_w(px(180.))
+                                .flex_none()
+                                .child(h_flex().justify_end().child(chord)),
+                        )
+                        .child(
+                            Label::new(row.action_name.clone())
+                                .color(Color::Default)
+                                .size(LabelSize::Default)
+                                .single_line()
+                                .truncate(),
+                        );
+                    rows_column = rows_column.child(row_el);
+                }
+
                 column = column.child(
                     v_flex()
                         .gap_1()
+                        .child(header_row)
                         .child(
-                            Label::new(ns.clone())
-                                .color(Color::Muted)
-                                .size(LabelSize::Small)
-                                .weight(FontWeight::SEMIBOLD),
+                            div()
+                                .h(px(1.))
+                                .w_full()
+                                .bg(border_faded),
                         )
-                        .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                        .children(items.into_iter().map(|row| {
-                            h_flex()
-                                .py_0p5()
-                                .gap_4()
-                                .child(div().min_w(px(180.)).child(
-                                    Label::new(row.keystrokes.clone())
-                                        .color(Color::Accent)
-                                        .size(LabelSize::Default),
-                                ))
-                                .child(
-                                    Label::new(row.action_name.clone())
-                                        .color(Color::Default)
-                                        .size(LabelSize::Default)
-                                        .single_line()
-                                        .truncate(),
-                                )
-                        })),
+                        .child(rows_column),
                 );
             }
             column
@@ -186,18 +255,19 @@ impl Render for KeybindingsCheatsheetModal {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.45))
+            .bg(gpui::black().opacity(0.55))
             .child(
                 v_flex()
                     .id("codon-keymap-cheatsheet")
                     .max_w(max_w)
                     .max_h(max_h)
                     .w_full()
-                    .min_h(px(320.))
+                    .min_h(px(360.))
                     .rounded_lg()
                     .bg(panel_bg)
                     .border_1()
                     .border_color(border)
+                    .shadow_lg()
                     .px_6()
                     .py_5()
                     .child(header)
