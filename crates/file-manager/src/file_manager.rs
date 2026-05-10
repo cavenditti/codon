@@ -185,7 +185,7 @@ impl FileManager {
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
-            self.ensure_visible();
+            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.update_preview_sync();
             cx.notify();
         }
@@ -193,7 +193,7 @@ impl FileManager {
 
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
-        self.ensure_visible();
+        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.update_preview_sync();
         cx.notify();
     }
@@ -202,7 +202,7 @@ impl FileManager {
         if !self.entries.is_empty() {
             let half = self.visible_lines / 2;
             self.selected_index = cmp::min(self.selected_index + half, self.entries.len() - 1);
-            self.ensure_visible();
+            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.update_preview_sync();
             cx.notify();
         }
@@ -211,7 +211,7 @@ impl FileManager {
     fn half_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let half = self.visible_lines / 2;
         self.selected_index = self.selected_index.saturating_sub(half);
-        self.ensure_visible();
+        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.update_preview_sync();
         cx.notify();
     }
@@ -222,7 +222,7 @@ impl FileManager {
                 self.selected_index + self.visible_lines,
                 self.entries.len() - 1,
             );
-            self.ensure_visible();
+            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.update_preview_sync();
             cx.notify();
         }
@@ -230,7 +230,7 @@ impl FileManager {
 
     fn page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(self.visible_lines);
-        self.ensure_visible();
+        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.update_preview_sync();
         cx.notify();
     }
