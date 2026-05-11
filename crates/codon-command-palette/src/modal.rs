@@ -28,8 +28,8 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use ui::{
-    HighlightedLabel, KeyBinding, Label, LabelCommon as _, LabelSize, ListItem, ListItemSpacing,
-    SharedString, prelude::*,
+    HighlightedLabel, Icon, IconName, IconSize, KeyBinding, Label, LabelCommon as _, LabelSize,
+    ListItem, ListItemSpacing, SharedString, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -424,21 +424,24 @@ impl PickerDelegate for CodonPaletteDelegate {
             Mode::Argument { .. } => {
                 let item = self.arg_items.get(ix)?;
                 let label = item.label.clone();
-                let detail = item.detail.clone();
+                let is_nav = item.navigates_to.is_some();
+                // Single-row layout: leading folder/file icon, then label
+                // tinted by kind. Drops the previous second-line detail so
+                // every entry is the same height — file-manager-style.
+                let icon = if is_nav { IconName::Folder } else { IconName::File };
+                let icon_color = if is_nav { Color::Accent } else { Color::Muted };
+                let label_color = if is_nav { Color::Accent } else { Color::Default };
                 Some(
                     ListItem::new(ix)
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
                         .child(
-                            v_flex()
+                            h_flex()
+                                .gap_2()
                                 .py_px()
-                                .child(Label::new(label))
-                                .when_some(detail, |this, d| {
-                                    this.child(
-                                        Label::new(d).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                }),
+                                .child(Icon::new(icon).color(icon_color).size(IconSize::Small))
+                                .child(Label::new(label).color(label_color)),
                         ),
                 )
             }

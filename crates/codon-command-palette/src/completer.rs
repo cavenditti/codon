@@ -175,18 +175,14 @@ impl Completer for FilePathCompleter {
                     dirs.push(CompletionItem {
                         value: abs.to_string_lossy().to_string(),
                         label: SharedString::from(format!("{name}/")),
-                        detail: subdir
-                            .is_empty()
-                            .then(|| SharedString::from("directory"))
-                            .or(Some(SharedString::from(format!("in {subdir}/")))),
+                        detail: None,
                         navigates_to: Some(nav),
                     });
                 } else {
                     files.push(CompletionItem {
                         value: abs.to_string_lossy().to_string(),
                         label: SharedString::from(name),
-                        detail: (!subdir.is_empty())
-                            .then(|| SharedString::from(format!("in {subdir}/"))),
+                        detail: None,
                         navigates_to: None,
                     });
                 }
