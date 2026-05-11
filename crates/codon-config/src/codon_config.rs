@@ -9,10 +9,12 @@
 
 pub mod toml_to_json;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, BorrowAppContext as _};
+use fs::Fs;
+use futures::StreamExt as _;
+use gpui::{App, AppContext as _, BorrowAppContext as _};
 use settings::SettingsStore;
 
 /// The on-disk location codon reads its unified config from. Resolved once
@@ -90,4 +92,49 @@ pub fn bindings_toml(content: &str) -> Result<Option<toml::Value>> {
 
 pub fn init(cx: &mut App) {
     apply_user_config(cx);
+}
+
+/// Start a background watcher on `~/.config/codon/codon.toml`. On every
+/// content change, re-applies the `[settings]` sub-tree via
+/// [`apply_from_str`] and invokes `on_keymap_reload` so the host app can
+/// re-bind keymaps. The 100 ms debounce comes from `fs::watch` itself.
+///
+/// The watcher Task is detached — it lives for the App's lifetime. Calling
+/// `start_watcher` more than once spawns multiple watchers; the host app
+/// should call it exactly once during init.
+pub fn start_watcher<F>(fs: Arc<dyn Fs>, cx: &mut App, on_keymap_reload: F)
+where
+    F: Fn(&mut App) + 'static,
+{
+    let Some(path) = user_config_path() else {
+        return;
+    };
+    let executor = cx.background_executor().clone();
+    let (mut rx, watch_task) = settings::watch_config_file(&executor, fs, path.clone());
+    // First message arrives immediately (initial load) — we already applied
+    // settings during init(), so drop it without re-applying to avoid
+    // double-firing the keymap reload.
+    let mut saw_initial = false;
+    cx.spawn(async move |cx| {
+        while let Some(content) = rx.next().await {
+            if !saw_initial {
+                saw_initial = true;
+                continue;
+            }
+            cx.update(|cx| {
+                if let Err(err) = apply_from_str(&content, cx) {
+                    log::warn!("codon-config: live reload failed: {err:#}");
+                }
+                on_keymap_reload(cx);
+            });
+            // Yield briefly so a quick burst of fs events coalesces into one
+            // reload — the watch_config_file utility doesn't debounce on
+            // its own.
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+        }
+        drop(watch_task);
+    })
+    .detach();
 }

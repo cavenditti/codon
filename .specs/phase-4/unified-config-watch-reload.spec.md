@@ -7,7 +7,7 @@ summary: >
   Watch ~/.config/codon/codon.toml for changes and reload both
   settings and bindings without restarting codon.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-watch-reload
 ---

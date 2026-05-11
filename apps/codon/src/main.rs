@@ -769,6 +769,9 @@ fn main() {
         // codon-config must apply user settings before crates that read
         // settings during their own init (e.g. terminal_view, theme_selector).
         codon_config::init(cx);
+        codon_config::start_watcher(app_state.fs.clone(), cx, |cx| {
+            codon_keymap::load_codon_keymap(cx);
+        });
         codon_session::init(cx);
         vim::init(cx);
         file_manager::init(cx);

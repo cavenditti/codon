@@ -3432,6 +3432,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "fs",
+ "futures 0.3.32",
  "gpui",
  "log",
  "serde",
