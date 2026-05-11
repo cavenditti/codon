@@ -41,4 +41,11 @@ The system MUST provide:
   panes exist, (b) closing the codon-session window if other windows
   exist, or (c) replacing the center with an empty pane. The OS window
   only closes via the explicit `cmd-shift-w` chord or `cmd-q`.
+- {#c-goto-or-new} a family of actions
+  (`GotoOrOpenTerminal`, `GotoOrOpenFileManager`, `GotoOrOpenEditor`)
+  that focus the most-recently-active pane of that kind in the current
+  window if one exists, otherwise split / open a new one. Each action
+  is bindable to a single chord (e.g. `cmd-t`, `cmd-e`, `cmd-shift-e`)
+  so the user has a deterministic single-keystroke entry point per
+  pane kind without thinking about whether one is already open.
 :::

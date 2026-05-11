@@ -35,6 +35,10 @@ The system MUST provide named sessions with:
   name on the left
 - {#c-persistence} JSON-serialized persistence in the global KVP store
   under key `codon_sessions_v1`
+- {#c-overview} a tmux-style overview action (`SessionOverview`) that
+  shows every session as a labelled tile in a grid — name, cwd, window
+  count, last-attached time — with keyboard navigation and Enter to
+  attach. Mirrors tmux's `prefix s`.
 :::
 
 ## Implementation

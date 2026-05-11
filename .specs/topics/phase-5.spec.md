@@ -25,3 +25,15 @@ Refining requirements:
 - [REQ:codon/command-palette](spec:REQ:codon/command-palette) —
   `:`-triggered palette with description pane and typed-argument
   completers (Layer A; typed-action upstream work deferred).
+
+Phase-5 also picks up incremental refinements on previously-accepted
+phase-1/2 requirements:
+
+- [REQ:codon/modal-shell](spec:REQ:codon/modal-shell) — terminal
+  Normal mode with vi-mode integration; themable mode indicators.
+- [REQ:codon/sessions](spec:REQ:codon/sessions) — tmux-style session
+  overview grid.
+- [REQ:codon/windows](spec:REQ:codon/windows) — multi-window fuzzy
+  switch picker + tmux-style window overview grid.
+- [REQ:codon/pane-ux](spec:REQ:codon/pane-ux) — `GotoOrOpen{...}`
+  single-chord verbs for terminal / file-manager / editor.

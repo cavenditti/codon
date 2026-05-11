@@ -30,6 +30,13 @@ The system MUST manage windows-within-session:
   per window, no close-X, with click-to-switch
 - {#c-swap-on-switch} switching captures the outgoing window's layout
   snapshot before applying the incoming window's snapshot
+- {#c-switch-picker} a fuzzy picker action (`WindowSwitch`) for
+  jumping by name across the active session's windows — same picker
+  shape as `SessionSwitch` but scoped to the current session
+- {#c-overview} a tmux-style overview action (`WindowOverview`) that
+  renders every window in the active session as a thumbnail tile —
+  name, dominant pane kind, layout preview — with arrow / hjkl
+  navigation and Enter to switch. Mirrors tmux's `prefix w`.
 :::
 
 ## Implementation

@@ -31,4 +31,13 @@ The system MUST provide:
 - {#c-mode-indicator} a status bar indicator showing the active mode
 - {#c-toml-keymap} a TOML keymap loader at
   `~/.config/codon/keymap.toml` overriding the embedded defaults
+- {#c-terminal-normal-mode} a `PaneMode::Normal` state for terminal
+  panes entered via double-Esc that disables PTY writes, enables
+  alacritty's vi mode for cursor motion / selection / yank, opens the
+  command palette on `:`, and returns to Insert mode on `i`/`a` or a
+  second double-Esc
+- {#c-mode-indicator-themable} the mode indicator MUST be prominent
+  enough to read at a glance (bold pill / colored background, not just
+  inline text) and MUST honour the active theme — colors come from
+  theme tokens, not hard-coded hex
 :::
