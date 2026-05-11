@@ -580,6 +580,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let windows_indicator =
             cx.new(|_| codon_session::WindowsStatusItem::new(workspace.weak_handle()));
         workspace.status_bar().update(cx, |status_bar, cx| {
+            // Mode indicator sits at the leftmost slot — it's the first
+            // thing the user's eye lands on and the highest-frequency
+            // signal in a modal shell.
+            status_bar.add_left_item(vim_mode_indicator, window, cx);
             status_bar.add_left_item(session_indicator, window, cx);
             status_bar.add_left_item(windows_indicator, window, cx);
             status_bar.add_left_item(search_button, window, cx);
@@ -593,7 +597,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
-            status_bar.add_left_item(vim_mode_indicator, window, cx);
             status_bar.add_left_item(project_info, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);

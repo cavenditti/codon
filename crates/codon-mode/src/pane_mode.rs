@@ -21,6 +21,10 @@ impl std::fmt::Display for PaneMode {
 pub struct CodonModeTracker {
     pub mode: PaneMode,
     pub detail: Option<SharedString>,
+    /// True while the codon command palette is open. The indicator forces
+    /// `PaneMode::Command` whenever this is set, regardless of which pane
+    /// or vim mode is otherwise focused — the modal owns the UI.
+    pub command_active: bool,
 }
 
 impl Default for CodonModeTracker {
@@ -28,6 +32,7 @@ impl Default for CodonModeTracker {
         Self {
             mode: PaneMode::Normal,
             detail: None,
+            command_active: false,
         }
     }
 }

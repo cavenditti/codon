@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use codon_mode::CodonModeTracker;
 use command_palette::{humanize_action_name, normalize_action_query};
 use command_palette_hooks::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -36,6 +37,12 @@ use workspace::{ModalView, Workspace};
 
 use crate::completer::{self, CompletionItem, Completer};
 
+fn set_command_active(active: bool, cx: &mut App) {
+    cx.update_global::<CodonModeTracker, _>(|tracker, _| {
+        tracker.command_active = active;
+    });
+}
+
 pub struct CodonPalette {
     picker: Entity<Picker<CodonPaletteDelegate>>,
 }
@@ -46,7 +53,13 @@ impl CodonPalette {
             return;
         };
         let workspace_handle = cx.weak_entity();
+        // Flip the global Command flag so the status-bar mode indicator
+        // shows CMD while the palette is open. Cleared on entity drop via
+        // `on_release` so we don't have to thread cleanup through every
+        // dismiss / confirm path.
+        set_command_active(true, cx);
         workspace.toggle_modal(window, cx, move |window, cx| {
+            cx.on_release(|_, cx| set_command_active(false, cx)).detach();
             CodonPalette::new(previous_focus_handle, workspace_handle, window, cx)
         });
     }

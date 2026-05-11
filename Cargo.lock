@@ -3432,6 +3432,7 @@ name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-mode",
  "command_palette",
  "command_palette_hooks",
  "editor",

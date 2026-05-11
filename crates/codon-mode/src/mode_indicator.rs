@@ -105,7 +105,15 @@ impl CodonModeIndicator {
 
 impl Render for CodonModeIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (pane_mode, detail, pending, temp_mode) = if self.vim_focused && let Some(vim) = self.vim() {
+        let tracker = cx.global::<CodonModeTracker>();
+        let command_active = tracker.command_active;
+
+        let (pane_mode, detail, pending, temp_mode) = if command_active {
+            // Palette open — that's the whole UI right now; nothing else
+            // (terminal vi mode, vim, focused pane) should override it.
+            let pending = self.pending_keys.clone().unwrap_or_default();
+            (PaneMode::Command, None, pending, false)
+        } else if self.vim_focused && let Some(vim) = self.vim() {
             let vim_readable = vim.read(cx);
             let mode = vim_readable.mode;
             let temp = vim_readable.temp_mode;
@@ -127,22 +135,31 @@ impl Render for CodonModeIndicator {
                 )
             }
         } else {
-            let tracker = cx.global::<CodonModeTracker>();
             let pending = self.pending_keys.clone().unwrap_or_default();
             (tracker.mode, tracker.detail.clone(), pending, false)
         };
 
+        // Short, glanceable codon pane-mode label. Vim sub-modes (Visual,
+        // Replace, Operator-pending, …) come through `detail` and replace
+        // the short label — they're the more specific signal when they're
+        // active.
+        let short: SharedString = match pane_mode {
+            PaneMode::Normal => "NOR".into(),
+            PaneMode::Insert => "INS".into(),
+            PaneMode::Command => "CMD".into(),
+        };
         let mode_label: SharedString = if let Some(detail) = detail {
-            detail
+            detail.to_uppercase().into()
         } else if temp_mode {
-            format!("(insert) {}", pane_mode).into()
+            format!("(INS) {}", short).into()
         } else {
-            pane_mode.to_string().into()
+            short
         };
 
         let theme = cx.theme();
         let colors = theme.colors();
-        let (fg, bg) = match pane_mode {
+        let status = theme.status();
+        let (vim_fg, vim_bg) = match pane_mode {
             PaneMode::Normal => (
                 colors.vim_helix_normal_foreground,
                 colors.vim_helix_normal_background,
@@ -152,6 +169,16 @@ impl Render for CodonModeIndicator {
         };
 
         let transparent = gpui::hsla(0.0, 0.0, 0.0, 0.0);
+        // Per-mode saturated fallbacks pulled from `theme.status()` —
+        // guaranteed defined in every theme. Maps to the vim convention
+        // (Normal blue, Insert green, Command red/orange).
+        let (fallback_bg, fallback_fg) = match pane_mode {
+            PaneMode::Normal => (status.info_background, status.info),
+            PaneMode::Insert => (status.success_background, status.success),
+            PaneMode::Command => (status.warning_background, status.warning),
+        };
+        let bg = if vim_bg == transparent { fallback_bg } else { vim_bg };
+        let fg = if vim_fg == transparent { fallback_fg } else { vim_fg };
 
         h_flex()
             .gap_1()
@@ -164,19 +191,16 @@ impl Render for CodonModeIndicator {
             })
             .child(
                 v_flex()
-                    .when(bg != transparent, |el| el.px_2())
+                    .px_2()
                     .h(ButtonSize::Default.rems())
                     .justify_center()
                     .rounded_sm()
                     .bg(bg)
                     .child(
                         Label::new(mode_label)
-                            .size(LabelSize::Small)
                             .line_height_style(LineHeightStyle::UiLabel)
-                            .weight(FontWeight::MEDIUM)
-                            .when(bg != transparent && fg != transparent, |el| {
-                                el.color(Color::Custom(fg))
-                            }),
+                            .weight(FontWeight::BOLD)
+                            .color(Color::Custom(fg)),
                     ),
             )
             .into_any()
