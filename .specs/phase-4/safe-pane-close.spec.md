@@ -9,7 +9,7 @@ summary: >
   window, and ends with replace_center_with_empty_pane — never the OS
   window.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/pane-ux#c-safe-close
 ---

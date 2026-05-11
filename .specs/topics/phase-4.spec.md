@@ -20,3 +20,4 @@ Refining requirements (deferred drafts):
 
 - [REQ:codon/buffer-trait](spec:REQ:codon/buffer-trait)
 - [REQ:codon/git-pane](spec:REQ:codon/git-pane)
+- [REQ:codon/unified-config](spec:REQ:codon/unified-config)
