@@ -41,7 +41,7 @@ REQ:codon/sessions             (a feature with clauses)
     └ ...
     ↑ refines
 TASK:phase-2/session-new       (a leaf work item with progress)
-    progress: pending | in-progress | done | blocked | deferred
+    progress: pending | in-progress | done | blocked | deferred | wontdo
 ```
 
 ## Common queries
@@ -64,12 +64,22 @@ spec ancestors TASK:phase-2/session-new
 ## Lifecycle commands
 
 ```sh
-spec start TASK:phase-2/foo               # mark in-progress
-spec done  TASK:phase-2/foo               # mark done
-spec block TASK:phase-2/foo --on ADR:codon/0001-stack
-spec defer TASK:phase-2/foo               # out of scope for now
-spec reset TASK:phase-2/foo               # back to pending
+spec start  TASK:phase-2/foo              # mark in-progress
+spec done   TASK:phase-2/foo              # mark done
+spec block  TASK:phase-2/foo --on ADR:codon/0001-stack
+spec defer  TASK:phase-2/foo              # out of scope for now
+spec wontdo TASK:phase-2/foo              # intentionally not implementing
+spec reset  TASK:phase-2/foo              # back to pending
 ```
+
+`deferred` vs `wontdo`:
+
+- **deferred** — "we'll do this later, when the cost/benefit tilts."
+  Surfaces in `spec todo --state deferred`. Revisit periodically.
+- **wontdo** — "we've decided not to do this; the parent clause stays
+  in the REQ for traceability but no work is planned." Excluded from
+  coverage denominators, so a clause whose only task is `wontdo`
+  reports as covered (not as outstanding work).
 
 ## Commit trailers
 
@@ -89,7 +99,7 @@ Kinds: `implements`, `refines`, `tests`, `violates`, `touches`
 - `status:` — document lifecycle: `draft | accepted | deprecated | superseded`.
   REQs/TASKs typically sit at `accepted` once authored.
 - `progress:` (TASK only) — implementation lifecycle:
-  `pending | in-progress | done | blocked | deferred`.
+  `pending | in-progress | done | blocked | deferred | wontdo`.
   This is what `spec todo` and `spec coverage` report on.
 
 A task can be `accepted` as a document while still being `pending` as
