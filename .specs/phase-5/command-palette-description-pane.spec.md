@@ -8,7 +8,7 @@ summary: >
   active row in the command palette. Sourced from action doc comments,
   never a tooltip.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-description-pane
 ---

@@ -8,7 +8,7 @@ summary: >
   Maps an action's registered name to a producer of (value, label)
   pairs filtered against the user's argument query.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-completer-trait
 ---

@@ -1,47 +1,81 @@
 //! Codon command palette.
 //!
-//! Today this crate is a thin wrapper around Zed's `command_palette`. It owns
-//! the codon-side action (`codon_command_palette::Toggle`) so the codon keymap
-//! has a stable name to bind `:` to, and the keymap doesn't need to know how
-//! the palette is implemented underneath.
+//! Helix-style `:`-triggered palette built as a thin wrapper around Zed's
+//! `Action` registry. The wrapper adds two things on top of the existing
+//! Zed `command_palette`:
 //!
-//! Later tasks under `REQ:codon/command-palette` swap the body of this
-//! handler for codon's own modal with an always-visible description pane and
-//! typed-argument completers. The action surface, and therefore the keymap,
-//! stays stable across that swap.
+//! 1. An always-visible description aside (`PickerDelegate::documentation_aside`)
+//!    so a keyboard user sees what each command does without hovering.
+//! 2. A typed-argument sub-picker driven by registered
+//!    [`Completer`](completer::Completer) impls — type `open ` and the row
+//!    list becomes project file paths; type `theme ` and it becomes theme
+//!    names.
 //!
-//! See:
-//! - `.specs/codon/command-palette.spec.md` — the REQ.
-//! - `.specs/phase-5/command-palette-colon-trigger.spec.md` — this prototype.
+//! See `.specs/codon/command-palette.spec.md`.
 
-use gpui::{Context, Window, actions};
+pub mod completer;
+mod modal;
+
+use std::path::PathBuf;
+
+use gpui::{Action, App, Context, Window, actions};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use workspace::Workspace;
+
+pub use modal::CodonPalette;
 
 actions!(
     codon_command_palette,
     [
-        /// Open the codon command palette. Bound to `:` in codon Normal mode
-        /// and to `cmd-shift-p` globally.
+        /// Open the codon command palette. Bound to `:` in codon Normal
+        /// mode and to `cmd-shift-p` globally.
         Toggle,
     ]
 );
 
-/// Register the codon command-palette action handler on a workspace.
+/// Open an absolute file path in the active workspace.
 ///
-/// Mirrors the pattern used by `codon_session::actions::register_for_workspace`
-/// — invoked from `apps/codon::zed::initialize_workspace` once per workspace.
+/// Dispatched by the `file_path` completer when the user confirms a path
+/// in argument mode. Holds an absolute path so the handler doesn't have to
+/// resolve it against any specific worktree.
+#[derive(Clone, Debug, PartialEq, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = codon_command_palette)]
+#[serde(deny_unknown_fields)]
+pub struct OpenFile(pub PathBuf);
+
+/// Process-wide setup. Call once during app init.
+pub fn init(_cx: &mut App) {
+    completer::register_builtins();
+}
+
+/// Register workspace-scoped action handlers. Invoked from `apps/codon`
+/// once per workspace, mirroring `codon_session::actions::register_for_workspace`.
 pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_toggle);
+    workspace.register_action(handle_open_file);
 }
 
 fn handle_toggle(
-    _workspace: &mut Workspace,
+    workspace: &mut Workspace,
     _: &Toggle,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    // Layer A scaffold: defer to Zed's command palette. The codon-owned modal
-    // (description pane + completer sub-picker) will replace this body in the
-    // remaining phase-5 tasks under `REQ:codon/command-palette`.
-    window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
+    CodonPalette::toggle(workspace, window, cx);
+}
+
+fn handle_open_file(
+    workspace: &mut Workspace,
+    action: &OpenFile,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let path = action.0.clone();
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    workspace
+        .open_abs_path(path, workspace::OpenOptions::default(), window, cx)
+        .detach_and_log_err(cx);
 }

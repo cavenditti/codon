@@ -9,7 +9,7 @@ summary: >
   Completer, Enter builds and dispatches the action, Esc returns to
   command mode.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-arg-subpicker
 ---

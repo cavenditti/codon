@@ -7,7 +7,7 @@ summary: >
   Built-in Completer impls for the high-traffic verbs: file paths,
   theme names, line numbers, and free-text search patterns.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-builtin-completers
 ---

@@ -8,7 +8,7 @@ summary: >
   behaviour: Enter dispatches the bare action immediately. The action
   is responsible for any follow-on picker it wants to open.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-fallback
 ---

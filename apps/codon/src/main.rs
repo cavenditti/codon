@@ -766,6 +766,7 @@ fn main() {
         });
         codon_mode::init(cx);
         codon_agent::init(cx);
+        codon_command_palette::init(cx);
         // codon-config must apply user settings before crates that read
         // settings during their own init (e.g. terminal_view, theme_selector).
         codon_config::init(cx);

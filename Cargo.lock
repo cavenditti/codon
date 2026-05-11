@@ -3431,8 +3431,19 @@ dependencies = [
 name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "command_palette",
+ "command_palette_hooks",
+ "editor",
+ "fuzzy",
  "gpui",
  "log",
+ "picker",
+ "schemars 1.2.1",
+ "serde",
+ "theme",
+ "ui",
+ "util",
  "workspace",
  "zed_actions",
 ]

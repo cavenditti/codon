@@ -7,7 +7,7 @@ summary: >
   Every palette interaction is bound to a keystroke — cycle, jump to
   argument mode, run, dismiss. No mouse-only paths.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-keyboard-parity
 ---
