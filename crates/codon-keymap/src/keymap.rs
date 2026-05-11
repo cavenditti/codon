@@ -155,7 +155,7 @@ pub fn load_codon_keymap(cx: &mut App) {
     }
     apply_raw_bindings(cx);
 
-    let Some(codon_dir) = dirs::config_dir().map(|d| d.join("codon")) else {
+    let Some(codon_dir) = codon_config::codon_config_dir() else {
         return;
     };
 
@@ -275,18 +275,21 @@ fn apply_bindings(bindings: Vec<(String, String, Option<String>)>, cx: &mut App)
 /// general.
 fn apply_raw_bindings(cx: &mut App) {
     let mut bindings = Vec::new();
-    // `:` opens the codon palette on any non-editor surface: welcome
-    // page, empty pane, terminal, file manager. In an editor we want
-    // `:` to only open the palette while in a Helix/Vim normal-ish
-    // mode — that path is covered by the [bindings.editor.normal]
-    // block in the embedded keymap, which compiles to a `vim_mode`
-    // predicate (see `mode_predicates`). The two together leave `:`
-    // typing a literal colon in Editor Insert mode and inside text
-    // inputs.
+    // `:` opens the codon palette on any non-editor, non-terminal
+    // surface: welcome page, onboarding, empty pane, file manager.
+    // In an editor we want `:` to only open the palette while in a
+    // Helix/Vim normal-ish mode — that's covered by the
+    // [bindings.editor.normal] block (which compiles to a `vim_mode`
+    // predicate; see `mode_predicates`). The terminal binding lives
+    // under its own pane_mode predicate. The `!Editor && !Terminal`
+    // predicate mirrors vim.json's own fall-through `:` binding
+    // (vim.json line 930) so we know it matches everywhere a
+    // bare-context palette is wanted — `Workspace && !Editor` failed
+    // to match in the Onboarding focus chain in practice.
     if let Some(binding) = resolve_binding(
         ":",
         "codon_command_palette::Toggle",
-        Some("Workspace && !Editor"),
+        Some("!Editor && !Terminal"),
     ) {
         bindings.push(binding);
     }

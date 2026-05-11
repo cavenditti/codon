@@ -21,10 +21,23 @@ use futures::StreamExt as _;
 use gpui::{App, AppContext as _, BorrowAppContext as _};
 use settings::SettingsStore;
 
+/// Resolve the codon config directory. Always `~/.config/codon` regardless
+/// of platform convention — codon is a terminal-first multiplexer editor
+/// where dotfile expectations dominate, so we deliberately diverge from
+/// `dirs::config_dir()` (which returns `~/Library/Application Support` on
+/// macOS). Honours `$XDG_CONFIG_HOME` first, then falls back to
+/// `$HOME/.config`.
+pub fn codon_config_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(xdg).join("codon"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("codon"))
+}
+
 /// The on-disk location codon reads its unified config from. Resolved once
 /// at startup; absence is not an error (defaults apply).
 pub fn user_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("codon").join("codon.toml"))
+    codon_config_dir().map(|d| d.join("codon.toml"))
 }
 
 /// Read the user config from disk and apply the `[settings]` sub-tree to

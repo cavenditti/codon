@@ -66,16 +66,21 @@ pub enum MigrationOutcome {
 /// Run the one-shot migration if the unified file is missing. Safe to call
 /// on every codon startup.
 pub fn migrate_if_needed() -> Result<MigrationOutcome> {
-    let Some(config_dir) = dirs::config_dir() else {
+    let Some(codon_dir) = crate::codon_config_dir() else {
         return Ok(MigrationOutcome::Scaffolded);
     };
-    let unified = config_dir.join("codon").join("codon.toml");
+    let unified = codon_dir.join("codon.toml");
     if unified.exists() {
         return Ok(MigrationOutcome::Already);
     }
 
-    let zed_settings = config_dir.join("zed").join("settings.json");
-    let legacy_keymap = config_dir.join("codon").join("keymap.toml");
+    // The legacy Zed settings still live wherever the platform default
+    // puts them (`~/Library/Application Support/Zed/settings.json` on
+    // macOS) — only codon's own files moved to `~/.config/codon`.
+    let zed_settings = dirs::config_dir()
+        .map(|d| d.join("zed").join("settings.json"))
+        .unwrap_or_default();
+    let legacy_keymap = codon_dir.join("keymap.toml");
 
     let zed_doc = read_jsonc_if_present(&zed_settings)?;
     let keymap_doc = read_toml_if_present(&legacy_keymap)?;
