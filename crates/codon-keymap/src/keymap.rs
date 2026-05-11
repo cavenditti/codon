@@ -216,19 +216,32 @@ fn add_mode_bindings(
     pane_kind: &str,
     modes: &ModeBindings,
 ) {
+    let (normal_pred, insert_pred) = mode_predicates(pane_kind);
     for (keystroke, action) in &modes.normal {
-        result.push((
-            keystroke.clone(),
-            action.clone(),
-            Some(format!("{} && pane_mode == normal", pane_kind)),
-        ));
+        result.push((keystroke.clone(), action.clone(), Some(normal_pred.clone())));
     }
     for (keystroke, action) in &modes.insert {
-        result.push((
-            keystroke.clone(),
-            action.clone(),
-            Some(format!("{} && pane_mode == insert", pane_kind)),
-        ));
+        result.push((keystroke.clone(), action.clone(), Some(insert_pred.clone())));
+    }
+}
+
+/// Map a pane-kind name to the codon Normal / Insert key-context predicates.
+///
+/// Different panes publish "I am in Normal mode" via different predicates —
+/// the editor uses Zed/vim's `vim_mode == normal` (Helix is force-on so this
+/// is also the codon editor Normal mode), while the file manager publishes
+/// `pane_mode == normal` from `codon-mode`. Codon-keymap centralizes the
+/// translation here so user keymap TOML stays uniform.
+fn mode_predicates(pane_kind: &str) -> (String, String) {
+    match pane_kind {
+        "Editor" => (
+            "vim_mode == normal".to_string(),
+            "vim_mode == insert".to_string(),
+        ),
+        other => (
+            format!("{other} && pane_mode == normal"),
+            format!("{other} && pane_mode == insert"),
+        ),
     }
 }
 
