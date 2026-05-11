@@ -90,6 +90,8 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 
 **Phase planning.** Roadmap is in `.specs/`, not `TODO.md`. `TODO.md` is a one-page pointer. To plan new work, write `TASK:phase-N/<slug>.spec.md` files refining clauses on existing `REQ:codon/<area>` specs — see `.specs/AGENTS.md` for the full vocabulary. `spec todo` is the single source of truth for what's open.
 
+**Spec-first, always.** Any new feature — even a small one — follows the same order: (1) write or extend the `REQ:codon/<area>` spec with clauses, (2) author one `TASK:phase-N/<slug>.spec.md` per clause, (3) only then start the prototype. Never skip straight from "good idea" to code. The spec is the design conversation; the TASKs make scope reviewable; the prototype implements what's already agreed. `spec lint` must stay clean across the trio.
+
 ## When in doubt
 
 - Reach for an existing codon crate before adding a new one — `codon-session` has the picker pattern, `codon-keymap` has the modal pattern, `codon-mode` has the selection/focus pattern.

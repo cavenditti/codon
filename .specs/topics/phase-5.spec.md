@@ -22,3 +22,6 @@ Refining requirements:
 - [REQ:codon/fm-enhancements](spec:REQ:codon/fm-enhancements)
 - [REQ:codon/additional-panes](spec:REQ:codon/additional-panes)
 - [REQ:codon/in-app-pickers](spec:REQ:codon/in-app-pickers)
+- [REQ:codon/command-palette](spec:REQ:codon/command-palette) —
+  `:`-triggered palette with description pane and typed-argument
+  completers (Layer A; typed-action upstream work deferred).
