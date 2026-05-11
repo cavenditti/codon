@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/codon",
     "crates/codon-agent",
+    "crates/codon-config",
     "crates/codon-keymap",
     "crates/codon-mode",
     "crates/codon-session",
@@ -341,6 +342,7 @@ file_finder = { path = "vendor/zed/crates/file_finder" }
 file_icons = { path = "vendor/zed/crates/file_icons" }
 file-manager = { path = "crates/file-manager" }
 codon-agent = { path = "crates/codon-agent" }
+codon-config = { path = "crates/codon-config" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
 codon-session = { path = "crates/codon-session" }

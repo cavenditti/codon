@@ -3426,6 +3426,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "codon-keymap"
 version = "0.1.0"
 dependencies = [

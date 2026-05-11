@@ -8,7 +8,7 @@ summary: >
   struct. Document quirks (heterogeneous arrays → TOML inline-tables,
   comment preservation rules).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-toml-schema
 ---
