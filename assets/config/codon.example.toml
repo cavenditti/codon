@@ -1,0 +1,150 @@
+# Codon — example user configuration
+#
+# Copy this file to ~/.config/codon/codon.toml (or its platform
+# equivalent under XDG_CONFIG_HOME) and edit. Codon merges your file
+# on top of its embedded defaults, so anything you omit keeps the
+# default behaviour. Live-reload is on — saves take effect without a
+# restart.
+#
+# Two top-level sections:
+#
+#   [settings.*]   — Zed-equivalent settings (theme, fonts, editor,
+#                    terminal, language overrides). Mirrors Zed's
+#                    SettingsContent struct shape; see
+#                    crates/codon-config/README.md for the full
+#                    mapping rules.
+#
+#   [bindings.*]   — codon keybindings, grouped by context. Three
+#                    pane-scoped sub-tables (editor / terminal /
+#                    file_manager) plus a global one. Each has
+#                    optional `normal` and `insert` mode sub-tables.
+#
+# Action names use Zed's namespaced format
+# (`codon_session::SessionNew`, `workspace::ActivatePaneLeft`, …).
+# Press `cmd-k F1` from inside codon to see every active binding.
+
+# ═══ Settings ════════════════════════════════════════════════════════
+[settings]
+# Editor font (passed through to Zed; any installed family works).
+buffer_font_family = "JetBrainsMono Nerd Font"
+buffer_font_size = 14
+ui_font_size = 14
+
+# UI scaling — leave at 1.0 unless you have a HiDPI quirk.
+ui_font_features = { calt = false }
+
+[settings.theme]
+mode = "system"
+light = "One Light"
+dark = "One Dark"
+
+[settings.editor]
+# Most popular editor settings have a single key under [settings].
+# Group them under [settings.editor] only when Zed's struct does too.
+# Run codon and inspect codon.toml after migration to see your tree.
+
+[settings.terminal]
+# default_command = ["/opt/homebrew/bin/fish"]
+
+# Per-language overrides use [settings.languages.<name>]; quote the
+# name when it contains symbols (TOML rule, e.g. "c++").
+[settings.languages.rust]
+formatter = "language_server"
+format_on_save = "on"
+
+# [settings.languages."c++"]
+# formatter = { external = { command = "clang-format" } }
+
+# ═══ Keybindings — global ════════════════════════════════════════════
+[bindings.global]
+# Pane focus (vim/helix muscle memory)
+"ctrl-h" = "workspace::ActivatePaneLeft"
+"ctrl-j" = "workspace::ActivatePaneDown"
+"ctrl-k" = "workspace::ActivatePaneUp"
+"ctrl-l" = "workspace::ActivatePaneRight"
+
+# Pane move — swap with neighbour
+"ctrl-shift-h" = "workspace::SwapPaneLeft"
+"ctrl-shift-j" = "workspace::SwapPaneDown"
+"ctrl-shift-k" = "workspace::SwapPaneUp"
+"ctrl-shift-l" = "workspace::SwapPaneRight"
+
+# Pane resize (held under cmd-k to avoid clashing with move)
+"cmd-k shift-h" = "vim::ResizePaneLeft"
+"cmd-k shift-j" = "vim::ResizePaneDown"
+"cmd-k shift-k" = "vim::ResizePaneUp"
+"cmd-k shift-l" = "vim::ResizePaneRight"
+
+# Pane splitting (tmux-flavoured)
+"cmd-k |"  = "pane::SplitRight"
+"cmd-k -"  = "pane::SplitDown"
+"cmd-k \\" = "pane::SplitRight"
+
+# Pane lifecycle. Both cmd-w and cmd-k w fall through codon's safe
+# close cascade (close item → close pane → close session window →
+# empty pane reset). The OS window is only ever closed via
+# `cmd-shift-w` or `cmd-q`.
+"cmd-k t" = "workspace::NewTerminal"
+"cmd-k e" = "file_manager::Open"
+"cmd-w"   = "codon_session::SafeCloseActiveItem"
+"cmd-k w" = "codon_session::SafeCloseActiveItem"
+
+# Sessions (cmd-k s prefix)
+"cmd-k s n" = "codon_session::SessionNew"
+"cmd-k s s" = "codon_session::SessionSwitch"
+"cmd-k s c" = "codon_session::SessionClose"
+
+# Windows within a session (cmd-k W prefix — capital W; lowercase w
+# is "close active item" above).
+"cmd-k shift-w n" = "codon_session::WindowNew"
+"cmd-k shift-w l" = "codon_session::WindowNext"
+"cmd-k shift-w h" = "codon_session::WindowPrev"
+"cmd-k shift-w c" = "codon_session::WindowClose"
+
+# Agent (cmd-k a prefix). Explain / Summarize / Refactor capture the
+# active selection (text from focused editor or terminal), open the
+# agent panel, and seed the message editor with a prompt prefix.
+"cmd-k a a" = "assistant::FocusAgent"
+"cmd-k a e" = "codon_agent::AgentExplain"
+"cmd-k a s" = "codon_agent::AgentSummarize"
+"cmd-k a r" = "codon_agent::AgentRefactor"
+
+# Git (cmd-k g prefix)
+"cmd-k g m" = "git::GenerateCommitMessage"
+
+# Help / cheatsheet — full-screen list of every active binding.
+"cmd-k f1" = "codon_keymap::ShowKeymap"
+
+# Welcome page
+"cmd-k f2" = "zed::ShowWelcome"
+
+# Command palette
+"cmd-shift-p" = "command_palette::Toggle"
+
+# ═══ Pane-scoped overrides ═══════════════════════════════════════════
+# These only fire when the named pane is focused and in the given
+# mode. Use them to specialise behaviour for the file manager,
+# terminal, or editor without changing the global map.
+
+[bindings.file_manager.normal]
+# Examples — the defaults already handle these. Uncomment to override.
+# "j" = "file_manager::NavigateDown"
+# "k" = "file_manager::NavigateUp"
+# "h" = "file_manager::ParentDirectory"
+# "l" = "file_manager::EnterDirectory"
+
+[bindings.terminal.normal]
+# Vim-style scrollback nav is the default; override if you prefer
+# different keys.
+# "j" = "terminal::ScrollLineDown"
+# "k" = "terminal::ScrollLineUp"
+# "ctrl-d" = "terminal::ScrollHalfPageDown"
+# "ctrl-u" = "terminal::ScrollHalfPageUp"
+
+[bindings.editor.normal]
+# Helix mode is force-enabled on editors; defaults match upstream
+# Helix. Override here for personal muscle memory.
+
+[bindings.editor.insert]
+# Most users leave this empty so the editor behaves like a plain
+# text editor when typing.

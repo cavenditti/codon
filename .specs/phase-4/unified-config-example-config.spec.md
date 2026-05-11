@@ -8,7 +8,7 @@ summary: >
   superseding keymap.example.toml. Shows settings and bindings in
   one annotated file.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-example-config
 ---
