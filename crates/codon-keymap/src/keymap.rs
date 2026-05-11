@@ -124,6 +124,14 @@ const DEFAULT_KEYMAP: &str = r#"
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
+///
+/// Load order:
+///   1. Embedded defaults (always).
+///   2. `~/.config/codon/codon.toml` `[bindings.*]` — the unified file.
+///   3. Legacy `~/.config/codon/keymap.toml` — kept as a fall-back for
+///      installs that haven't migrated yet (see
+///      `TASK:phase-4/unified-config-migration`). A deprecation hint is
+///      logged when the legacy file is read.
 pub fn load_codon_keymap(cx: &mut App) {
     gpui::set_keystroke_chord_timeout(CHORD_TIMEOUT);
 
@@ -131,14 +139,43 @@ pub fn load_codon_keymap(cx: &mut App) {
         apply_bindings(bindings, cx);
     }
 
-    let config_dir = dirs::config_dir().map(|d| d.join("codon").join("keymap.toml"));
-    if let Some(path) = config_dir {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Some(bindings) = parse_keymap(&content) {
-                apply_bindings(bindings, cx);
-            } else {
-                log::warn!("Failed to parse Codon keymap at {}", path.display());
-            }
+    let Some(codon_dir) = dirs::config_dir().map(|d| d.join("codon")) else {
+        return;
+    };
+
+    let unified = codon_dir.join("codon.toml");
+    if unified.exists() {
+        match std::fs::read_to_string(&unified) {
+            Ok(content) => match parse_keymap(&content) {
+                Some(bindings) => apply_bindings(bindings, cx),
+                None => log::warn!(
+                    "codon-keymap: failed to parse [bindings.*] in {}",
+                    unified.display()
+                ),
+            },
+            Err(err) => log::warn!(
+                "codon-keymap: could not read {}: {err}",
+                unified.display()
+            ),
+        }
+        return;
+    }
+
+    let legacy = codon_dir.join("keymap.toml");
+    if legacy.exists() {
+        log::info!(
+            "codon-keymap: reading legacy {}; migrate to codon.toml when convenient",
+            legacy.display()
+        );
+        match std::fs::read_to_string(&legacy) {
+            Ok(content) => match parse_keymap(&content) {
+                Some(bindings) => apply_bindings(bindings, cx),
+                None => log::warn!("codon-keymap: failed to parse {}", legacy.display()),
+            },
+            Err(err) => log::warn!(
+                "codon-keymap: could not read {}: {err}",
+                legacy.display()
+            ),
         }
     }
 }

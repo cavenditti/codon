@@ -7,7 +7,7 @@ summary: >
   Point codon-keymap at ~/.config/codon/codon.toml's [bindings.*]
   sub-tree so keymap and settings share one file.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-merge-keymap
 ---
