@@ -36,4 +36,9 @@ The system MUST provide:
   `agent_ui::message_editor:1423`); replacement requires a new in-app
   dir picker and is tracked under
   [REQ:codon/in-app-pickers](spec:REQ:codon/in-app-pickers)
+- {#c-safe-close} closing the last tab MUST NOT close the OS window.
+  The default close action falls back to (a) closing the pane if other
+  panes exist, (b) closing the codon-session window if other windows
+  exist, or (c) replacing the center with an empty pane. The OS window
+  only closes via the explicit `cmd-shift-w` chord or `cmd-q`.
 :::

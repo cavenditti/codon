@@ -87,7 +87,11 @@ const DEFAULT_KEYMAP: &str = r#"
 # Pane management
 "cmd-k t" = "workspace::NewTerminal"
 "cmd-k e" = "file_manager::Open"
-"cmd-k w" = "pane::CloseActiveItem"
+# Both cmd-w and cmd-k w fall through codon's safe close cascade (close
+# item -> close pane -> close session window -> empty pane). The OS
+# window is only ever closed by cmd-shift-w or cmd-q.
+"cmd-w"   = "codon_session::SafeCloseActiveItem"
+"cmd-k w" = "codon_session::SafeCloseActiveItem"
 
 # Sessions (cmd-k s prefix)
 "cmd-k s n" = "codon_session::SessionNew"
@@ -247,6 +251,7 @@ fn resolve_binding(
         "codon_session::WindowNext" => bind!(codon_session::WindowNext),
         "codon_session::WindowPrev" => bind!(codon_session::WindowPrev),
         "codon_session::WindowClose" => bind!(codon_session::WindowClose),
+        "codon_session::SafeCloseActiveItem" => bind!(codon_session::SafeCloseActiveItem),
 
         // Codon agent
         "codon_agent::AgentExplain" => bind!(codon_agent::AgentExplain),

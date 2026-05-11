@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{Action, App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use workspace::{Workspace, notifications::NotifyTaskExt as _};
+use workspace::{CloseActiveItem, Workspace, notifications::NotifyTaskExt as _};
 
 use crate::{
     picker::SessionSwitchModal,
@@ -32,6 +32,11 @@ actions!(
         WindowPrev,
         /// Close the active window in the active session.
         WindowClose,
+        /// Close the active tab. Falls back to closing the pane, then the
+        /// codon-session window, then replacing the center with an empty
+        /// pane. Never closes the OS window — that's reserved for
+        /// `cmd-shift-w` / `cmd-q`.
+        SafeCloseActiveItem,
     ]
 );
 
@@ -53,6 +58,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_next);
     workspace.register_action(handle_window_prev);
     workspace.register_action(handle_window_close);
+    workspace.register_action(handle_safe_close_active_item);
 }
 
 fn handle_session_new(
@@ -227,6 +233,78 @@ fn handle_window_close(
     persist_async(cx);
     cx.notify();
     let _ = workspace;
+}
+
+/// Close the active item, falling back through increasingly broad scopes —
+/// pane, codon-session window, then an empty-pane reset — so the OS window
+/// never disappears as a side effect of a close-tab keystroke.
+fn handle_safe_close_active_item(
+    workspace: &mut Workspace,
+    _: &SafeCloseActiveItem,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let active_pane = workspace.active_pane().clone();
+    let item_count = active_pane.read(cx).items_len();
+
+    // (1) Plenty of items in the active pane — just close the one in front.
+    if item_count > 1 {
+        active_pane.update(cx, |pane, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        });
+        return;
+    }
+
+    // (2) Last item in this pane, but the workspace has other panes —
+    // close the entire pane via the existing Pane::Remove event, which
+    // workspace::handle_pane_event already routes to remove_pane.
+    if workspace.panes().len() > 1 {
+        active_pane.update(cx, |_, cx| {
+            cx.emit(workspace::pane::Event::Remove { focus_on_pane: None });
+        });
+        return;
+    }
+
+    // (3) Single-pane workspace, but the active session has multiple
+    // windows — delegate to the existing window-close handler.
+    let multi_window_session = SessionRegistry::global(cx)
+        .active()
+        .is_some_and(|s| s.windows.len() > 1);
+    if multi_window_session {
+        window.dispatch_action(Box::new(WindowClose), cx);
+        return;
+    }
+
+    // (4) Truly the last pane in the last window. Close the active item
+    // (preserving Zed's dirty-buffer save prompt) if there is one; the
+    // pane lingers as empty rather than auto-closing the OS window
+    // (vendored Zed gates that branch via Workspace::set_close_window_on_last_tab).
+    if item_count == 1 {
+        active_pane.update(cx, |pane, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        });
+        return;
+    }
+
+    // item_count == 0: already-empty pane, last in the workspace. Replace
+    // with a fresh empty pane so the user lands somewhere usable.
+    workspace.replace_center_with_empty_pane(window, cx);
 }
 
 fn cycle_window(

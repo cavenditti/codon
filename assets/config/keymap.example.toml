@@ -51,10 +51,14 @@
 "cmd-k -"  = "pane::SplitDown"
 "cmd-k \\" = "pane::SplitRight"
 
-# Pane lifecycle
+# Pane lifecycle. Both `cmd-w` and `cmd-k w` go through codon's safe
+# close cascade: close the active item, then the pane, then the
+# session window, ending with an empty pane. The OS window is reserved
+# for `cmd-shift-w` and `cmd-q`.
 "cmd-k t" = "workspace::NewTerminal"
 "cmd-k e" = "file_manager::Open"
-"cmd-k w" = "pane::CloseActiveItem"
+"cmd-w"   = "codon_session::SafeCloseActiveItem"
+"cmd-k w" = "codon_session::SafeCloseActiveItem"
 
 # ─── Sessions (cmd-k s prefix) ─────────────────────────────────────────────
 "cmd-k s n" = "codon_session::SessionNew"

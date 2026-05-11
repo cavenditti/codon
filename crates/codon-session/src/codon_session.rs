@@ -18,6 +18,10 @@ pub use workspace::codon_bridge::LayoutSnapshot;
 use gpui::App;
 
 pub fn init(cx: &mut App) {
+    // Codon owns its own close-cascade (see `SafeCloseActiveItem`), so the
+    // Zed-side auto-`CloseWindow` branch on an empty pane is muted: an
+    // accidental cmd-w never collapses the OS window.
+    workspace::pane::set_close_window_on_last_tab(false);
     actions::register(cx);
     registry::init(cx);
     runtime::init(cx);
