@@ -148,6 +148,7 @@ pub fn load_codon_keymap(cx: &mut App) {
     if let Some(bindings) = parse_keymap(DEFAULT_KEYMAP) {
         apply_bindings(bindings, cx);
     }
+    apply_raw_bindings(cx);
 
     let Some(codon_dir) = dirs::config_dir().map(|d| d.join("codon")) else {
         return;
@@ -261,6 +262,32 @@ fn apply_bindings(bindings: Vec<(String, String, Option<String>)>, cx: &mut App)
     }
 
     cx.bind_keys(key_bindings);
+}
+
+/// Bindings whose context predicate doesn't fit the
+/// `[bindings.<pane>.<mode>]` shape get applied directly here. Kept small
+/// on purpose — extend `parse_keymap` instead when a pattern becomes
+/// general.
+fn apply_raw_bindings(cx: &mut App) {
+    let mut bindings = Vec::new();
+    // `:` opens the codon palette on any non-editor surface: welcome
+    // page, empty pane, terminal, file manager. In an editor we want
+    // `:` to only open the palette while in a Helix/Vim normal-ish
+    // mode — that path is covered by the [bindings.editor.normal]
+    // block in the embedded keymap, which compiles to a `vim_mode`
+    // predicate (see `mode_predicates`). The two together leave `:`
+    // typing a literal colon in Editor Insert mode and inside text
+    // inputs.
+    if let Some(binding) = resolve_binding(
+        ":",
+        "codon_command_palette::Toggle",
+        Some("Workspace && !Editor"),
+    ) {
+        bindings.push(binding);
+    }
+    if !bindings.is_empty() {
+        cx.bind_keys(bindings);
+    }
 }
 
 fn resolve_binding(

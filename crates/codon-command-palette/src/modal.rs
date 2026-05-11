@@ -164,14 +164,24 @@ impl ModalView for CodonPalette {}
 impl Render for CodonPalette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let aside = self.aside_snapshot(cx);
-        h_flex()
+        // The modal layer centers our rendered tree horizontally. We want
+        // the *picker* centered (the user sees it where every other modal
+        // lives), with the description panel hanging off to the right —
+        // not contributing to the centered footprint. So: a 34rem-wide
+        // outer container holds the picker; the panel is an absolutely-
+        // positioned sibling anchored to that container's right edge.
+        div()
             .key_context("CodonCommandPalette")
-            .items_start()
-            .child(v_flex().w(rems(34.)).child(self.picker.clone()))
+            .relative()
+            .w(rems(34.))
+            .child(self.picker.clone())
             .when_some(aside, |this, snap| {
                 this.child(
                     div()
+                        .absolute()
+                        .left_full()
                         .ml_2()
+                        .top_0()
                         .elevation_2(cx)
                         .child(render_aside(snap, cx)),
                 )
