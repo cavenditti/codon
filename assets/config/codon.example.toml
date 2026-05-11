@@ -118,8 +118,8 @@ format_on_save = "on"
 # Welcome page
 "cmd-k f2" = "zed::ShowWelcome"
 
-# Command palette
-"cmd-shift-p" = "command_palette::Toggle"
+# Command palette (Helix-style `:` plus the platform-native chord)
+"cmd-shift-p" = "codon_command_palette::Toggle"
 
 # ═══ Pane-scoped overrides ═══════════════════════════════════════════
 # These only fire when the named pane is focused and in the given
@@ -127,13 +127,14 @@ format_on_save = "on"
 # terminal, or editor without changing the global map.
 
 [bindings.file_manager.normal]
-# Examples — the defaults already handle these. Uncomment to override.
+# `:` opens the command palette (Helix-style); already in defaults.
 # "j" = "file_manager::NavigateDown"
 # "k" = "file_manager::NavigateUp"
 # "h" = "file_manager::ParentDirectory"
 # "l" = "file_manager::EnterDirectory"
 
 [bindings.terminal.normal]
+# `:` opens the command palette (Helix-style); already in defaults.
 # Vim-style scrollback nav is the default; override if you prefer
 # different keys.
 # "j" = "terminal::ScrollLineDown"
@@ -142,6 +143,7 @@ format_on_save = "on"
 # "ctrl-u" = "terminal::ScrollHalfPageUp"
 
 [bindings.editor.normal]
+# `:` opens the command palette (Helix-style); already in defaults.
 # Helix mode is force-enabled on editors; defaults match upstream
 # Helix. Override here for personal muscle memory.
 

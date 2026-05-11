@@ -602,6 +602,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         codon_session::actions::register_for_workspace(workspace);
         codon_session::window_indicator::register_for_workspace(workspace);
         codon_agent::actions::register_for_workspace(workspace);
+        codon_command_palette::register_for_workspace(workspace);
         codon_keymap::register_for_workspace(workspace);
 
         let panels_task = initialize_panels(window, cx);

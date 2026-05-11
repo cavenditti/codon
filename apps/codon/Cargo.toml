@@ -37,6 +37,7 @@ codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 codon-agent.workspace = true
+codon-command-palette.workspace = true
 codon-config.workspace = true
 codon-keymap.workspace = true
 codon-mode.workspace = true

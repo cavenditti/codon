@@ -120,7 +120,17 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k f2" = "zed::ShowWelcome"
 
 # Command palette
-"cmd-shift-p" = "command_palette::Toggle"
+"cmd-shift-p" = "codon_command_palette::Toggle"
+
+# `:` in Normal mode opens the codon palette (Helix-style)
+[bindings.terminal.normal]
+":" = "codon_command_palette::Toggle"
+
+[bindings.file_manager.normal]
+":" = "codon_command_palette::Toggle"
+
+[bindings.editor.normal]
+":" = "codon_command_palette::Toggle"
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
@@ -307,6 +317,7 @@ fn resolve_binding(
 
         // Command palette
         "command_palette::Toggle" => bind!(zed_actions::command_palette::Toggle),
+        "codon_command_palette::Toggle" => bind!(codon_command_palette::Toggle),
 
         _ => {
             log::warn!("Unknown action in keymap: {}", action_name);

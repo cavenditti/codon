@@ -8,7 +8,7 @@ summary: >
   open the codon command palette. cmd-shift-p continues to open the
   same modal as an alternative.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette#c-colon-trigger
 ---
