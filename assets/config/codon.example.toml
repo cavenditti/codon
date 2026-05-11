@@ -83,11 +83,18 @@ format_on_save = "on"
 # Pane lifecycle. Both cmd-w and cmd-k w fall through codon's safe
 # close cascade (close item → close pane → close session window →
 # empty pane reset). The OS window is only ever closed via
-# `cmd-shift-w` or `cmd-q`.
+# `cmd-shift-w` or `cmd-shift-q`.
 "cmd-k t" = "workspace::NewTerminal"
 "cmd-k e" = "file_manager::Open"
 "cmd-w"   = "codon_session::SafeCloseActiveItem"
 "cmd-k w" = "codon_session::SafeCloseActiveItem"
+
+# Quit. cmd-q must be *held* for ~1.5 seconds to actually quit (Chrome
+# style) — a single tap shows a toast and otherwise does nothing.
+# cmd-shift-q is the immediate-quit escape hatch. Both are filtered out
+# of the command palette so `:q<Enter>` can't accidentally exit the app.
+"cmd-q"       = "codon_session::HoldQuit"
+"cmd-shift-q" = "zed::Quit"
 
 # Sessions (cmd-k s prefix)
 "cmd-k s n" = "codon_session::SessionNew"

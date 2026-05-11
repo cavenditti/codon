@@ -18,6 +18,9 @@ mod modal;
 
 use std::path::PathBuf;
 
+use std::any::TypeId;
+
+use command_palette_hooks::CommandPaletteFilter;
 use gpui::{Action, App, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,8 +48,24 @@ actions!(
 pub struct OpenFile(pub PathBuf);
 
 /// Process-wide setup. Call once during app init.
-pub fn init(_cx: &mut App) {
+pub fn init(cx: &mut App) {
     completer::register_builtins();
+    hide_destructive_actions_from_palette(cx);
+}
+
+/// Hide actions whose only effect is to quit the app or kill the OS window
+/// from the codon command palette. The palette's fuzzy match for short
+/// queries like `q` would otherwise pin `zed::Quit` to the top — one stray
+/// Enter and the whole app is gone. `cmd-shift-q` and the macOS menu
+/// remain available for users who actually want to quit.
+fn hide_destructive_actions_from_palette(cx: &mut App) {
+    let hidden: [TypeId; 2] = [
+        TypeId::of::<zed_actions::Quit>(),
+        TypeId::of::<workspace::CloseWindow>(),
+    ];
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        filter.hide_action_types(&hidden);
+    });
 }
 
 /// Register workspace-scoped action handlers. Invoked from `apps/codon`

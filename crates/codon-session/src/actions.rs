@@ -1,9 +1,15 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
-use gpui::{Action, App, AppContext as _, Context, Window, actions};
+use gpui::{Action, App, AppContext as _, Context, Global, Window, actions};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use workspace::{CloseActiveItem, Workspace, notifications::NotifyTaskExt as _};
+use workspace::{
+    CloseActiveItem, Workspace,
+    notifications::{NotificationId, NotifyTaskExt as _, simple_message_notification::MessageNotification},
+};
 
 use crate::{
     picker::SessionSwitchModal,
@@ -35,8 +41,14 @@ actions!(
         /// Close the active tab. Falls back to closing the pane, then the
         /// codon-session window, then replacing the center with an empty
         /// pane. Never closes the OS window — that's reserved for
-        /// `cmd-shift-w` / `cmd-q`.
+        /// `cmd-shift-w` / `cmd-shift-q`.
         SafeCloseActiveItem,
+        /// Hold-to-quit guard for `cmd-q`. Single tap shows a toast asking
+        /// the user to hold; continued auto-repeat invocations over ~1.5s
+        /// dispatch `zed::Quit`. Releasing before the threshold leaves the
+        /// app running. `cmd-shift-q` remains an immediate-quit escape
+        /// hatch.
+        HoldQuit,
     ]
 );
 
@@ -59,6 +71,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_prev);
     workspace.register_action(handle_window_close);
     workspace.register_action(handle_safe_close_active_item);
+    workspace.register_action(handle_hold_quit);
 }
 
 fn handle_session_new(
@@ -399,4 +412,66 @@ pub(crate) fn persist_async(cx: &App) {
         }
     })
     .detach();
+}
+
+// ─── hold-to-quit ───────────────────────────────────────────────────────
+//
+// macOS's `cmd-q` defaults to an instantaneous app exit. Codon rebinds it
+// to `codon_session::HoldQuit` and gates the actual `zed::Quit` dispatch
+// behind a short hold — Chrome-style. The first press shows a toast and
+// records a timestamp; while the user keeps the chord held, macOS
+// auto-repeats the keystroke at ~30Hz, so subsequent action invocations
+// arrive every ~33 ms. Once any of those arrive 1.5 s after the first
+// press, we quit. Releasing before that leaves the app running; the
+// stale state self-clears via a 250 ms idle threshold on the next press.
+
+const HOLD_QUIT_THRESHOLD: Duration = Duration::from_millis(1500);
+const HOLD_QUIT_IDLE_RESET: Duration = Duration::from_millis(250);
+
+#[derive(Default, Clone, Copy)]
+struct HoldQuitState {
+    first_press: Option<Instant>,
+    last_press: Option<Instant>,
+}
+
+impl Global for HoldQuitState {}
+
+fn handle_hold_quit(
+    workspace: &mut Workspace,
+    _: &HoldQuit,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let now = Instant::now();
+    let mut state = cx.try_global::<HoldQuitState>().copied().unwrap_or_default();
+
+    // Stale state (released and pressed again later) → start fresh.
+    let started = match state.last_press {
+        Some(last) if now.duration_since(last) <= HOLD_QUIT_IDLE_RESET => state.first_press,
+        _ => None,
+    };
+
+    let first_press = started.unwrap_or(now);
+    state.first_press = Some(first_press);
+    state.last_press = Some(now);
+    cx.set_global(state);
+
+    if now.duration_since(first_press) >= HOLD_QUIT_THRESHOLD {
+        cx.remove_global::<HoldQuitState>();
+        workspace.dismiss_notification(&NotificationId::unique::<HoldQuit>(), cx);
+        window.dispatch_action(Box::new(zed_actions::Quit), cx);
+        return;
+    }
+
+    if started.is_none() {
+        let id = NotificationId::unique::<HoldQuit>();
+        workspace.show_notification(id, cx, |cx| {
+            cx.new(|cx| {
+                MessageNotification::new(
+                    "Hold ⌘Q to quit, or press ⇧⌘Q for an immediate quit.",
+                    cx,
+                )
+            })
+        });
+    }
 }
