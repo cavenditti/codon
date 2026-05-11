@@ -1,6 +1,14 @@
 use gpui::{App, KeyBinding};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+
+/// Codon binds plenty of three-keystroke chords (`cmd-k s n`, `cmd-k shift-w n`,
+/// `cmd-k a e`, …). GPUI's default 1-second chord timeout is too aggressive
+/// for that — slow typists hit the timeout mid-chord, the prefix flushes, and
+/// the raw keystroke gets replayed (which for terminal panes looks like the
+/// chord "leaked into the shell"). Five seconds is comfortable without being
+/// long enough to wedge the UI if a chord prefix was hit by accident.
+const CHORD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Codon's TOML keymap format.
 ///
@@ -113,6 +121,8 @@ const DEFAULT_KEYMAP: &str = r#"
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
 pub fn load_codon_keymap(cx: &mut App) {
+    gpui::set_keystroke_chord_timeout(CHORD_TIMEOUT);
+
     if let Some(bindings) = parse_keymap(DEFAULT_KEYMAP) {
         apply_bindings(bindings, cx);
     }
