@@ -9,8 +9,9 @@
 
 pub mod migrate;
 pub mod toml_to_json;
+pub mod writeback;
 
-pub use migrate::{MigrationOutcome, migrate_if_needed};
+pub use migrate::{MigrationOutcome, json_to_toml, migrate_if_needed};
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -106,6 +107,10 @@ pub fn init(cx: &mut App) {
         Err(err) => log::warn!("codon-config: migration failed: {err:#}"),
     }
     apply_user_config(cx);
+    // Reroute Zed's in-app settings editor through codon.toml — every
+    // settings_ui edit reads / writes the [settings] sub-tree instead of
+    // ~/.config/zed/settings.json.
+    writeback::install();
 }
 
 /// Start a background watcher on `~/.config/codon/codon.toml`. On every

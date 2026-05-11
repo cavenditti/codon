@@ -8,7 +8,7 @@ summary: >
   [settings.*] table, with tree-sitter TOML preserving comments and
   formatting on unchanged keys.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-settings-ui-rewire
 ---
