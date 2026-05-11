@@ -32,9 +32,17 @@ use crate::OpenFile;
 
 #[derive(Clone, Debug)]
 pub struct CompletionItem {
+    /// What `Completer::build_action` receives on a terminal confirmation.
     pub value: String,
+    /// Row label shown in the picker.
     pub label: SharedString,
+    /// Secondary muted line below the label, if any.
     pub detail: Option<SharedString>,
+    /// If `Some`, Enter on this row is a *navigation* — the modal sets
+    /// the palette query to `<verb> <navigates_to>` and re-runs the
+    /// completer, instead of dispatching `build_action`. Used by the
+    /// file-path completer to drill into directories breadth-first.
+    pub navigates_to: Option<String>,
 }
 
 pub trait Completer: Send + Sync + 'static {
@@ -121,71 +129,87 @@ impl Completer for FilePathCompleter {
     fn action_name(&self) -> &'static str { "codon_command_palette::OpenFile" }
     fn placeholder(&self) -> &'static str { "file path" }
 
+    /// Breadth-first navigation: parse the query as `<dir>/<partial>`,
+    /// list only the entries of `<dir>` (relative to the first visible
+    /// worktree), filter by `<partial>` as a substring, sort directories
+    /// first then files alphabetically. Directory items are marked
+    /// `navigates_to`, so Enter fills the input and re-runs the
+    /// completer; file items dispatch via `build_action`.
     fn complete(
         &self,
         query: &str,
         workspace: WeakEntity<Workspace>,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Task<Result<Vec<CompletionItem>>> {
-        let query = query.to_string();
-        // Snapshot every visible worktree's file paths up-front so the
-        // background fuzzy match doesn't need to re-enter the App context.
-        let paths: Vec<(PathBuf, String)> = workspace
-            .read_with(cx, |workspace, cx| {
-                let mut out = Vec::new();
-                for worktree in workspace.project().read(cx).visible_worktrees(cx) {
-                    let snap = worktree.read(cx);
-                    let abs_root = snap.abs_path();
-                    for entry in snap.entries(false, 0) {
-                        if entry.is_file() {
-                            let rel = entry.path.as_unix_str().to_string();
-                            let abs = abs_root.join(entry.path.as_std_path());
-                            out.push((abs.to_path_buf(), rel));
-                        }
-                    }
-                    if out.len() > 25_000 {
-                        break;
-                    }
+        let (subdir, partial) = split_dir_and_partial(query);
+        let result = workspace.read_with(_cx, |workspace, cx| {
+            let Some(worktree) = workspace.project().read(cx).visible_worktrees(cx).next() else {
+                return Vec::new();
+            };
+            let snap = worktree.read(cx);
+            let abs_root = snap.abs_path();
+            let target_abs = abs_root.join(&subdir);
+            let Ok(entries) = std::fs::read_dir(&target_abs) else {
+                return Vec::new();
+            };
+            let partial_lc = partial.to_lowercase();
+            let mut dirs: Vec<CompletionItem> = Vec::new();
+            let mut files: Vec<CompletionItem> = Vec::new();
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') && partial.is_empty() {
+                    continue; // hide dotfiles unless the user types something
                 }
-                out
-            })
-            .unwrap_or_default();
-        let executor = cx.background_executor().clone();
-        cx.background_spawn(async move {
-            if paths.is_empty() {
-                return Ok(Vec::new());
-            }
-            let candidates: Vec<StringMatchCandidate> = paths
-                .iter()
-                .enumerate()
-                .map(|(ix, (_, rel))| StringMatchCandidate::new(ix, rel))
-                .collect();
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                true,
-                100,
-                &Default::default(),
-                executor,
-            )
-            .await;
-            let items = matches
-                .into_iter()
-                .filter_map(|m| {
-                    paths.get(m.candidate_id).map(|(abs, rel)| CompletionItem {
+                if !partial_lc.is_empty() && !name.to_lowercase().contains(&partial_lc) {
+                    continue;
+                }
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let abs = target_abs.join(&name);
+                let rel = if subdir.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", subdir, name)
+                };
+                if is_dir {
+                    let nav = if rel.ends_with('/') { rel.clone() } else { format!("{rel}/") };
+                    dirs.push(CompletionItem {
                         value: abs.to_string_lossy().to_string(),
-                        label: SharedString::from(rel.clone()),
-                        detail: None,
-                    })
-                })
-                .collect();
-            Ok(items)
-        })
+                        label: SharedString::from(format!("{name}/")),
+                        detail: subdir
+                            .is_empty()
+                            .then(|| SharedString::from("directory"))
+                            .or(Some(SharedString::from(format!("in {subdir}/")))),
+                        navigates_to: Some(nav),
+                    });
+                } else {
+                    files.push(CompletionItem {
+                        value: abs.to_string_lossy().to_string(),
+                        label: SharedString::from(name),
+                        detail: (!subdir.is_empty())
+                            .then(|| SharedString::from(format!("in {subdir}/"))),
+                        navigates_to: None,
+                    });
+                }
+            }
+            dirs.sort_by(|a, b| a.label.cmp(&b.label));
+            files.sort_by(|a, b| a.label.cmp(&b.label));
+            dirs.extend(files);
+            dirs
+        });
+        Task::ready(Ok(result.unwrap_or_default()))
     }
 
     fn build_action(&self, value: &str) -> Box<dyn Action> {
         Box::new(OpenFile(PathBuf::from(value)))
+    }
+}
+
+/// Split `"src/foo"` into `("src", "foo")`, `"src/"` into `("src", "")`,
+/// `"foo"` into `("", "foo")`, and `""` into `("", "")`.
+fn split_dir_and_partial(query: &str) -> (String, String) {
+    match query.rfind('/') {
+        Some(ix) => (query[..ix].to_string(), query[ix + 1..].to_string()),
+        None => (String::new(), query.to_string()),
     }
 }
 
@@ -214,6 +238,7 @@ impl Completer for ThemeCompleter {
                 value: n.to_string(),
                 label: n,
                 detail: None,
+                navigates_to: None,
             })
             .collect();
         Task::ready(Ok(items))
@@ -250,12 +275,14 @@ impl Completer for LineNumberCompleter {
                 detail: Some(SharedString::from(
                     "Press Enter to open the go-to-line prompt",
                 )),
+                navigates_to: None,
             }]
         } else {
             vec![CompletionItem {
                 value: String::new(),
                 label: SharedString::from("Enter a line number"),
                 detail: None,
+                navigates_to: None,
             }]
         };
         Task::ready(Ok(items))
@@ -291,6 +318,7 @@ impl Completer for SearchCompleter {
                 value: String::new(),
                 label: SharedString::from("Enter a search query"),
                 detail: None,
+                navigates_to: None,
             }]
         } else {
             vec![CompletionItem {
@@ -299,6 +327,7 @@ impl Completer for SearchCompleter {
                 detail: Some(SharedString::from(
                     "Press Enter to open project search",
                 )),
+                navigates_to: None,
             }]
         };
         Task::ready(Ok(items))

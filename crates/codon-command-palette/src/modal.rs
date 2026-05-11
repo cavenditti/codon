@@ -101,22 +101,38 @@ impl CodonPalette {
                     focus: d.previous_focus_handle.clone(),
                     doc: cmd.documentation.clone(),
                     arg_hint,
+                    enter_preview: Some(SharedString::from(format!("↵ run {}", cmd.name))),
                 })
             }
             Mode::Argument {
                 completer,
                 command_label,
                 command_doc,
-            } => Some(AsideSnapshot {
-                title: command_label.clone(),
-                chord_action: None,
-                focus: d.previous_focus_handle.clone(),
-                doc: command_doc.clone(),
-                arg_hint: Some(SharedString::from(format!(
-                    "Argument: {}",
-                    completer.placeholder()
-                ))),
-            }),
+            } => {
+                let item = d.arg_items.get(d.selected_ix);
+                let enter_preview = item.map(|item| match &item.navigates_to {
+                    Some(nav) => SharedString::from(format!(
+                        "↵ open {} {} (navigate)",
+                        completer.aliases()[0],
+                        nav
+                    )),
+                    None => {
+                        let verb = completer.aliases()[0];
+                        SharedString::from(format!("↵ {verb} {}", item.label))
+                    }
+                });
+                Some(AsideSnapshot {
+                    title: command_label.clone(),
+                    chord_action: None,
+                    focus: d.previous_focus_handle.clone(),
+                    doc: command_doc.clone(),
+                    arg_hint: Some(SharedString::from(format!(
+                        "Argument: {}",
+                        completer.placeholder()
+                    ))),
+                    enter_preview,
+                })
+            }
         }
     }
 }
@@ -127,6 +143,11 @@ struct AsideSnapshot {
     focus: FocusHandle,
     doc: Option<SharedString>,
     arg_hint: Option<SharedString>,
+    /// One-line "what Enter will do" preview — appended to the aside so a
+    /// keyboard-only user always sees what's about to fire. (A true in-input
+    /// ghost-text overlay would need editor-level surgery; this is the
+    /// pragmatic substitute.)
+    enter_preview: Option<SharedString>,
 }
 
 fn render_aside(snap: AsideSnapshot, cx: &App) -> AnyElement {
@@ -146,6 +167,13 @@ fn render_aside(snap: AsideSnapshot, cx: &App) -> AnyElement {
             Label::new(h)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
+        );
+    }
+    if let Some(p) = snap.enter_preview {
+        col = col.child(
+            Label::new(p)
+                .size(LabelSize::Small)
+                .color(Color::Accent),
         );
     }
     col.into_any_element()
@@ -320,6 +348,17 @@ impl PickerDelegate for CodonPaletteDelegate {
                     self.emit_dismiss(cx);
                     return;
                 };
+                // Navigable items (directories under the file-path
+                // completer) fill the input and re-run the completer
+                // instead of dispatching — stay in the palette so the
+                // user can drill in further.
+                if let Some(nav) = &item.navigates_to {
+                    let new_query = format!("{} {}", completer.aliases()[0], nav);
+                    cx.defer_in(window, move |picker, window, cx| {
+                        picker.set_query(&new_query, window, cx);
+                    });
+                    return;
+                }
                 completer.build_action(&item.value)
             }
         };
@@ -331,10 +370,12 @@ impl PickerDelegate for CodonPaletteDelegate {
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match &self.mode {
             Mode::Argument { command_label, completer, .. } => {
-                // Demote to Command mode instead of closing. Repopulate the
-                // query with the verb so the user knows where they came
-                // from; another Esc from Command mode closes.
-                let restore = format!("{} ", completer.aliases()[0]);
+                // Demote to Command mode instead of closing. Restore the
+                // query to just the verb — *no* trailing space, otherwise
+                // update_matches would immediately re-trigger Argument
+                // mode and Esc would appear to do nothing. Another Esc
+                // from Command mode closes the modal.
+                let restore = completer.aliases()[0].to_string();
                 let _ = command_label; // kept for future use / aside
                 self.mode = Mode::Command;
                 self.selected_ix = 0;
