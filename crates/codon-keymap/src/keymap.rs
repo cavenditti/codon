@@ -234,8 +234,14 @@ fn add_mode_bindings(
 /// translation here so user keymap TOML stays uniform.
 fn mode_predicates(pane_kind: &str) -> (String, String) {
     match pane_kind {
+        // Editor: cover both Vim and Helix Normal modes — Helix is force-on
+        // by default but a user can also be in plain Vim Normal. The colon
+        // binding (and most codon overrides) want both. Helix Select counts
+        // as Normal-ish for our purposes; vim.json binds the same actions
+        // under helix_select.
         "Editor" => (
-            "vim_mode == normal".to_string(),
+            "vim_mode == normal || vim_mode == helix_normal || vim_mode == helix_select"
+                .to_string(),
             "vim_mode == insert".to_string(),
         ),
         other => (

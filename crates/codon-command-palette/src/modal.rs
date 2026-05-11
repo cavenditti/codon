@@ -17,7 +17,7 @@
 //! hovering — this is the always-visible description pane required by
 //! `REQ:codon/command-palette#c-description-pane`.
 
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use command_palette::{humanize_action_name, normalize_action_query};
 use command_palette_hooks::CommandPaletteFilter;
@@ -28,8 +28,8 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use ui::{
-    DocumentationAside, DocumentationSide, HighlightedLabel, KeyBinding, Label, LabelCommon as _,
-    LabelSize, ListItem, ListItemSpacing, SharedString, prelude::*,
+    HighlightedLabel, KeyBinding, Label, LabelCommon as _, LabelSize, ListItem, ListItemSpacing,
+    SharedString, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
@@ -72,8 +72,83 @@ impl CodonPalette {
         };
 
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        // Mirror picker re-renders into the outer modal so the side
+        // description panel updates the moment the picker's selection or
+        // matches change. Without this, the description stays frozen on
+        // the first matched row.
+        cx.observe(&picker, |_, _, cx| cx.notify()).detach();
         Self { picker }
     }
+
+    /// Snapshot the data needed by the side description panel from the
+    /// picker's delegate. Read-only — runs on every render of `CodonPalette`.
+    fn aside_snapshot(&self, cx: &App) -> Option<AsideSnapshot> {
+        let picker = self.picker.read(cx);
+        let d = &picker.delegate;
+        match &d.mode {
+            Mode::Command => {
+                let m = d.matches.get(d.selected_ix)?;
+                let cmd = d.all_commands.get(m.candidate_id)?;
+                let arg_hint = completer::for_action_name(cmd.action.name()).map(|c| {
+                    SharedString::from(format!(
+                        "Type `{} ` to set arguments",
+                        c.aliases()[0]
+                    ))
+                });
+                Some(AsideSnapshot {
+                    title: cmd.name.clone(),
+                    chord_action: Some(cmd.action.clone()),
+                    focus: d.previous_focus_handle.clone(),
+                    doc: cmd.documentation.clone(),
+                    arg_hint,
+                })
+            }
+            Mode::Argument {
+                completer,
+                command_label,
+                command_doc,
+            } => Some(AsideSnapshot {
+                title: command_label.clone(),
+                chord_action: None,
+                focus: d.previous_focus_handle.clone(),
+                doc: command_doc.clone(),
+                arg_hint: Some(SharedString::from(format!(
+                    "Argument: {}",
+                    completer.placeholder()
+                ))),
+            }),
+        }
+    }
+}
+
+struct AsideSnapshot {
+    title: SharedString,
+    chord_action: Option<Arc<dyn Action>>,
+    focus: FocusHandle,
+    doc: Option<SharedString>,
+    arg_hint: Option<SharedString>,
+}
+
+fn render_aside(snap: AsideSnapshot, cx: &App) -> AnyElement {
+    let mut col = v_flex()
+        .w(rems(20.))
+        .p_3()
+        .gap_2()
+        .child(Label::new(snap.title).weight(FontWeight::BOLD));
+    if let Some(action) = snap.chord_action.as_ref() {
+        col = col.child(KeyBinding::for_action_in(action.as_ref(), &snap.focus, cx));
+    }
+    if let Some(d) = snap.doc {
+        col = col.child(Label::new(d).size(LabelSize::Small));
+    }
+    if let Some(h) = snap.arg_hint {
+        col = col.child(
+            Label::new(h)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        );
+    }
+    col.into_any_element()
 }
 
 impl EventEmitter<DismissEvent> for CodonPalette {}
@@ -87,11 +162,20 @@ impl Focusable for CodonPalette {
 impl ModalView for CodonPalette {}
 
 impl Render for CodonPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let aside = self.aside_snapshot(cx);
+        h_flex()
             .key_context("CodonCommandPalette")
-            .w(rems(34.))
-            .child(self.picker.clone())
+            .items_start()
+            .child(v_flex().w(rems(34.)).child(self.picker.clone()))
+            .when_some(aside, |this, snap| {
+                this.child(
+                    div()
+                        .ml_2()
+                        .elevation_2(cx)
+                        .child(render_aside(snap, cx)),
+                )
+            })
     }
 }
 
@@ -310,68 +394,12 @@ impl PickerDelegate for CodonPaletteDelegate {
         }
     }
 
-    fn documentation_aside(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Option<DocumentationAside> {
-        let (title, chord_action, doc, arg_hint) = match &self.mode {
-            Mode::Command => {
-                let m = self.matches.get(self.selected_ix)?;
-                let cmd = self.all_commands.get(m.candidate_id)?;
-                let arg_hint = completer::for_action_name(cmd.action.name()).map(|c| {
-                    SharedString::from(format!(
-                        "Type `{} ` to set arguments",
-                        c.aliases()[0]
-                    ))
-                });
-                (
-                    cmd.name.clone(),
-                    Some(cmd.action.clone()),
-                    cmd.documentation.clone(),
-                    arg_hint,
-                )
-            }
-            Mode::Argument {
-                completer,
-                command_label,
-                command_doc,
-            } => (
-                command_label.clone(),
-                None,
-                command_doc.clone(),
-                Some(SharedString::from(format!(
-                    "Argument: {}",
-                    completer.placeholder()
-                ))),
-            ),
-        };
-        let focus = self.previous_focus_handle.clone();
-        let render: Rc<dyn Fn(&mut App) -> AnyElement> = Rc::new(move |cx: &mut App| {
-            let mut col = v_flex()
-                .gap_1()
-                .child(Label::new(title.clone()).weight(FontWeight::BOLD));
-            if let Some(action) = chord_action.as_ref() {
-                col = col.child(KeyBinding::for_action_in(action.as_ref(), &focus, cx));
-            }
-            if let Some(d) = doc.as_ref() {
-                col = col.child(Label::new(d.clone()).size(LabelSize::Small));
-            }
-            if let Some(h) = arg_hint.as_ref() {
-                col = col.child(
-                    Label::new(h.clone())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                );
-            }
-            col.into_any_element()
-        });
-        Some(DocumentationAside::new(DocumentationSide::Right, render))
-    }
-
-    fn documentation_aside_index(&self) -> Option<usize> {
-        Some(self.selected_ix)
-    }
+    // Description side panel is rendered by the outer `CodonPalette` —
+    // see `CodonPalette::render` + `aside_snapshot`. We deliberately do
+    // not implement `documentation_aside` here: the picker's built-in
+    // aside bootstraps from a paint-time canvas, so it never shows on
+    // first render. Rendering the panel from the outer modal updates
+    // every time the picker re-renders.
 }
 
 impl CodonPaletteDelegate {
