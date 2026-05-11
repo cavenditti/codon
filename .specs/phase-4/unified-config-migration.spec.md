@@ -8,7 +8,7 @@ summary: >
   Zed settings.json and/or codon keymap.toml into a merged codon.toml.
   Leave the source files in place with a deprecation header.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-migration
 ---

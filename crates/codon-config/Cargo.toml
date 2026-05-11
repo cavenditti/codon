@@ -20,4 +20,5 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+settings_json.workspace = true
 toml.workspace = true

@@ -7,7 +7,10 @@
 //!
 //! See `README.md` next to this file for the TOML schema mapping rules.
 
+pub mod migrate;
 pub mod toml_to_json;
+
+pub use migrate::{MigrationOutcome, migrate_if_needed};
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -91,6 +94,17 @@ pub fn bindings_toml(content: &str) -> Result<Option<toml::Value>> {
 }
 
 pub fn init(cx: &mut App) {
+    match migrate::migrate_if_needed() {
+        Ok(MigrationOutcome::Migrated {
+            from_zed_settings,
+            from_codon_keymap,
+        }) => log::info!(
+            "codon-config: wrote codon.toml from legacy files \
+             (zed settings.json={from_zed_settings}, keymap.toml={from_codon_keymap})",
+        ),
+        Ok(MigrationOutcome::Already | MigrationOutcome::NoLegacy) => {}
+        Err(err) => log::warn!("codon-config: migration failed: {err:#}"),
+    }
     apply_user_config(cx);
 }
 
