@@ -103,7 +103,10 @@ pub fn init(cx: &mut App) {
             "codon-config: wrote codon.toml from legacy files \
              (zed settings.json={from_zed_settings}, keymap.toml={from_codon_keymap})",
         ),
-        Ok(MigrationOutcome::Already | MigrationOutcome::NoLegacy) => {}
+        Ok(MigrationOutcome::Scaffolded) => {
+            log::info!("codon-config: wrote starter codon.toml on first launch");
+        }
+        Ok(MigrationOutcome::Already) => {}
         Err(err) => log::warn!("codon-config: migration failed: {err:#}"),
     }
     apply_user_config(cx);
