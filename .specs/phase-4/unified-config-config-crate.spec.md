@@ -8,7 +8,7 @@ summary: >
   [settings.*] to serde_json::Value matching SettingsContent, and
   feeds it into SettingsStore via the existing user-settings path.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config#c-config-crate
 ---
