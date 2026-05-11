@@ -104,6 +104,9 @@ const DEFAULT_KEYMAP: &str = r#"
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
 
+# Welcome page
+"cmd-k f2" = "zed::ShowWelcome"
+
 # Command palette
 "cmd-shift-p" = "command_palette::Toggle"
 "#;
@@ -246,6 +249,9 @@ fn resolve_binding(
 
         // Help / cheatsheet
         "codon_keymap::ShowKeymap" => bind!(crate::ShowKeymap),
+
+        // Welcome page
+        "zed::ShowWelcome" => bind!(workspace::welcome::ShowWelcome),
 
         // Command palette
         "command_palette::Toggle" => bind!(zed_actions::command_palette::Toggle),

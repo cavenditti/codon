@@ -921,22 +921,32 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
-            let fs = workspace.app_state().fs.clone();
-            let weak_workspace = workspace.weak_handle();
-            let dir = workspace
-                .project()
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .map(|wt| wt.read(cx).abs_path().to_path_buf())
-                .unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
-                });
-
-            let file_manager =
-                cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
-            workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
+            open_file_manager(workspace, window, cx);
         });
+        workspace.register_action(
+            |workspace, _: &zed_actions::file_manager::OpenFileManager, window, cx| {
+                open_file_manager(workspace, window, cx);
+            },
+        );
     })
     .detach();
+}
+
+fn open_file_manager(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let fs = workspace.app_state().fs.clone();
+    let weak_workspace = workspace.weak_handle();
+    let dir = workspace
+        .project()
+        .read(cx)
+        .worktrees(cx)
+        .next()
+        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+
+    let file_manager = cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
+    workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
 }
