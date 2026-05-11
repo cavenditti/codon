@@ -60,34 +60,45 @@ fn collect_bindings(
     cx: &mut Context<KeybindingsCheatsheetModal>,
 ) -> Vec<BindingRow> {
     let raw = window.possible_bindings_for_input(&[]);
-    let mut rows: Vec<BindingRow> = raw
-        .iter()
-        .filter_map(|binding| {
-            let keystrokes = binding.keystrokes();
-            if keystrokes.is_empty() {
-                return None;
-            }
-            let raw_keystrokes: Vec<_> = keystrokes.iter().map(|k| k.inner().to_owned()).collect();
-            let raw_name = binding.action().name();
-            let humanized = command_palette::humanize_action_name(raw_name);
-            let namespace = humanize_namespace(raw_name);
-            Some(BindingRow {
-                keystrokes: Rc::from(keystrokes),
-                keystrokes_text: SharedString::from(text_for_keystrokes(&raw_keystrokes, cx)),
-                action_name: SharedString::from(humanized),
-                namespace: SharedString::from(namespace),
-            })
-        })
-        .collect();
+    // `raw` arrives ordered by precedence: deeper context first, then
+    // more-recently-registered first. The user's codon.toml is loaded
+    // *after* the embedded defaults, so a user override appears before
+    // the corresponding default in `raw`. Collapse all bindings that
+    // share a (chord, context) pair down to the first occurrence so the
+    // cheatsheet shows what would actually fire — never both.
+    let mut rows: Vec<BindingRow> = Vec::with_capacity(raw.len());
+    let mut seen: std::collections::HashSet<(SharedString, String)> =
+        std::collections::HashSet::with_capacity(raw.len());
+    for binding in raw.iter() {
+        let keystrokes = binding.keystrokes();
+        if keystrokes.is_empty() {
+            continue;
+        }
+        let raw_keystrokes: Vec<_> = keystrokes.iter().map(|k| k.inner().to_owned()).collect();
+        let keystrokes_text: SharedString = text_for_keystrokes(&raw_keystrokes, cx).into();
+        let context_key = binding
+            .predicate()
+            .map(|p| format!("{p}"))
+            .unwrap_or_default();
+        if !seen.insert((keystrokes_text.clone(), context_key)) {
+            continue;
+        }
+        let raw_name = binding.action().name();
+        let humanized = command_palette::humanize_action_name(raw_name);
+        let namespace = humanize_namespace(raw_name);
+        rows.push(BindingRow {
+            keystrokes: Rc::from(keystrokes),
+            keystrokes_text,
+            action_name: SharedString::from(humanized),
+            namespace: SharedString::from(namespace),
+        });
+    }
     rows.sort_by(|a, b| {
         namespace_priority(&a.namespace)
             .cmp(&namespace_priority(&b.namespace))
             .then_with(|| a.namespace.cmp(&b.namespace))
             .then_with(|| chord_sort_key(&a.keystrokes_text).cmp(&chord_sort_key(&b.keystrokes_text)))
             .then_with(|| a.action_name.cmp(&b.action_name))
-    });
-    rows.dedup_by(|a, b| {
-        a.keystrokes_text == b.keystrokes_text && a.action_name == b.action_name
     });
     rows
 }
