@@ -48,7 +48,6 @@ impl Render for WindowsStatusItem {
             } else if idx + 1 == total {
                 TabPosition::Last
             } else {
-                use std::cmp::Ordering;
                 let cmp = idx.cmp(&active);
                 TabPosition::Middle(cmp)
             };
