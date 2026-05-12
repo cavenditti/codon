@@ -2,40 +2,37 @@
 id: TASK:phase-4/git-blame-verb
 type: task
 status: accepted
-version: 0.0.1
+version: 0.0.2
 summary: >
-  Cross-pane git::BlameShow action that consumes Selection::Hunks
-  and renders blame metadata for each hunk's line range.
+  Git blame — adopted as-is from Zed's existing inline-blame
+  toggle on the editor. The Selection::Hunks cross-pane verb
+  shape from the original framing is deferred.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/git-pane#c-blame-verb
 ---
 
 # git.blame.show cross-pane verb
 
-## What ships
+## Outcome: adopt-as-is (with reduced scope)
 
-A new action `codon_git::BlameShow`, registered with
-`ActionAcceptsRegistry` for `ObjectKind::Hunk`. Behaviour:
+Zed already gives us blame: `editor::ToggleGitBlame` and the
+`git::Blame` action toggle inline blame gutters on any editor with a
+git-tracked buffer. The renderer lives in
+[`vendor/zed/crates/editor/src/git/blame.rs`](spec:src:vendor/zed/crates/editor/src/git/blame.rs)
+and works today inside codon without any patch.
 
-1. Read `Selection::Hunks(Vec<HunkRef>)` from the focused pane (the
-   diff pane is the primary source; the editor can also expose this
-   for the current cursor line).
-2. For each hunk, query `git2::blame_file` over `line_start..line_end`.
-3. Render the blame metadata (commit sha, author, date, summary) in
-   a popover or a short-lived blame pane below the diff.
+The original TASK framing — a new `codon_git::BlameShow` action that
+*consumes `Selection::Hunks`* and renders blame metadata per hunk —
+was contingent on the Phase-3 selection-first work
+([REQ:codon/selection-first](spec:REQ:codon/selection-first))
+that hasn't fully materialised. Building the cross-pane variant
+before the Selection plumbing is stable would freeze design choices
+we can't yet justify.
 
-## Where it comes from
-
-- `Selection::Hunks` and `HunkRef` already exist in
-  [`crates/codon-mode/src/selection.rs`](spec:src:crates/codon-mode/src/selection.rs).
-- [`vendor/zed/crates/git_ui/src/blame_ui.rs`](spec:src:vendor/zed/crates/git_ui/src/blame_ui.rs)
-  has the inline-gutter blame renderer — reuse the metadata-fetch path,
-  swap the renderer for a popover.
-
-## Approach
-
-Cleanest as a new action in `codon-git` (or a sibling `codon-git-verbs`
-module). Default keymap: `cmd-k g b`. Cheap to ship once the diff
-pane exposes its `Selection::Hunks`.
+Net call: ship is "blame works in the editor, no codon-side work
+required." When/if `Selection::Hunks` becomes a real surface, the
+blame-per-hunk verb is a small follow-up — pull metadata via the
+same path the inline renderer uses, render in a popover. Open as a
+new TASK at that point rather than dragging this one open.

@@ -2,41 +2,47 @@
 id: TASK:phase-4/git-diff-pane
 type: task
 status: accepted
-version: 0.0.1
+version: 0.0.2
 summary: >
-  Refactor project_diff into a codon pane that renders through
-  &dyn codon_buffer::Buffer and is openable standalone.
+  Git diff as a codon pane — deferred. Zed's pre-existing ProjectDiff
+  pane already works fine for day-to-day use; modal-integration is a
+  future polish item.
 owners: [carlo]
-progress: pending
+progress: deferred
 refines:
   - REQ:codon/git-pane#c-diff
 ---
 
 # Git diff as a codon pane
 
-## What ships
+## Deferred (2026-05-12)
 
-A pane that shows file-by-file diffs (working tree vs HEAD by default,
-arbitrary refs configurable). Side-by-side or unified rendering. Each
-hunk is a navigable unit (j/k between hunks). Selecting a hunk
-exposes it as `Selection::Hunks(Vec<HunkRef>)` for cross-pane verbs.
+Zed's `ProjectDiff` is already a `workspace::Item` with a stable
+key context (`GitDiff`,
+[`vendor/zed/crates/git_ui/src/project_diff.rs:1119`](spec:src:vendor/zed/crates/git_ui/src/project_diff.rs))
+and side-by-side rendering of every changed file. Opened today via
+`git::Diff` / `git::BranchDiff` actions; works without a codon
+patch.
 
-## Where it comes from
+What's missing for full codon-modal integration:
 
-- [`vendor/zed/crates/git_ui/src/project_diff.rs`](spec:src:vendor/zed/crates/git_ui/src/project_diff.rs)
-  (~97 KB) is already a workspace Item — it just needs to be reshaped
-  to take `&dyn codon_buffer::Buffer` at its inputs and live in the
-  codon-git crate.
-- `buffer_diff::DiffHunk` + `DiffHunkStatus` already provide every
-  domain type we need
-  ([`vendor/zed/crates/buffer_diff/src/buffer_diff.rs`](spec:src:vendor/zed/crates/buffer_diff/src/buffer_diff.rs)).
+- The dispatch context doesn't publish `pane_mode`, so codon's
+  `[bindings.git_diff.normal]` predicates wouldn't match.
+- `focus_in` doesn't write `CodonModeTracker`, so the status-bar
+  mode pill doesn't follow.
 
-## Approach
+Both fix to the same surgical patch we applied to `GitPanel`
+(`vendor/zed/crates/git_ui/src/git_panel.rs`, commit `0a7cc8379b`).
+But the pre-existing pane is *already usable* — Helix-mode editor
+navigation moves between hunks, file switching works, `cmd-c`
+copies. The codon-modal layer would buy us `:` palette + Helix-style
+verbs (`j`/`k` / `s`/`u` / etc.), which is nice but not blocking.
 
-Move project_diff out of `git_ui` (or wrap it) so the pane lives in
-`crates/codon-git/`. Wire the buffer inputs through the `Buffer`
-trait. Add a `Selection::Hunks` source impl so the agent's
-`AgentExplain`-style verbs can target hunks too.
-
-Default keymap: `cmd-k g d`. Phase 5's standalone diff-viewer pane
-will be a thin wrapper around the same component.
+Deferring to a future pass alongside
+[TASK:phase-4/git-hunk-staging](spec:TASK:phase-4/git-hunk-staging),
+which would naturally live in the same `[bindings.git_diff.normal]`
+block. The original framing about "refactor through `&dyn
+codon_buffer::Buffer`" is also moot — the buffer-trait rewire in
+git_ui is deferred (see
+[TASK:phase-4/consumer-rewire-git](spec:TASK:phase-4/consumer-rewire-git))
+and `ProjectDiff` works fine on Zed's concrete `Buffer`.

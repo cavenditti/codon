@@ -2,43 +2,36 @@
 id: TASK:phase-4/git-log-pane
 type: task
 status: accepted
-version: 0.0.1
+version: 0.0.2
 summary: >
-  Standalone git log pane with branch / graph rendering, j/k nav,
-  Enter to open the commit's diff.
+  Standalone git log pane — adopted as-is from Zed's existing
+  GitGraph workspace::Item.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/git-pane#c-log
 ---
 
 # Git log as a codon pane
 
-## What ships
+## Outcome: adopt-as-is
 
-A pane listing commits in reverse-chronological order, with ASCII
-branch / merge graph on the left and `<sha> <subject> (<author>)` on
-the right. j/k navigates, Enter opens the commit's diff in the diff
-pane.
+Zed already ships a full git-log pane as
+`git_graph::GitGraph`
+([`vendor/zed/crates/git_graph/src/git_graph.rs:3118`](spec:src:vendor/zed/crates/git_graph/src/git_graph.rs))
+— a `workspace::Item` with ASCII graph rendering on the left, `<sha>
+<subject> (<author>)` on the right, keyboard nav, and Enter to open
+the commit's diff. It registers itself on the workspace at
+`git_graph.rs:747`.
 
-## Where it comes from
+No codon-side work needed. The pane is reachable today via the
+`git_graph::Open` action; users who want a fixed chord can rebind it
+in `~/.config/codon/codon.toml` under `[bindings.global]`. The
+original TASK's framing — "extract log-rendering bits into a
+standalone pane under codon-git" — was wasted scope; Zed already
+solved this and the dock + log graph together cover the
+navigation surface.
 
-- The `git_graph` crate (already vendored at
-  [`vendor/zed/crates/git_graph/`](spec:src:vendor/zed/crates/git_graph/))
-  produces the graph layout.
-- Commit metadata via `git::repository::log` or the underlying
-  `git2::Revwalk`.
-- Today log lives inside
-  [`vendor/zed/crates/git_ui/src/commit_view.rs`](spec:src:vendor/zed/crates/git_ui/src/commit_view.rs)
-  (~41 KB). Extract the log-rendering bits into a standalone pane.
-
-## Approach
-
-New module under `crates/codon-git/` (or the same crate
-git-status-pane lives in). Implements `workspace::Item`, holds a
-`Vec<CommitRow>` populated by an async git log query (background task,
-update via `cx.emit` so the pane re-renders).
-
-Default keymap: `cmd-k g l`. Cross-pane verb consumed by
-`codon-agent` (an agent action can take a `Selection::Commits(Vec<String>)`
-sourced from this pane).
+If we later want to apply the GitPanel-style modal patch (publish
+`pane_mode`, sync `CodonModeTracker`, add `[bindings.git_graph.*]`),
+that'd be a small follow-up — not blocking.

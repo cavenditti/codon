@@ -2,41 +2,36 @@
 id: TASK:phase-4/git-hunk-staging
 type: task
 status: accepted
-version: 0.0.1
+version: 0.0.2
 summary: >
-  Keyboard hunk staging from the diff pane — s / u stage/unstage the
-  current hunk, S / U do the same for the active file.
+  Keyboard hunk staging from the diff pane — deferred. The
+  underlying actions exist upstream; codon-side binding work waits
+  on git-diff-pane.
 owners: [carlo]
-progress: pending
+progress: deferred
 refines:
   - REQ:codon/git-pane#c-hunk-staging
 ---
 
 # Hunk staging from the diff pane
 
-## What ships
+## Deferred (2026-05-12)
 
-Inside the git diff pane:
+The actions needed already exist upstream: `git::StageAndNext`,
+`git::UnstageAndNext`, `git::ToggleStaged`
+([`vendor/zed/crates/git/src/git.rs:37`](spec:src:vendor/zed/crates/git/src/git.rs)).
+What remains is the codon-side keymap binding — `s` / `u` / `S` / `U`
+under a `GitDiff && pane_mode == normal` predicate, similar to the
+GitPanel pattern that just landed.
 
-- `s` — stage the hunk under the cursor
-- `u` — unstage the hunk under the cursor
-- `S` — stage the entire file
-- `U` — unstage the entire file
+That binding work is paired with
+[TASK:phase-4/git-diff-pane](spec:TASK:phase-4/git-diff-pane), which
+is also deferred. The pre-existing Zed `ProjectDiff` pane is already
+"good enough" for day-to-day diff browsing — staging from inside it
+works via the existing keymap, just not under codon-modal predicates
+yet.
 
-Hunks display their staged-ness via `DiffHunkSecondaryStatus` (the
-field is already on `DiffHunk`, just unread by the current UI).
-
-## Where it comes from
-
-- `git::repository` exposes `stage_paths` / `unstage_paths`
-  — same calls git_panel already uses.
-- `DiffHunkSecondaryStatus`:
-  [`vendor/zed/crates/buffer_diff/src/buffer_diff.rs`](spec:src:vendor/zed/crates/buffer_diff/src/buffer_diff.rs)
-
-## Approach
-
-Action handlers on the diff pane (`codon_git::StageHunk`,
-`UnstageHunk`, `StageFile`, `UnstageFile`). Each computes the hunk's
-byte range and calls the repository API with a partial-stage payload.
-Re-fetch the diff after the stage call so the secondary status
-re-renders. ~1 week of work.
+When git-diff-pane is revisited (codon-modal-integrate `ProjectDiff`
+the same way we did `GitPanel`), the hunk-staging keys ride along in
+the same `[bindings.git_diff.normal]` block. Until then, no
+standalone work.
