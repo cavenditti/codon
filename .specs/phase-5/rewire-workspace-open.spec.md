@@ -7,7 +7,7 @@ summary: >
   Replace the OS-native open-file dialog at workspace.rs:2972 with
   the DirPicker-backed in-app modal.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-rewire-workspace
 ---

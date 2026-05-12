@@ -774,6 +774,7 @@ fn main() {
             codon_keymap::load_codon_keymap(cx);
         });
         codon_session::init(cx);
+        codon_pickers::init(cx);
         vim::init(cx);
         file_manager::init(cx);
         terminal_view::init(cx);

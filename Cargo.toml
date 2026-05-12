@@ -1,5 +1,4 @@
 [workspace]
- 
 resolver = "2"
 members = [
     "apps/codon",
@@ -9,6 +8,7 @@ members = [
     "crates/codon-config",
     "crates/codon-keymap",
     "crates/codon-mode",
+    "crates/codon-pickers",
     "crates/codon-session",
     "crates/file-manager",
     "vendor/zed/crates/acp_thread",
@@ -350,6 +350,7 @@ codon-command-palette = { path = "crates/codon-command-palette" }
 codon-config = { path = "crates/codon-config" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
+codon-pickers = { path = "crates/codon-pickers" }
 codon-session = { path = "crates/codon-session" }
 fs = { path = "vendor/zed/crates/fs" }
 fuzzy = { path = "vendor/zed/crates/fuzzy" }

@@ -3273,6 +3273,7 @@ dependencies = [
  "codon-config",
  "codon-keymap",
  "codon-mode",
+ "codon-pickers",
  "codon-session",
  "collab_ui",
  "collections",
@@ -3515,12 +3516,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-pickers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "log",
+ "picker",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "codon-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "db",
+ "editor",
+ "file-manager",
  "fuzzy",
  "gpui",
  "log",
@@ -3530,6 +3548,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "terminal_view",
  "thiserror 2.0.18",
  "ui",
  "util",
@@ -6676,6 +6695,7 @@ dependencies = [
  "codon-mode",
  "file_icons",
  "fs",
+ "git",
  "gpui",
  "log",
  "menu",

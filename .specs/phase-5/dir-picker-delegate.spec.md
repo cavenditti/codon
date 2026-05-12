@@ -7,7 +7,7 @@ summary: >
   Reusable DirPicker PickerDelegate that lists directories from a
   starting path with type-to-filter and h/l for navigation.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-picker-delegate
 ---

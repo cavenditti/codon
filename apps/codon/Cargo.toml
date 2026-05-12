@@ -41,6 +41,7 @@ codon-command-palette.workspace = true
 codon-config.workspace = true
 codon-keymap.workspace = true
 codon-mode.workspace = true
+codon-pickers.workspace = true
 codon-session.workspace = true
 command_palette.workspace = true
 component.workspace = true
