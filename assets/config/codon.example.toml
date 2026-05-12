@@ -118,6 +118,7 @@ format_on_save = "on"
 
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
+"cmd-k g s" = "git_panel::ToggleFocus"
 
 # Help / cheatsheet — full-screen list of every active binding.
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -157,3 +158,22 @@ format_on_save = "on"
 [bindings.editor.insert]
 # Most users leave this empty so the editor behaves like a plain
 # text editor when typing.
+
+[bindings.git_panel.normal]
+# Helix-style verbs on the git dock when the changes list is focused.
+# Already in defaults — listed here for reference / override:
+# "j" = "git_panel::NextEntry"
+# "k" = "git_panel::PreviousEntry"
+# "g g" = "git_panel::FirstEntry"
+# "shift-g" = "git_panel::LastEntry"
+# "enter" = "menu::Confirm"          # open diff for selected entry
+# "s" = "git::StageFile"
+# "u" = "git::UnstageFile"
+# "space" = "git::ToggleStaged"
+# "i" = "git_panel::FocusEditor"     # enter Insert (commit message)
+
+[bindings.git_panel.insert]
+# Active while the commit-message editor is focused. Esc returns to
+# the changes list (modulo vim's own Esc handling at the editor
+# level — if that wins, rebind below to a chord like ctrl-w q).
+# "escape" = "git_panel::FocusChanges"

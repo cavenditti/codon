@@ -40,6 +40,8 @@ struct KeymapBindings {
     terminal: Option<ModeBindings>,
     #[serde(default)]
     file_manager: Option<ModeBindings>,
+    #[serde(default)]
+    git_panel: Option<ModeBindings>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -117,7 +119,7 @@ const DEFAULT_KEYMAP: &str = r#"
 
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
-"cmd-k g s" = "codon_git::OpenStatusPane"
+"cmd-k g s" = "git_panel::ToggleFocus"
 
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -137,6 +139,27 @@ const DEFAULT_KEYMAP: &str = r#"
 
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
+
+# Git panel — Helix-style verbs for the existing Zed git dock. The
+# panel publishes pane_mode == normal when the changes list is
+# focused, pane_mode == insert when the commit-message editor is.
+[bindings.git_panel.normal]
+"j" = "git_panel::NextEntry"
+"k" = "git_panel::PreviousEntry"
+"g g" = "git_panel::FirstEntry"
+"shift-g" = "git_panel::LastEntry"
+"enter" = "menu::Confirm"
+"s" = "git::StageFile"
+"u" = "git::UnstageFile"
+"space" = "git::ToggleStaged"
+"i" = "git_panel::FocusEditor"
+":" = "codon_command_palette::Toggle"
+
+[bindings.git_panel.insert]
+# Escape from the commit editor back to the changes list. Vim mode
+# owns Esc at the editor level — if Helix Normal eats this first,
+# rebind to a less-conflicting chord in ~/.config/codon/codon.toml.
+"escape" = "git_panel::FocusChanges"
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
@@ -213,6 +236,9 @@ fn parse_keymap(content: &str) -> Option<Vec<(String, String, Option<String>)>> 
     }
     if let Some(fm) = &keymap.bindings.file_manager {
         add_mode_bindings(&mut result, "FileManager", fm);
+    }
+    if let Some(gp) = &keymap.bindings.git_panel {
+        add_mode_bindings(&mut result, "GitPanel", gp);
     }
 
     Some(result)
@@ -294,23 +320,6 @@ fn apply_raw_bindings(cx: &mut App) {
     ) {
         bindings.push(binding);
     }
-    // Git status pane key context — uses a flat "GitStatus" context, no
-    // pane_mode predicate yet (the pane is read-only so the Normal /
-    // Insert split doesn't apply here).
-    for (key, action) in [
-        ("j", "codon_git::NavigateDown"),
-        ("k", "codon_git::NavigateUp"),
-        ("enter", "codon_git::Open"),
-        ("s", "codon_git::Stage"),
-        ("u", "codon_git::Unstage"),
-        ("g g", "codon_git::GoToTop"),
-        ("shift-g", "codon_git::GoToBottom"),
-        (":", "codon_command_palette::Toggle"),
-    ] {
-        if let Some(b) = resolve_binding(key, action, Some("GitStatus")) {
-            bindings.push(b);
-        }
-    }
     if !bindings.is_empty() {
         cx.bind_keys(bindings);
     }
@@ -382,14 +391,17 @@ fn resolve_binding(
 
         // Git
         "git::GenerateCommitMessage" => bind!(git::GenerateCommitMessage),
-        "codon_git::OpenStatusPane" => bind!(codon_git::OpenStatusPane),
-        "codon_git::NavigateUp" => bind!(codon_git::NavigateUp),
-        "codon_git::NavigateDown" => bind!(codon_git::NavigateDown),
-        "codon_git::Open" => bind!(codon_git::Open),
-        "codon_git::Stage" => bind!(codon_git::Stage),
-        "codon_git::Unstage" => bind!(codon_git::Unstage),
-        "codon_git::GoToTop" => bind!(codon_git::GoToTop),
-        "codon_git::GoToBottom" => bind!(codon_git::GoToBottom),
+        "git::StageFile" => bind!(git::StageFile),
+        "git::UnstageFile" => bind!(git::UnstageFile),
+        "git::ToggleStaged" => bind!(git::ToggleStaged),
+        "git_panel::ToggleFocus" => bind!(git_ui::git_panel::ToggleFocus),
+        "git_panel::FocusEditor" => bind!(git_ui::git_panel::FocusEditor),
+        "git_panel::FocusChanges" => bind!(git_ui::git_panel::FocusChanges),
+        "git_panel::NextEntry" => bind!(git_ui::git_panel::NextEntry),
+        "git_panel::PreviousEntry" => bind!(git_ui::git_panel::PreviousEntry),
+        "git_panel::FirstEntry" => bind!(git_ui::git_panel::FirstEntry),
+        "git_panel::LastEntry" => bind!(git_ui::git_panel::LastEntry),
+        "menu::Confirm" => bind!(menu::Confirm),
 
         // Help / cheatsheet
         "codon_keymap::ShowKeymap" => bind!(crate::ShowKeymap),

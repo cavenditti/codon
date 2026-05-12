@@ -1,4 +1,5 @@
 [workspace]
+ 
 resolver = "2"
 members = [
     "apps/codon",
@@ -6,7 +7,6 @@ members = [
     "crates/codon-buffer",
     "crates/codon-command-palette",
     "crates/codon-config",
-    "crates/codon-git",
     "crates/codon-keymap",
     "crates/codon-mode",
     "crates/codon-session",
@@ -348,7 +348,6 @@ codon-agent = { path = "crates/codon-agent" }
 codon-buffer = { path = "crates/codon-buffer" }
 codon-command-palette = { path = "crates/codon-command-palette" }
 codon-config = { path = "crates/codon-config" }
-codon-git = { path = "crates/codon-git" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
 codon-session = { path = "crates/codon-session" }

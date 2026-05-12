@@ -3271,7 +3271,6 @@ dependencies = [
  "codon-agent",
  "codon-command-palette",
  "codon-config",
- "codon-git",
  "codon-keymap",
  "codon-mode",
  "codon-session",
@@ -3479,18 +3478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codon-git"
-version = "0.1.0"
-dependencies = [
- "git",
- "gpui",
- "project",
- "theme",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "codon-keymap"
 version = "0.1.0"
 dependencies = [
@@ -3498,12 +3485,12 @@ dependencies = [
  "codon-agent",
  "codon-command-palette",
  "codon-config",
- "codon-git",
  "codon-session",
  "command_palette",
  "file-manager",
  "fs",
  "git",
+ "git_ui",
  "gpui",
  "log",
  "menu",
@@ -7788,6 +7775,7 @@ dependencies = [
  "askpass",
  "buffer_diff",
  "call",
+ "codon-mode",
  "collections",
  "component",
  "ctor",
