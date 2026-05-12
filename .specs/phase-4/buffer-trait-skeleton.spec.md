@@ -7,7 +7,7 @@ summary: >
   New crates/codon-buffer with a Buffer trait capturing the minimal
   read + edit surface used by editor, search, agent_ui, and git_ui.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/buffer-trait#c-trait-definition
 ---

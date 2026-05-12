@@ -1,0 +1,18 @@
+[package]
+name = "codon-buffer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_buffer.rs"
+
+[dependencies]
+clock.workspace = true
+encoding_rs.workspace = true
+fs.workspace = true
+language.workspace = true
+text.workspace = true

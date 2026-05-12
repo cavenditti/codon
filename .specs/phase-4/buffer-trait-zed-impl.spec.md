@@ -6,7 +6,7 @@ version: 0.0.1
 summary: >
   Implement codon_buffer::Buffer for language::Buffer — pure delegation.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/buffer-trait#c-zed-impl
 ---

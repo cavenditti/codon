@@ -7,10 +7,43 @@ summary: >
   Rewire git_ui's Buffer callsites to take &dyn codon_buffer::Buffer
   at trait boundaries. Prerequisite for the git pane work below.
 owners: [carlo]
-progress: pending
+progress: deferred
 refines:
   - REQ:codon/buffer-trait#c-consumer-rewire
 ---
+
+## Deferred (2026-05-12)
+
+A survey of `git_ui` after the buffer-trait skeleton landed turned up
+no `&language::Buffer` direct parameters to rewire. Buffer usage is:
+
+- `Entity<Buffer>` parameters in four async functions
+  (`text_diff_view::{build_clipboard_buffer, update_diff_buffer}`,
+  `file_diff_view::build_buffer_diff`,
+  `commit_view::build_buffer_diff`) — `Entity<T>` needs a concrete `T`
+  so `&dyn Buffer` substitution doesn't apply without a separate
+  entity-erasure abstraction.
+- Two `&language::BufferSnapshot` parameters
+  (`commit_view::extend_buffer_header_context_menu`,
+  `git_panel:6079` rendering helper) — these take *snapshots*, not
+  buffers, and only call `.file()` on the snapshot. The trait
+  surface is on `Buffer`, not `BufferSnapshot`.
+
+The "mostly mechanical" framing in the original TASK overestimated
+how often `&language::Buffer` appears as a direct trait boundary in
+git_ui. Doing the rewire well requires either:
+
+1. Adding a parallel `BufferReader`-style trait that abstracts over
+   `Entity<Buffer>` (read-with semantics), OR
+2. Restructuring the git diff plumbing so snapshots cross the
+   boundary instead of entities.
+
+Both are bigger changes than this TASK scopes, and the parent
+`REQ:codon/buffer-trait` is `SHOULD`-level — the trait + Zed impl
+are still useful foundations for new code paths (e.g. the upcoming
+git panes can take `&dyn codon_buffer::Buffer` from day one). When
+a Helix `Document` impl actually lands, we'll revisit this with a
+concrete entity-erasure strategy.
 
 # git_ui consumer rewire
 

@@ -3428,6 +3428,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-buffer"
+version = "0.1.0"
+dependencies = [
+ "clock",
+ "encoding_rs",
+ "fs",
+ "language",
+ "text",
+]
+
+[[package]]
 name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
