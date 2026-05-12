@@ -579,27 +579,67 @@ impl FileManager {
                 match pending {
                     PendingInput::CreateFile(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
-                        if let Err(e) = std::fs::write(&path, "") {
-                            self.surface_error(format!("Couldn't create file {name}: {e}"), cx);
-                        }
+                        let fs = self.fs.clone();
                         self.mode = PaneMode::Normal;
-                        self.reload_entries(window, cx);
+                        cx.notify();
+                        cx.spawn_in(window, async move |this, cx| {
+                            let result = fs
+                                .create_file(&path, fs::CreateOptions::default())
+                                .await;
+                            this.update_in(cx, |this, window, cx| {
+                                if let Err(e) = result {
+                                    this.surface_error(
+                                        format!("Couldn't create file {name}: {e}"),
+                                        cx,
+                                    );
+                                }
+                                this.reload_entries(window, cx);
+                            })
+                            .ok();
+                        })
+                        .detach();
                     }
                     PendingInput::CreateDirectory(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
-                        if let Err(e) = std::fs::create_dir_all(&path) {
-                            self.surface_error(format!("Couldn't create directory {name}: {e}"), cx);
-                        }
+                        let fs = self.fs.clone();
                         self.mode = PaneMode::Normal;
-                        self.reload_entries(window, cx);
+                        cx.notify();
+                        cx.spawn_in(window, async move |this, cx| {
+                            let result = fs.create_dir(&path).await;
+                            this.update_in(cx, |this, window, cx| {
+                                if let Err(e) = result {
+                                    this.surface_error(
+                                        format!("Couldn't create directory {name}: {e}"),
+                                        cx,
+                                    );
+                                }
+                                this.reload_entries(window, cx);
+                            })
+                            .ok();
+                        })
+                        .detach();
                     }
                     PendingInput::Rename { original, new_name } if !new_name.is_empty() => {
                         let new_path = original.parent().unwrap_or(Path::new("/")).join(&new_name);
-                        if let Err(e) = std::fs::rename(&original, &new_path) {
-                            self.surface_error(format!("Couldn't rename to {new_name}: {e}"), cx);
-                        }
+                        let fs = self.fs.clone();
                         self.mode = PaneMode::Normal;
-                        self.reload_entries(window, cx);
+                        cx.notify();
+                        cx.spawn_in(window, async move |this, cx| {
+                            let result = fs
+                                .rename(&original, &new_path, fs::RenameOptions::default())
+                                .await;
+                            this.update_in(cx, |this, window, cx| {
+                                if let Err(e) = result {
+                                    this.surface_error(
+                                        format!("Couldn't rename to {new_name}: {e}"),
+                                        cx,
+                                    );
+                                }
+                                this.reload_entries(window, cx);
+                            })
+                            .ok();
+                        })
+                        .detach();
                     }
                     PendingInput::Filter => {
                         // Commit the filter view: leave Insert mode but keep

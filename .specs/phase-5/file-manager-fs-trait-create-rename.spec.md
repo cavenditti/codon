@@ -2,15 +2,19 @@
 id: TASK:phase-5/file-manager-fs-trait-create-rename
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
   Route file-manager's create-file / create-directory / rename
   operations through `Arc<dyn fs::Fs>` instead of `std::fs::*`,
   matching the trait-purity rule. Delete already uses `fs.trash`
   (shipped under TASK:phase-5/clippy-baseline). The three create
-  /rename paths are the last std::fs callers in the crate.
+  /rename paths are the last write-side std::fs callers in the
+  crate. `read_dir_sync` + `update_preview_sync` remain on sync
+  stdlib I/O — they run on the main thread under the assumption
+  that directory reads are fast, and converting them to async
+  requires restructuring the pane's load path (out of scope).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-fs-trait-purity
 ---
