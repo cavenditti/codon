@@ -2,14 +2,14 @@
 id: TASK:phase-5/command-palette-error-surface
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
   Stop silently swallowing completer errors in the command palette —
   today the modal does `.log_err().unwrap_or_default()` and the user
   sees an empty result list with no explanation when a completer
   fails.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/command-palette
   - REQ:codon/code-quality#c-error-visibility

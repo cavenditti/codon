@@ -32,7 +32,6 @@ use ui::{
     HighlightedLabel, Icon, IconName, IconSize, KeyBinding, Label, LabelCommon as _, LabelSize,
     ListItem, ListItemSpacing, SharedString, prelude::*,
 };
-use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 use crate::completer::{self, CompletionItem, Completer};
@@ -82,6 +81,7 @@ impl CodonPalette {
             mode: Mode::Command,
             selected_ix: 0,
             arg_items: Vec::new(),
+            arg_error: None,
         };
 
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
@@ -256,6 +256,7 @@ pub struct CodonPaletteDelegate {
     mode: Mode,
     selected_ix: usize,
     arg_items: Vec<CompletionItem>,
+    arg_error: Option<SharedString>,
 }
 
 fn collect_commands(window: &mut Window, cx: &mut App) -> Vec<Command> {
@@ -292,7 +293,13 @@ impl PickerDelegate for CodonPaletteDelegate {
     fn match_count(&self) -> usize {
         match &self.mode {
             Mode::Command => self.matches.len(),
-            Mode::Argument { .. } => self.arg_items.len(),
+            Mode::Argument { .. } => {
+                if self.arg_error.is_some() {
+                    1
+                } else {
+                    self.arg_items.len()
+                }
+            }
         }
     }
 
@@ -331,6 +338,7 @@ impl PickerDelegate for CodonPaletteDelegate {
                         self.mode = Mode::Command;
                         self.selected_ix = 0;
                         self.arg_items.clear();
+                self.arg_error = None;
                         self.spawn_command_match(query, cx)
                     }
                 }
@@ -357,6 +365,11 @@ impl PickerDelegate for CodonPaletteDelegate {
                 cmd.action.boxed_clone()
             }
             Mode::Argument { completer, .. } => {
+                if self.arg_error.is_some() {
+                    // Confirming an error row is a no-op — let the user
+                    // edit the query to retry instead of dismissing.
+                    return;
+                }
                 let Some(item) = self.arg_items.get(self.selected_ix) else {
                     self.emit_dismiss(cx);
                     return;
@@ -393,6 +406,7 @@ impl PickerDelegate for CodonPaletteDelegate {
                 self.mode = Mode::Command;
                 self.selected_ix = 0;
                 self.arg_items.clear();
+                self.arg_error = None;
                 cx.defer_in(window, move |picker, window, cx| {
                     picker.set_query(&restore, window, cx);
                 });
@@ -435,6 +449,28 @@ impl PickerDelegate for CodonPaletteDelegate {
                 )
             }
             Mode::Argument { .. } => {
+                if let Some(err) = &self.arg_error {
+                    if ix != 0 {
+                        return None;
+                    }
+                    return Some(
+                        ListItem::new(ix)
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .toggle_state(false)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .py_px()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .color(Color::Error)
+                                            .size(IconSize::Small),
+                                    )
+                                    .child(Label::new(err.clone()).color(Color::Error)),
+                            ),
+                    );
+                }
                 let item = self.arg_items.get(ix)?;
                 let label = item.label.clone();
                 let is_nav = item.navigates_to.is_some();
@@ -519,10 +555,21 @@ impl CodonPaletteDelegate {
         let workspace = self.workspace.clone();
         let task = completer.complete(&arg_query, workspace, cx);
         cx.spawn(async move |picker, cx| {
-            let items = task.await.log_err().unwrap_or_default();
+            let result = task.await;
             picker
                 .update(cx, |picker, cx| {
-                    picker.delegate.arg_items = items;
+                    match result {
+                        Ok(items) => {
+                            picker.delegate.arg_items = items;
+                            picker.delegate.arg_error = None;
+                        }
+                        Err(e) => {
+                            log::warn!("command-palette completer error: {e}");
+                            picker.delegate.arg_items.clear();
+                            picker.delegate.arg_error =
+                                Some(SharedString::from(format!("Error: {e}")));
+                        }
+                    }
                     picker.delegate.selected_ix = 0;
                     cx.notify();
                 })
