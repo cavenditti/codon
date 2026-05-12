@@ -18,7 +18,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context as _, Result};
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AppContext as _, BorrowAppContext as _};
+use gpui::{App, BorrowAppContext as _};
 use settings::SettingsStore;
 
 /// Resolve the codon config directory. Always `~/.config/codon` regardless
@@ -145,7 +145,7 @@ where
         return;
     };
     let executor = cx.background_executor().clone();
-    let (mut rx, watch_task) = settings::watch_config_file(&executor, fs, path.clone());
+    let (mut rx, watch_task) = settings::watch_config_file(&executor, fs, path);
     // First message arrives immediately (initial load) — we already applied
     // settings during init(), so drop it without re-applying to avoid
     // double-firing the keymap reload.

@@ -237,7 +237,7 @@ mod tests {
         let json = json!({
             "s": "hello",
             "i": 42,
-            "f": 3.14,
+            "f": 3.5,
             "b": true,
             "n": null,
         });
@@ -245,7 +245,7 @@ mod tests {
         let table = toml_val.as_table().unwrap();
         assert_eq!(table["s"].as_str(), Some("hello"));
         assert_eq!(table["i"].as_integer(), Some(42));
-        assert!((table["f"].as_float().unwrap() - 3.14).abs() < 1e-6);
+        assert!((table["f"].as_float().unwrap() - 3.5).abs() < 1e-6);
         assert_eq!(table["b"].as_bool(), Some(true));
         // Null entries are dropped.
         assert!(!table.contains_key("n"));

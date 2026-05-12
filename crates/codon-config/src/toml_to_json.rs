@@ -48,14 +48,14 @@ mod tests {
             "
             s = \"hello\"
             i = 42
-            f = 3.14
+            f = 3.5
             b = true
         ",
         );
         let json = translate(&toml_doc);
         assert_eq!(json["s"], json!("hello"));
         assert_eq!(json["i"], json!(42));
-        assert_eq!(json["f"], json!(3.14));
+        assert_eq!(json["f"], json!(3.5));
         assert_eq!(json["b"], json!(true));
     }
 
