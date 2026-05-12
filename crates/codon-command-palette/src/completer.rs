@@ -22,8 +22,7 @@ use std::{
 };
 
 use anyhow::Result;
-use fuzzy::StringMatchCandidate;
-use gpui::{Action, App, AppContext as _, Task, WeakEntity};
+use gpui::{Action, App, Task, WeakEntity};
 use theme::ThemeRegistry;
 use ui::SharedString;
 use workspace::Workspace;
