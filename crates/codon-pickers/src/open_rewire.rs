@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{App, AppContext as _, Context, Window};
+use gpui::{App, Context, Window};
 use workspace::{AppState, OpenOptions, Workspace};
 
 use crate::dir_picker::DirPickerModal;
@@ -35,7 +35,7 @@ fn handle_open(
                 workspace::open_paths(&[path], app_state, OpenOptions::default(), cx)
                     .detach_and_log_err(cx);
             },
-            weak.clone(),
+            weak,
             window,
             cx,
         )
