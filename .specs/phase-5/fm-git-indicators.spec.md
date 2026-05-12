@@ -7,7 +7,7 @@ summary: >
   Per-entry git status decoration (M / A / D / ??) in the file
   manager, sourced from project.git_store().status_for_path().
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-enhancements#c-git-indicators
 ---

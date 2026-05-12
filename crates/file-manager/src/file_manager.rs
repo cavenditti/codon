@@ -1,4 +1,5 @@
 use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
+use git::status::FileStatus;
 use gpui::{
     actions, div, prelude::*, px, uniform_list, App, ClipboardItem, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, KeyContext, Render, ScrollStrategy, SharedString, Styled,
@@ -43,6 +44,7 @@ struct DirEntry {
     is_hidden: bool,
     is_symlink: bool,
     size: u64,
+    git_status: Option<FileStatus>,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,8 @@ pub struct FileManager {
     scroll_handle: UniformListScrollHandle,
     visible_lines: usize,
     pending_input: Option<PendingInput>,
+    filter_query: String,
+    entries_unfiltered: Option<Vec<DirEntry>>,
 }
 
 #[derive(Clone)]
@@ -75,6 +79,7 @@ enum PendingInput {
     CreateFile(String),
     CreateDirectory(String),
     Rename { original: PathBuf, new_name: String },
+    Filter,
 }
 
 #[derive(Clone, Debug)]
@@ -97,6 +102,8 @@ impl FileManager {
             let tracker = cx.global_mut::<CodonModeTracker>();
             tracker.mode = this.mode;
             tracker.detail = None;
+            this.populate_git_status(cx);
+            cx.notify();
         })
         .detach();
 
@@ -115,6 +122,8 @@ impl FileManager {
             scroll_handle: UniformListScrollHandle::new(),
             visible_lines: 30,
             pending_input: None,
+            filter_query: String::new(),
+            entries_unfiltered: None,
         };
         this.reload_entries_sync();
         this
@@ -143,14 +152,52 @@ impl FileManager {
             self.entries.len().saturating_sub(1),
         );
         self.marked.clear();
+        // A fresh directory listing invalidates any active filter — the
+        // user navigated, so the original set is gone.
+        self.filter_query.clear();
+        self.entries_unfiltered = None;
         self.update_preview_sync();
     }
 
     fn reload_entries(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.reload_entries_sync();
+        self.populate_git_status(cx);
         self.ensure_visible();
         cx.emit(FileManagerEvent::PathChanged);
         cx.notify();
+    }
+
+    fn populate_git_status(&mut self, cx: &App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+        let git_store = project.git_store().read(cx);
+
+        let lookup = |abs_path: &Path| -> Option<FileStatus> {
+            if let Some(pp) = project.project_path_for_absolute_path(abs_path, cx)
+                && let Some(status) = git_store.project_path_git_status(&pp, cx)
+            {
+                return Some(status);
+            }
+            for repo in git_store.repositories().values() {
+                let repo = repo.read(cx);
+                if let Some(repo_path) = repo.abs_path_to_repo_path(abs_path)
+                    && let Some(entry) = repo.status_for_path(&repo_path)
+                {
+                    return Some(entry.status);
+                }
+            }
+            None
+        };
+
+        for entry in &mut self.entries {
+            entry.git_status = lookup(&entry.path);
+        }
+        for entry in &mut self.parent_entries {
+            entry.git_status = lookup(&entry.path);
+        }
     }
 
     fn update_preview_sync(&mut self) {
@@ -353,6 +400,75 @@ impl FileManager {
         }
     }
 
+    fn handle_cancel(
+        &mut self,
+        _: &menu::Cancel,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let in_filter_mode = matches!(self.pending_input, Some(PendingInput::Filter));
+        let has_filter = !self.filter_query.is_empty() || self.entries_unfiltered.is_some();
+        if !in_filter_mode && !has_filter {
+            return;
+        }
+        if in_filter_mode {
+            self.pending_input = None;
+            self.mode = PaneMode::Normal;
+        }
+        self.clear_filter();
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // Re-entering filter mode while a filter is already committed
+        // keeps the existing query so the user can edit it.
+        if self.entries_unfiltered.is_none() {
+            self.entries_unfiltered = Some(self.entries.clone());
+            self.filter_query.clear();
+        }
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::Filter);
+        self.apply_filter();
+        cx.notify();
+    }
+
+    fn apply_filter(&mut self) {
+        let Some(unfiltered) = self.entries_unfiltered.clone() else {
+            return;
+        };
+        if self.filter_query.is_empty() {
+            self.entries = unfiltered;
+            self.selected_index = 0;
+            self.update_preview_sync();
+            return;
+        }
+        let needle: Vec<char> = self
+            .filter_query
+            .chars()
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        self.entries = unfiltered
+            .into_iter()
+            .filter(|entry| is_subsequence(&needle, &entry.name))
+            .collect();
+        self.selected_index = 0;
+        self.marked.clear();
+        self.update_preview_sync();
+    }
+
+    fn clear_filter(&mut self) {
+        self.filter_query.clear();
+        if let Some(unfiltered) = self.entries_unfiltered.take() {
+            self.entries = unfiltered;
+        }
+        self.selected_index = cmp::min(
+            self.selected_index,
+            self.entries.len().saturating_sub(1),
+        );
+        self.update_preview_sync();
+    }
+
     fn delete_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let targets: Vec<PathBuf> = if self.marked.is_empty() {
             self.entries
@@ -389,8 +505,12 @@ impl FileManager {
 
         match key {
             "escape" => {
+                let was_filter = matches!(pending, PendingInput::Filter);
                 self.pending_input = None;
                 self.mode = PaneMode::Normal;
+                if was_filter {
+                    self.clear_filter();
+                }
                 cx.notify();
             }
             "backspace" => {
@@ -399,6 +519,10 @@ impl FileManager {
                     | PendingInput::CreateDirectory(s)
                     | PendingInput::Rename { new_name: s, .. } => {
                         s.pop();
+                    }
+                    PendingInput::Filter => {
+                        self.filter_query.pop();
+                        self.apply_filter();
                     }
                 }
                 cx.notify();
@@ -409,19 +533,33 @@ impl FileManager {
                     PendingInput::CreateFile(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
                         std::fs::write(&path, "").log_err();
+                        self.mode = PaneMode::Normal;
+                        self.reload_entries(window, cx);
                     }
                     PendingInput::CreateDirectory(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
                         std::fs::create_dir_all(&path).log_err();
+                        self.mode = PaneMode::Normal;
+                        self.reload_entries(window, cx);
                     }
                     PendingInput::Rename { original, new_name } if !new_name.is_empty() => {
                         let new_path = original.parent().unwrap_or(Path::new("/")).join(&new_name);
                         std::fs::rename(&original, &new_path).log_err();
+                        self.mode = PaneMode::Normal;
+                        self.reload_entries(window, cx);
                     }
-                    _ => {}
+                    PendingInput::Filter => {
+                        // Commit the filter view: leave Insert mode but keep
+                        // entries narrowed. `Esc` from Normal (via clear_filter)
+                        // or any reload restores the full set.
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                    }
+                    _ => {
+                        self.mode = PaneMode::Normal;
+                        self.reload_entries(window, cx);
+                    }
                 }
-                self.mode = PaneMode::Normal;
-                self.reload_entries(window, cx);
             }
             _ => {
                 if let Some(ch) = event.keystroke.key_char.as_deref().or(Some(key)) {
@@ -431,6 +569,10 @@ impl FileManager {
                             | PendingInput::CreateDirectory(s)
                             | PendingInput::Rename { new_name: s, .. } => {
                                 s.push_str(ch);
+                            }
+                            PendingInput::Filter => {
+                                self.filter_query.push_str(ch);
+                                self.apply_filter();
                             }
                         }
                         cx.notify();
@@ -481,6 +623,13 @@ impl FileManager {
             "r" if !shift => { self.rename_entry(window, cx); true }
             // Toggles
             "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
+            // Fuzzy filter
+            "/" => { self.start_filter(window, cx); true }
+            "escape" if !self.filter_query.is_empty() || self.entries_unfiltered.is_some() => {
+                self.clear_filter();
+                cx.notify();
+                true
+            }
             // Command mode
             ";" if shift => {
                 window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
@@ -545,6 +694,7 @@ impl FileManager {
 
         let symlink_indicator = entry.is_symlink;
         let marked_bg = theme.colors().ghost_element_hover;
+        let (git_glyph, git_color) = git_status_decoration(entry.git_status);
 
         h_flex()
             .w_full()
@@ -553,6 +703,13 @@ impl FileManager {
             .gap(px(4.))
             .when(is_marked && !is_selected, |d| d.bg(marked_bg))
             .when(is_selected, |d| d.bg(selected_bg))
+            .child(
+                div().w(px(12.)).child(
+                    Label::new(SharedString::new_static(git_glyph))
+                        .size(LabelSize::Small)
+                        .color(git_color),
+                ),
+            )
             .child(icon_element)
             .child(
                 Label::new(entry.name.clone())
@@ -635,6 +792,7 @@ impl FileManager {
             PendingInput::CreateFile(s) => ("new file: ", s.as_str()),
             PendingInput::CreateDirectory(s) => ("new dir: ", s.as_str()),
             PendingInput::Rename { new_name, .. } => ("rename: ", new_name.as_str()),
+            PendingInput::Filter => ("filter: ", self.filter_query.as_str()),
         };
 
         let theme = cx.theme();
@@ -671,20 +829,23 @@ impl Render for FileManager {
         let marked_count = self.marked.len();
         let selected_index = self.selected_index;
 
+        let filter_active = !self.filter_query.is_empty();
+        let filter_committed = filter_active && !matches!(self.pending_input, Some(PendingInput::Filter));
+        let filter_query = self.filter_query.clone();
         let status_text = if marked_count > 0 {
             format!(
                 "{} | {}/{} | {} marked",
                 dir_display,
                 selected_index + 1,
                 entry_count,
-                marked_count
+                marked_count,
             )
         } else {
             format!(
                 "{} | {}/{}",
                 dir_display,
                 if entry_count > 0 { selected_index + 1 } else { 0 },
-                entry_count
+                entry_count,
             )
         };
 
@@ -728,6 +889,7 @@ impl Render for FileManager {
                         let marked_bg = theme.colors().ghost_element_hover;
                         let this = this.clone();
                         let focus = focus.clone();
+                        let (git_glyph, git_color) = git_status_decoration(entry.git_status);
 
                         div()
                             .id(("file-entry", i))
@@ -739,6 +901,13 @@ impl Render for FileManager {
                                     .gap(px(4.))
                                     .when(is_marked && !is_selected, |d| d.bg(marked_bg))
                                     .when(is_selected, |d| d.bg(selected_bg))
+                                    .child(
+                                        div().w(px(12.)).child(
+                                            Label::new(SharedString::new_static(git_glyph))
+                                                .size(LabelSize::Small)
+                                                .color(git_color),
+                                        ),
+                                    )
                                     .child(icon_element)
                                     .child(Label::new(entry.name.clone()).size(LabelSize::Small).color(text_color).single_line())
                                     .when(entry.is_symlink, |el| {
@@ -766,7 +935,34 @@ impl Render for FileManager {
             .size_full()
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::handle_cancel))
             .on_key_down(cx.listener(Self::handle_key_down))
+            .when(filter_committed, |this| {
+                this.child(
+                    h_flex()
+                        .px(px(8.))
+                        .py(px(2.))
+                        .gap(px(6.))
+                        .bg(theme.colors().editor_background)
+                        .border_b_1()
+                        .border_color(border_color)
+                        .child(
+                            Icon::new(IconName::Filter)
+                                .size(IconSize::XSmall)
+                                .color(Color::Accent),
+                        )
+                        .child(
+                            Label::new(filter_query.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Accent),
+                        )
+                        .child(
+                            Label::new("(Esc to clear, / to edit)")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .flex_1()
@@ -869,6 +1065,48 @@ impl SelectionSource for FileManager {
     }
 }
 
+fn is_subsequence(needle: &[char], haystack: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let mut idx = 0;
+    for c in haystack.chars() {
+        if needle[idx] == c.to_ascii_lowercase() {
+            idx += 1;
+            if idx == needle.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn git_status_decoration(status: Option<FileStatus>) -> (&'static str, Color) {
+    match status {
+        None => (" ", Color::Muted),
+        Some(FileStatus::Ignored) => (" ", Color::Muted),
+        Some(FileStatus::Untracked) => ("?", Color::Hint),
+        Some(FileStatus::Unmerged(_)) => ("U", Color::Conflict),
+        Some(FileStatus::Tracked(tracked)) => {
+            use git::status::StatusCode::*;
+            // Worktree (unstaged) wins when both sides have a change —
+            // it's what the user is actively editing.
+            let code = match tracked.worktree_status {
+                Unmodified => tracked.index_status,
+                other => other,
+            };
+            match code {
+                Modified | TypeChanged => ("M", Color::Modified),
+                Added => ("A", Color::Created),
+                Deleted => ("D", Color::Deleted),
+                Renamed => ("R", Color::Modified),
+                Copied => ("C", Color::Created),
+                Unmodified => (" ", Color::Muted),
+            }
+        }
+    }
+}
+
 fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
         return Vec::new();
@@ -891,6 +1129,7 @@ fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
                 is_hidden,
                 is_symlink: file_type.is_symlink(),
                 size: metadata.len(),
+                git_status: None,
             })
         })
         .collect();
@@ -939,13 +1178,31 @@ fn open_file_manager(
 ) {
     let fs = workspace.app_state().fs.clone();
     let weak_workspace = workspace.weak_handle();
-    let dir = workspace
-        .project()
+    let project = workspace.project().clone();
+    let dir = project
         .read(cx)
         .worktrees(cx)
         .next()
         .map(|wt| wt.read(cx).abs_path().to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+
+    // Make sure the project has a worktree covering this directory so
+    // git_store can discover the enclosing repository and per-entry
+    // status lookups resolve to a real `FileStatus`.
+    let needs_worktree = project
+        .read(cx)
+        .worktree_store()
+        .read(cx)
+        .find_worktree(&dir, cx)
+        .is_none();
+    if needs_worktree {
+        let dir_arc: Arc<Path> = Arc::from(dir.as_path());
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(dir_arc, false, cx)
+            })
+            .detach_and_log_err(cx);
+    }
 
     let file_manager = cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
     workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);

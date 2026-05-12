@@ -7,7 +7,7 @@ summary: >
   `/` in file manager Normal mode enters a filter Insert mode that
   narrows the current directory listing via fuzzy::match_strings.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-enhancements#c-fuzzy-filter
 ---
