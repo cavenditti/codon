@@ -85,13 +85,17 @@ pub enum GitStatusPaneEvent {
 impl EventEmitter<GitStatusPaneEvent> for GitStatusPane {}
 
 impl GitStatusPane {
-    pub fn new(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // The project handle has to be resolved by the caller — this
+        // constructor runs inside `cx.new(…)` while the workspace entity
+        // is already being updated by the action handler that's opening
+        // us, so any `workspace.read(cx)` here double-leases and panics.
         let focus_handle = cx.focus_handle();
-        let project = workspace
-            .upgrade()
-            .map(|w| w.read(cx).project().downgrade())
-            .unwrap_or_else(|| WeakEntity::new_invalid());
-
         let mut pane = Self {
             focus_handle,
             workspace,
@@ -375,6 +379,7 @@ fn open_status_pane(
     cx: &mut Context<Workspace>,
 ) {
     let weak_workspace = workspace.weak_handle();
-    let pane = cx.new(|cx| GitStatusPane::new(weak_workspace, window, cx));
+    let project = workspace.project().downgrade();
+    let pane = cx.new(|cx| GitStatusPane::new(weak_workspace, project, window, cx));
     workspace.add_item_to_active_pane(Box::new(pane), None, true, window, cx);
 }
