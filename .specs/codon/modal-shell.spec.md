@@ -40,4 +40,10 @@ The system MUST provide:
   enough to read at a glance (bold pill / colored background, not just
   inline text) and MUST honour the active theme — colors come from
   theme tokens, not hard-coded hex
+- {#c-cheatsheet-contextual} the `cmd-k F1` cheatsheet MUST surface
+  the bindings reachable from the *current* dispatch chain ahead of
+  the global list, so a user inside a pane (terminal Normal, file
+  manager, git status) can find pane-specific keys without scanning
+  the global list. The global section stays — discoverability of
+  global verbs is still the cheatsheet's primary job.
 :::
