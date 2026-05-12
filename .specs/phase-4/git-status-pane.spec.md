@@ -8,7 +8,7 @@ summary: >
   (workspace::Item), with staged / unstaged / untracked sections and
   keyboard navigation.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/git-pane#c-status
 ---

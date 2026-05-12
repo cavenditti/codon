@@ -117,6 +117,7 @@ const DEFAULT_KEYMAP: &str = r#"
 
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
+"cmd-k g s" = "codon_git::OpenStatusPane"
 
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -293,6 +294,23 @@ fn apply_raw_bindings(cx: &mut App) {
     ) {
         bindings.push(binding);
     }
+    // Git status pane key context — uses a flat "GitStatus" context, no
+    // pane_mode predicate yet (the pane is read-only so the Normal /
+    // Insert split doesn't apply here).
+    for (key, action) in [
+        ("j", "codon_git::NavigateDown"),
+        ("k", "codon_git::NavigateUp"),
+        ("enter", "codon_git::Open"),
+        ("s", "codon_git::Stage"),
+        ("u", "codon_git::Unstage"),
+        ("g g", "codon_git::GoToTop"),
+        ("shift-g", "codon_git::GoToBottom"),
+        (":", "codon_command_palette::Toggle"),
+    ] {
+        if let Some(b) = resolve_binding(key, action, Some("GitStatus")) {
+            bindings.push(b);
+        }
+    }
     if !bindings.is_empty() {
         cx.bind_keys(bindings);
     }
@@ -364,6 +382,14 @@ fn resolve_binding(
 
         // Git
         "git::GenerateCommitMessage" => bind!(git::GenerateCommitMessage),
+        "codon_git::OpenStatusPane" => bind!(codon_git::OpenStatusPane),
+        "codon_git::NavigateUp" => bind!(codon_git::NavigateUp),
+        "codon_git::NavigateDown" => bind!(codon_git::NavigateDown),
+        "codon_git::Open" => bind!(codon_git::Open),
+        "codon_git::Stage" => bind!(codon_git::Stage),
+        "codon_git::Unstage" => bind!(codon_git::Unstage),
+        "codon_git::GoToTop" => bind!(codon_git::GoToTop),
+        "codon_git::GoToBottom" => bind!(codon_git::GoToBottom),
 
         // Help / cheatsheet
         "codon_keymap::ShowKeymap" => bind!(crate::ShowKeymap),

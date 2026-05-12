@@ -1,0 +1,19 @@
+[package]
+name = "codon-git"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_git.rs"
+
+[dependencies]
+git.workspace = true
+gpui.workspace = true
+project.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true

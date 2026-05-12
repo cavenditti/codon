@@ -12,6 +12,7 @@ anyhow.workspace = true
 codon-agent.workspace = true
 codon-command-palette.workspace = true
 codon-config.workspace = true
+codon-git.workspace = true
 codon-session.workspace = true
 command_palette.workspace = true
 git.workspace = true
