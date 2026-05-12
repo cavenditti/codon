@@ -2,14 +2,17 @@
 id: TASK:phase-5/codon-buffer-second-consumer
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
   Track the `codon-buffer` trait until it earns a second consumer
   (Helix's `Document`) — until then it is one-impl boilerplate and
   imposes a maintenance tax on every change to `language::Buffer`'s
-  surface.
+  surface. **Deferred 2026-05-12** — verified zero current consumers
+  in codon crates / apps; consumer-migration path is not viable
+  today (no codon site reaches for `&language::Buffer` directly).
+  Re-evaluate when Helix integration enters scope (Phase 6+).
 owners: [carlo]
-progress: pending
+progress: deferred
 refines:
   - REQ:codon/buffer-trait#c-helix-impl
   - REQ:codon/buffer-trait#c-consumer-rewire
