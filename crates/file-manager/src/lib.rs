@@ -1,4 +1,5 @@
-mod file_manager;
+pub(crate) mod file_manager;
+mod view;
 
 pub use file_manager::{
     CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, MoveMarked, Open,

@@ -2,14 +2,19 @@
 id: TASK:phase-5/file-manager-decompose
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
-  Split the 1209-line monolithic file_manager.rs into focused sibling
-  modules (state + filesystem I/O + rendering + handlers) before the
-  next phase-5 file-manager feature (fuzzy filter, git indicators,
-  bulk ops) lands on top of it.
+  Initial split: rendering extracted from the monolithic
+  file_manager.rs into a sibling `view.rs` module. The full
+  four-way split (state / fs_io / handlers / render) is partially
+  done — file_manager.rs went from 1345 → 921 LOC, view.rs is 469
+  LOC. Further extraction (handlers into a separate module) is
+  worth doing only when the FM crate grows another feature; today
+  the handler logic is tightly enough coupled to FileManager state
+  that a free-function form would require more pub(crate) plumbing
+  than the maintainability win justifies.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-module-decomposition
 ---
