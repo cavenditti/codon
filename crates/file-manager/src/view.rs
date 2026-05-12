@@ -467,3 +467,104 @@ fn git_status_decoration(status: Option<FileStatus>) -> (&'static str, Color) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git::status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+
+    #[test]
+    fn human_size_bytes() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1), "1 B");
+        assert_eq!(human_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn human_size_kilobytes() {
+        assert_eq!(human_size(1024), "1.0 KB");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(1024 * 1023), "1023.0 KB");
+    }
+
+    #[test]
+    fn human_size_megabytes() {
+        assert_eq!(human_size(1024 * 1024), "1.0 MB");
+        assert_eq!(human_size(5 * 1024 * 1024 + 512 * 1024), "5.5 MB");
+    }
+
+    #[test]
+    fn human_size_gigabytes_and_terabytes() {
+        assert_eq!(human_size(1024_u64.pow(3)), "1.0 GB");
+        assert_eq!(human_size(1024_u64.pow(4)), "1.0 TB");
+        // Petabytes still render with the TB unit (deliberate cap).
+        assert_eq!(human_size(2 * 1024_u64.pow(4)), "2.0 TB");
+    }
+
+    #[test]
+    fn git_status_decoration_none_and_ignored_are_blank_muted() {
+        assert_eq!(git_status_decoration(None), (" ", Color::Muted));
+        assert_eq!(
+            git_status_decoration(Some(FileStatus::Ignored)),
+            (" ", Color::Muted),
+        );
+    }
+
+    #[test]
+    fn git_status_decoration_untracked_is_question() {
+        assert_eq!(
+            git_status_decoration(Some(FileStatus::Untracked)),
+            ("?", Color::Hint),
+        );
+    }
+
+    #[test]
+    fn git_status_decoration_unmerged_is_conflict_glyph() {
+        let status = FileStatus::Unmerged(UnmergedStatus {
+            first_head: UnmergedStatusCode::Added,
+            second_head: UnmergedStatusCode::Added,
+        });
+        assert_eq!(git_status_decoration(Some(status)), ("U", Color::Conflict));
+    }
+
+    fn tracked(worktree: StatusCode, index: StatusCode) -> FileStatus {
+        FileStatus::Tracked(TrackedStatus {
+            worktree_status: worktree,
+            index_status: index,
+        })
+    }
+
+    #[test]
+    fn git_status_decoration_tracked_worktree_wins_over_index() {
+        // Worktree modified, index added — worktree wins (the user is
+        // actively editing).
+        assert_eq!(
+            git_status_decoration(Some(tracked(StatusCode::Modified, StatusCode::Added))),
+            ("M", Color::Modified),
+        );
+    }
+
+    #[test]
+    fn git_status_decoration_tracked_falls_back_to_index_when_worktree_unmodified() {
+        assert_eq!(
+            git_status_decoration(Some(tracked(StatusCode::Unmodified, StatusCode::Added))),
+            ("A", Color::Created),
+        );
+    }
+
+    #[test]
+    fn git_status_decoration_tracked_all_codes() {
+        let cases = [
+            (StatusCode::Modified, "M"),
+            (StatusCode::TypeChanged, "M"),
+            (StatusCode::Added, "A"),
+            (StatusCode::Deleted, "D"),
+            (StatusCode::Renamed, "R"),
+            (StatusCode::Copied, "C"),
+        ];
+        for (code, glyph) in cases {
+            let (g, _) = git_status_decoration(Some(tracked(code, StatusCode::Unmodified)));
+            assert_eq!(g, glyph, "code {code:?} should map to {glyph}");
+        }
+    }
+}

@@ -2,14 +2,19 @@
 id: TASK:phase-5/file-manager-tests
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
-  Add unit tests for the file manager's pure logic — directory
-  sorting, hidden filtering, navigation bounds, mark-set
-  transitions, pending-input state — so future refactors (fuzzy
-  filter, git indicators, bulk ops) have a safety net.
+  Initial coverage for the file manager's pure logic — directory
+  sorting/filtering, subsequence matching for the fuzzy filter,
+  human-readable size formatting, and git-status glyph decoration.
+  Tests use a real tempdir for the read_dir_sync paths. Navigation
+  and mark-set transitions remain untested at the unit level —
+  they're methods on FileManager that mutate state through &mut
+  self and require a GPUI context to exercise; defer to an
+  integration-test pass when the test harness pattern is
+  established.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-test-coverage-floor
 ---

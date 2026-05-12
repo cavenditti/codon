@@ -819,7 +819,7 @@ fn is_subsequence(needle: &[char], haystack: &str) -> bool {
 }
 
 
-fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
+pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -918,4 +918,117 @@ fn open_file_manager(
 
     let file_manager = cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
     workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn make_tree(layout: &[(&str, bool)]) -> TempDir {
+        let dir = TempDir::new().expect("create tempdir");
+        for (name, is_dir) in layout {
+            let p = dir.path().join(name);
+            if *is_dir {
+                fs::create_dir(&p).expect("mkdir");
+            } else {
+                fs::write(&p, b"").expect("touch");
+            }
+        }
+        dir
+    }
+
+    #[test]
+    fn read_dir_sync_filters_hidden_when_show_hidden_false() {
+        let dir = make_tree(&[
+            ("visible.txt", false),
+            (".hidden.txt", false),
+            ("subdir", true),
+            (".dotdir", true),
+        ]);
+        let entries = read_dir_sync(dir.path(), false);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["subdir", "visible.txt"]);
+    }
+
+    #[test]
+    fn read_dir_sync_includes_hidden_when_show_hidden_true() {
+        let dir = make_tree(&[
+            ("visible.txt", false),
+            (".hidden.txt", false),
+            ("subdir", true),
+            (".dotdir", true),
+        ]);
+        let entries = read_dir_sync(dir.path(), true);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        // Directories first, then files; each group case-insensitive ascending.
+        assert_eq!(names, vec![".dotdir", "subdir", ".hidden.txt", "visible.txt"]);
+        let hidden_flags: Vec<bool> = entries.iter().map(|e| e.is_hidden).collect();
+        assert_eq!(hidden_flags, vec![true, false, true, false]);
+    }
+
+    #[test]
+    fn read_dir_sync_sorts_dirs_before_files() {
+        let dir = make_tree(&[
+            ("zfile.txt", false),
+            ("adir", true),
+            ("bdir", true),
+            ("afile.txt", false),
+        ]);
+        let entries = read_dir_sync(dir.path(), false);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["adir", "bdir", "afile.txt", "zfile.txt"]);
+    }
+
+    #[test]
+    fn read_dir_sync_sort_is_case_insensitive() {
+        let dir = make_tree(&[
+            ("Zebra.txt", false),
+            ("apple.txt", false),
+            ("Banana.txt", false),
+        ]);
+        let entries = read_dir_sync(dir.path(), false);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["apple.txt", "Banana.txt", "Zebra.txt"]);
+    }
+
+    #[test]
+    fn read_dir_sync_unreadable_path_returns_empty() {
+        let entries = read_dir_sync(Path::new("/nonexistent/path/that/does/not/exist"), false);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn is_subsequence_empty_needle_matches_anything() {
+        assert!(is_subsequence(&[], "anything"));
+        assert!(is_subsequence(&[], ""));
+    }
+
+    #[test]
+    fn is_subsequence_matches_contiguous() {
+        let needle: Vec<char> = "foo".chars().collect();
+        assert!(is_subsequence(&needle, "foobar"));
+        assert!(is_subsequence(&needle, "barfoo"));
+    }
+
+    #[test]
+    fn is_subsequence_matches_non_contiguous() {
+        let needle: Vec<char> = "fb".chars().collect();
+        assert!(is_subsequence(&needle, "foobar"));
+    }
+
+    #[test]
+    fn is_subsequence_case_insensitive_on_haystack() {
+        // Implementation lowercases haystack chars; needle is assumed
+        // lowercase by the caller (apply_filter does that).
+        let needle: Vec<char> = "foo".chars().collect();
+        assert!(is_subsequence(&needle, "FOOBAR"));
+    }
+
+    #[test]
+    fn is_subsequence_no_match() {
+        let needle: Vec<char> = "xyz".chars().collect();
+        assert!(!is_subsequence(&needle, "foobar"));
+    }
 }
