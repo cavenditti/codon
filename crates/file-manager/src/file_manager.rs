@@ -703,13 +703,18 @@ impl FileManager {
         dimmed: bool,
         cx: &App,
     ) -> impl IntoElement {
+        // Marks are intrinsically tied to the current column's index space
+        // (`self.entries`). `render_entry` is only called for the parent and
+        // preview columns, where applying `self.marked` indices would
+        // erroneously highlight rows that happen to share an index with a
+        // marked current-column entry. The current column inlines its own
+        // marked-row rendering in the `uniform_list` closure.
         let is_selected = selected == Some(index);
-        let is_marked = self.marked.contains(&index);
         let theme = cx.theme();
         let selected_bg = theme.colors().ghost_element_selected;
 
-        let text_color = if is_marked {
-            Color::Accent
+        let text_color = if entry.is_hidden {
+            Color::Hidden
         } else if dimmed {
             Color::Muted
         } else if entry.is_dir {
@@ -746,7 +751,6 @@ impl FileManager {
         };
 
         let symlink_indicator = entry.is_symlink;
-        let marked_bg = theme.colors().ghost_element_hover;
         let (git_glyph, git_color) = git_status_decoration(entry.git_status);
 
         h_flex()
@@ -754,7 +758,6 @@ impl FileManager {
             .px(px(4.))
             .py(px(1.))
             .gap(px(4.))
-            .when(is_marked && !is_selected, |d| d.bg(marked_bg))
             .when(is_selected, |d| d.bg(selected_bg))
             .child(
                 div().w(px(12.)).child(
