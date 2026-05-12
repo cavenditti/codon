@@ -37,3 +37,10 @@ phase-1/2 requirements:
   switch picker + tmux-style window overview grid.
 - [REQ:codon/pane-ux](spec:REQ:codon/pane-ux) — `GotoOrOpen{...}`
   single-chord verbs for terminal / file-manager / editor.
+
+Phase-5 also opens a workspace-hygiene requirement, drafted from a
+2026-05-12 clippy sweep + four per-crate design reviews:
+
+- [REQ:codon/code-quality](spec:REQ:codon/code-quality) — clippy-clean
+  baseline, Fs-trait purity, monolith decomposition, visible error
+  paths, speculative-abstraction watchlist.
