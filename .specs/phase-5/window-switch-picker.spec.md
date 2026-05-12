@@ -8,7 +8,7 @@ summary: >
   session's windows — same shape as `SessionSwitch` but scoped to one
   session.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/windows#c-switch-picker
 ---

@@ -26,6 +26,8 @@ actions!(
         SessionNew,
         /// Open a fuzzy picker to switch sessions.
         SessionSwitch,
+        /// Open a fuzzy picker to switch windows within the active session.
+        WindowSwitch,
         /// Rename the active session.
         SessionRename,
         /// Close the active session (refuses to remove the last one).
@@ -49,6 +51,15 @@ actions!(
         /// app running. `cmd-shift-q` remains an immediate-quit escape
         /// hatch.
         HoldQuit,
+        /// Focus the most-recently-active terminal in the current window,
+        /// or open a new terminal in the active pane if none exists.
+        GotoOrOpenTerminal,
+        /// Focus the most-recently-active file manager in the current
+        /// window, or open a new one in the active pane if none exists.
+        GotoOrOpenFileManager,
+        /// Focus the most-recently-active editor in the current window,
+        /// or open a new buffer in the active pane if none exists.
+        GotoOrOpenEditor,
     ]
 );
 
@@ -65,6 +76,7 @@ pub fn register(_cx: &mut App) {}
 pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_session_new);
     workspace.register_action(handle_session_switch);
+    workspace.register_action(handle_window_switch);
     workspace.register_action(handle_session_close);
     workspace.register_action(handle_window_new);
     workspace.register_action(handle_window_next);
@@ -72,6 +84,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_close);
     workspace.register_action(handle_safe_close_active_item);
     workspace.register_action(handle_hold_quit);
+    crate::goto_or_open::register_for_workspace(workspace);
 }
 
 fn handle_session_new(
@@ -141,6 +154,18 @@ fn handle_session_switch(
     let weak = workspace.weak_handle();
     workspace.toggle_modal(window, cx, move |window, cx| {
         SessionSwitchModal::new(weak, window, cx)
+    });
+}
+
+fn handle_window_switch(
+    workspace: &mut Workspace,
+    _: &WindowSwitch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let weak = workspace.weak_handle();
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        crate::window_picker::WindowSwitchModal::new(weak, window, cx)
     });
 }
 

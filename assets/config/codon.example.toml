@@ -89,6 +89,12 @@ format_on_save = "on"
 "cmd-w"   = "codon_session::SafeCloseActiveItem"
 "cmd-k w" = "codon_session::SafeCloseActiveItem"
 
+# Goto-or-open: single chord lands on the most-recently-active pane of
+# the requested kind, or opens one in the active pane if none exists.
+"cmd-t"       = "codon_session::GotoOrOpenTerminal"
+"cmd-e"       = "codon_session::GotoOrOpenFileManager"
+"cmd-shift-e" = "codon_session::GotoOrOpenEditor"
+
 # Quit. cmd-q must be *held* for ~1.5 seconds to actually quit (Chrome
 # style) — a single tap shows a toast and otherwise does nothing.
 # cmd-shift-q is the immediate-quit escape hatch. Both are filtered out
@@ -100,6 +106,9 @@ format_on_save = "on"
 "cmd-k s n" = "codon_session::SessionNew"
 "cmd-k s s" = "codon_session::SessionSwitch"
 "cmd-k s c" = "codon_session::SessionClose"
+
+# Fuzzy window picker within the active session (tmux-style ctrl-w w).
+"ctrl-w w" = "codon_session::WindowSwitch"
 
 # Windows within a session (cmd-k W prefix — capital W; lowercase w
 # is "close active item" above).

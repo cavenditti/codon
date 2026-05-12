@@ -89,6 +89,12 @@ const DEFAULT_KEYMAP: &str = r#"
 # Pane management
 "cmd-k t" = "workspace::NewTerminal"
 "cmd-k e" = "file_manager::Open"
+
+# Goto-or-open: single chord lands on the most-recently-active pane of
+# the requested kind, or opens one in the active pane if none exists.
+"cmd-t"       = "codon_session::GotoOrOpenTerminal"
+"cmd-e"       = "codon_session::GotoOrOpenFileManager"
+"cmd-shift-e" = "codon_session::GotoOrOpenEditor"
 # Both cmd-w and cmd-k w fall through codon's safe close cascade (close
 # item -> close pane -> close session window -> empty pane). The OS
 # window is only ever closed by cmd-shift-w or cmd-shift-q.
@@ -110,6 +116,10 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-w l" = "codon_session::WindowNext"
 "cmd-k shift-w h" = "codon_session::WindowPrev"
 "cmd-k shift-w c" = "codon_session::WindowClose"
+"cmd-k shift-w w" = "codon_session::WindowSwitch"
+
+# Fuzzy window picker within the active session (tmux-style ctrl-w w).
+"ctrl-w w" = "codon_session::WindowSwitch"
 
 # Agent (cmd-k a prefix)
 "cmd-k a a" = "assistant::FocusAgent"
@@ -373,6 +383,7 @@ fn resolve_binding(
         // Codon session
         "codon_session::SessionNew" => bind!(codon_session::SessionNew),
         "codon_session::SessionSwitch" => bind!(codon_session::SessionSwitch),
+        "codon_session::WindowSwitch" => bind!(codon_session::WindowSwitch),
         "codon_session::SessionClose" => bind!(codon_session::SessionClose),
         "codon_session::SessionRename" => bind!(codon_session::SessionRename),
         "codon_session::WindowNew" => bind!(codon_session::WindowNew),
@@ -381,6 +392,9 @@ fn resolve_binding(
         "codon_session::WindowClose" => bind!(codon_session::WindowClose),
         "codon_session::SafeCloseActiveItem" => bind!(codon_session::SafeCloseActiveItem),
         "codon_session::HoldQuit" => bind!(codon_session::HoldQuit),
+        "codon_session::GotoOrOpenTerminal" => bind!(codon_session::GotoOrOpenTerminal),
+        "codon_session::GotoOrOpenFileManager" => bind!(codon_session::GotoOrOpenFileManager),
+        "codon_session::GotoOrOpenEditor" => bind!(codon_session::GotoOrOpenEditor),
         "zed::Quit" => bind!(zed_actions::Quit),
 
         // Codon agent

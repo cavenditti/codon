@@ -8,7 +8,7 @@ summary: >
   most-recently-active pane of the requested kind in the current
   window, or split / open a new one when none exists.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/pane-ux#c-goto-or-new
 ---

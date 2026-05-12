@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod goto_or_open;
 pub mod picker;
 pub mod registry;
 pub mod runtime;
@@ -6,6 +7,7 @@ pub mod session;
 pub mod status_item;
 pub mod swap;
 pub mod window_indicator;
+pub mod window_picker;
 
 pub use actions::*;
 pub use picker::SessionSwitchModal;

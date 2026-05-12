@@ -10,6 +10,7 @@ use workspace::{ItemHandle, StatusItemView, Workspace, notifications::NotifyTask
 use crate::{
     actions::{WindowGoto, persist_async},
     registry::SessionRegistry,
+    runtime::{WindowRuntime, WindowRuntimeCache},
     session::WindowId,
     swap,
 };
@@ -81,7 +82,7 @@ impl StatusItemView for WindowsStatusItem {
     }
 }
 
-fn switch_to_window(
+pub(crate) fn switch_to_window(
     workspace: &mut Workspace,
     target: WindowId,
     window: &mut Window,
@@ -100,22 +101,53 @@ fn switch_to_window(
     if target_idx == session.active_window {
         return;
     }
+
+    let outgoing_id = session.active().map(|w| w.id);
     let snapshot = swap::capture(workspace, window, cx);
+    let runtime = capture_runtime(workspace);
     if let Some(active) = session.active_mut() {
         active.layout = Some(snapshot);
     }
+    if let (Some(outgoing_window_id), Some(rt)) = (outgoing_id, runtime) {
+        WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
+    }
+
     session.active_window = target_idx;
-    let target_layout = session
-        .windows
-        .get(target_idx)
-        .and_then(|w| w.layout.clone())
-        .unwrap_or_else(workspace::codon_bridge::LayoutSnapshot::empty_pane);
+    let incoming_window_id = session.windows.get(target_idx).map(|w| w.id);
+    let incoming_layout = session.windows.get(target_idx).and_then(|w| w.layout.clone());
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
     persist_async(cx);
-    let weak = workspace.weak_handle();
-    swap::apply(workspace, target_layout, window, cx).detach_and_notify_err(weak, window, cx);
+
+    let cache = WindowRuntimeCache::global(cx);
+    let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
+    if let Some(rt) = cached_runtime {
+        log::debug!(
+            "restoring window {:?} from in-memory runtime cache",
+            incoming_window_id
+        );
+        workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+    } else if let Some(layout) = incoming_layout {
+        log::debug!(
+            "restoring window {:?} from persisted snapshot (no runtime cache hit)",
+            incoming_window_id
+        );
+        let weak = workspace.weak_handle();
+        swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+    } else {
+        log::debug!(
+            "no state for window {:?}; opening fresh empty pane",
+            incoming_window_id
+        );
+        workspace.replace_center_with_empty_pane(window, cx);
+    }
+}
+
+fn capture_runtime(workspace: &Workspace) -> Option<WindowRuntime> {
+    let root = workspace.center().root.clone();
+    let active_pane = Some(workspace.active_pane().clone());
+    Some(WindowRuntime { root, active_pane })
 }
 
 /// Wire WindowGoto(usize) action handler that switches to window at index.
