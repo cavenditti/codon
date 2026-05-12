@@ -2,14 +2,20 @@
 id: TASK:phase-5/config-writeback-toml-edit
 type: task
 status: accepted
-version: 0.0.1
+version: 0.1.0
 summary: >
   Replace the line-by-line string splicer in codon-config's writeback
   with `toml_edit`'s AST so user comments, whitespace, and ordering
   survive every edit — and so the splice no longer breaks on
-  commented-out `[settings]` headers or unusual TOML layouts.
+  commented-out `[settings]` headers or unusual TOML layouts. Read +
+  write paths route through `Arc<dyn fs::Fs>` (`fs.metadata` +
+  `fs.load` + `fs.atomic_write` + `fs.create_dir`) instead of
+  `std::fs::*`. Decor preservation handles the case where a
+  free-standing comment block sits above the `[settings]` header.
+  Symmetry on `toml_to_json` not attempted — the JSON-emit path is
+  read-only and reads via `toml::Value` are fine as-is.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/unified-config
   - REQ:codon/code-quality#c-fs-trait-purity
