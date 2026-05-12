@@ -4,8 +4,9 @@ use std::path::PathBuf;
 /// A typed selection representing the currently-targeted nouns
 /// in the focused pane. Each pane kind produces selections of
 /// its own types.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Selection {
+    #[default]
     Empty,
     Text {
         ranges: Vec<std::ops::Range<usize>>,
@@ -16,12 +17,6 @@ pub enum Selection {
     Blocks(Vec<BlockRef>),
     Diagnostics(Vec<DiagnosticRef>),
     Messages(Vec<MessageRef>),
-}
-
-impl Default for Selection {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 impl Selection {
