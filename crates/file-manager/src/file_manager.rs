@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{h_flex, v_flex, Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, StyledExt};
+use ui::{h_flex, v_flex, Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize};
 use util::ResultExt;
 use workspace::{Item, item::ItemEvent, Workspace};
 
@@ -72,6 +72,8 @@ pub struct FileManager {
     pending_input: Option<PendingInput>,
     filter_query: String,
     entries_unfiltered: Option<Vec<DirEntry>>,
+    error_message: Option<String>,
+    error_gen: u64,
 }
 
 #[derive(Clone)]
@@ -124,9 +126,33 @@ impl FileManager {
             pending_input: None,
             filter_query: String::new(),
             entries_unfiltered: None,
+            error_message: None,
+            error_gen: 0,
         };
         this.reload_entries_sync();
         this
+    }
+
+    fn surface_error(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
+        let msg = msg.into();
+        log::warn!("file-manager: {msg}");
+        self.error_gen = self.error_gen.wrapping_add(1);
+        let current_gen = self.error_gen;
+        self.error_message = Some(msg);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.error_gen == current_gen {
+                    this.error_message = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn dispatch_context(&self) -> KeyContext {
@@ -297,7 +323,7 @@ impl FileManager {
             self.selected_index = 0;
             self.reload_entries(window, cx);
         } else {
-            let path = entry.path.clone();
+            let path = entry.path;
             let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, cx| {
                 if let Ok(task) = workspace.update_in(cx, |workspace, window, cx| {
@@ -377,19 +403,19 @@ impl FileManager {
         }
     }
 
-    fn create_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn create_file(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::CreateFile(String::new()));
         cx.notify();
     }
 
-    fn create_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn create_directory(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::CreateDirectory(String::new()));
         cx.notify();
     }
 
-    fn rename_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn rename_entry(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             self.mode = PaneMode::Insert;
             self.pending_input = Some(PendingInput::Rename {
@@ -482,14 +508,35 @@ impl FileManager {
                 .collect()
         };
 
-        for path in &targets {
-            if path.is_dir() {
-                std::fs::remove_dir_all(path).log_err();
-            } else {
-                std::fs::remove_file(path).log_err();
-            }
+        if targets.is_empty() {
+            return;
         }
-        self.reload_entries(window, cx);
+
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for path in targets {
+                let options = fs::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                };
+                if let Err(e) = fs.trash(&path, options).await {
+                    failures.push((path, e));
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    this.surface_error(format!("Couldn't trash {name}: {e}"), cx);
+                }
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn handle_insert_key(
@@ -532,19 +579,25 @@ impl FileManager {
                 match pending {
                     PendingInput::CreateFile(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
-                        std::fs::write(&path, "").log_err();
+                        if let Err(e) = std::fs::write(&path, "") {
+                            self.surface_error(format!("Couldn't create file {name}: {e}"), cx);
+                        }
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
                     }
                     PendingInput::CreateDirectory(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);
-                        std::fs::create_dir_all(&path).log_err();
+                        if let Err(e) = std::fs::create_dir_all(&path) {
+                            self.surface_error(format!("Couldn't create directory {name}: {e}"), cx);
+                        }
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
                     }
                     PendingInput::Rename { original, new_name } if !new_name.is_empty() => {
                         let new_path = original.parent().unwrap_or(Path::new("/")).join(&new_name);
-                        std::fs::rename(&original, &new_path).log_err();
+                        if let Err(e) = std::fs::rename(&original, &new_path) {
+                            self.surface_error(format!("Couldn't rename to {new_name}: {e}"), cx);
+                        }
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
                     }
@@ -832,22 +885,32 @@ impl Render for FileManager {
         let filter_active = !self.filter_query.is_empty();
         let filter_committed = filter_active && !matches!(self.pending_input, Some(PendingInput::Filter));
         let filter_query = self.filter_query.clone();
-        let status_text = if marked_count > 0 {
-            format!(
-                "{} | {}/{} | {} marked",
-                dir_display,
-                selected_index + 1,
-                entry_count,
-                marked_count,
-            )
-        } else {
-            format!(
-                "{} | {}/{}",
-                dir_display,
-                if entry_count > 0 { selected_index + 1 } else { 0 },
-                entry_count,
-            )
+        let focused_meta = self.entries.get(self.selected_index).and_then(|e| {
+            if e.is_dir {
+                match &self.preview {
+                    Preview::Directory(children) => Some(format!("{} items", children.len())),
+                    _ => None,
+                }
+            } else {
+                Some(human_size(e.size))
+            }
+        });
+        let status_text = {
+            let position = if entry_count > 0 {
+                format!("{}/{}", selected_index + 1, entry_count)
+            } else {
+                format!("0/{entry_count}")
+            };
+            let mut parts = vec![dir_display, position];
+            if let Some(meta) = focused_meta {
+                parts.push(meta);
+            }
+            if marked_count > 0 {
+                parts.push(format!("{marked_count} marked"));
+            }
+            parts.join(" | ")
         };
+        let error_message = self.error_message.clone();
 
         // Clone entries for the uniform_list closure
         let entries = self.entries.clone();
@@ -856,7 +919,7 @@ impl Render for FileManager {
         let focus = self.focus_handle.clone();
 
         let current_col = uniform_list("file-list", entries.len(), {
-            move |range, window, cx| {
+            move |range, _window, cx| {
                 let theme = cx.theme();
                 let selected_bg = theme.colors().ghost_element_selected;
 
@@ -868,6 +931,8 @@ impl Render for FileManager {
 
                         let text_color = if is_marked {
                             Color::Accent
+                        } else if entry.is_hidden {
+                            Color::Hidden
                         } else if entry.is_dir {
                             Color::Accent
                         } else {
@@ -994,6 +1059,16 @@ impl Render for FileManager {
                     ),
             )
             .child(input_bar)
+            .when_some(error_message, |this, msg| {
+                this.child(
+                    div()
+                        .px(px(8.))
+                        .py(px(1.))
+                        .border_t_1()
+                        .border_color(border_color)
+                        .child(Label::new(msg).size(LabelSize::Small).color(Color::Error)),
+                )
+            })
             .child(
                 div()
                     .px(px(8.))
@@ -1002,6 +1077,24 @@ impl Render for FileManager {
                     .border_color(border_color)
                     .child(Label::new(status_text).size(LabelSize::Small).color(Color::Muted)),
             )
+    }
+}
+
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+    if bytes < KB {
+        format!("{bytes} B")
+    } else if bytes < MB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else if bytes < GB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes < TB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else {
+        format!("{:.1} TB", bytes as f64 / TB as f64)
     }
 }
 
