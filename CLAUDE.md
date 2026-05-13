@@ -66,6 +66,7 @@ The workspace `Cargo.toml` enumerates every vendored Zed crate as a workspace me
 **Sessions + windows.** Codon is a single-OS-window multiplexer. Sessions are persisted to the global KVP (key `codon_sessions_v1`). Window-switching uses an **in-memory pane stash** (`WindowRuntimeCache` in `crates/codon-session/src/runtime.rs`) — cloned `Member` trees + active pane handles keep panes (and their workspace subscriptions) alive across switches. The persisted JSON `LayoutSnapshot` is the fallback for cross-restart restoration only. The `workspace::codon_bridge` module (in vendored Zed) exposes `capture_layout` / `apply_layout` / `replace_center_with_empty_pane` / `restore_center_root` to support this.
 
 **Vendored helpers.** Several codon features required small public surfaces added to vendored Zed crates rather than full forks. Key examples:
+
 - `vendor/zed/crates/workspace/src/codon_bridge.rs` — `LayoutSnapshot` types + capture/apply.
 - `Workspace::replace_center_with_empty_pane`, `restore_center_root`, `serialize_workspace_now` — pane-tree manipulation primitives.
 - `AgentPanel::seed_explain_with_selection` — entry point for cross-pane agent verbs.
@@ -91,6 +92,8 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 **Phase planning.** Roadmap is in `.specs/`, not `TODO.md`. `TODO.md` is a one-page pointer. To plan new work, write `TASK:phase-N/<slug>.spec.md` files refining clauses on existing `REQ:codon/<area>` specs — see `.specs/AGENTS.md` for the full vocabulary. `spec todo` is the single source of truth for what's open.
 
 **Spec-first, always.** Any new feature — even a small one — follows the same order: (1) write or extend the `REQ:codon/<area>` spec with clauses, (2) author one `TASK:phase-N/<slug>.spec.md` per clause, (3) only then start the prototype. Never skip straight from "good idea" to code. The spec is the design conversation; the TASKs make scope reviewable; the prototype implements what's already agreed. `spec lint` must stay clean across the trio.
+
+**Code quality**: Always prefer clarity over cleverness. Use descriptive names, break complex functions into smaller ones, and add comments where necessary to explain non-obvious logic. Follow Rust's idiomatic practices and leverage the type system to prevent bugs. Always use `cargo clippy` (or `vendor/zed/script/clippy` when editing Zed) to catch common mistakes and enforce code quality standards. Write tests for new features and bug fixes to ensure reliability and maintainability.
 
 ## When in doubt
 
