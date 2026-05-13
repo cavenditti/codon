@@ -5,7 +5,9 @@ use ui::{
     Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 
-use crate::file_manager::{DirEntry, FileManager, PendingInput, Preview};
+use crate::file_manager::{
+    BinaryInfo, DirEntry, FileManager, PendingInput, Preview, format_hex_dump,
+};
 
 impl FileManager {
     fn render_entry(
@@ -126,33 +128,33 @@ impl FileManager {
             .bg(bg)
             .py(px(2.))
             .child(match &self.preview {
-                Preview::Directory(entries) => div().children(
-                    entries
-                        .iter()
-                        .enumerate()
-                        .map(|(i, entry)| self.render_entry(entry, i, None, true, cx)),
-                ),
-                Preview::FileContent(content) => div().child(
-                    div().px(px(8.)).py(px(2.)).child(
-                        Label::new(content.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                ),
-                Preview::Binary => div().child(
-                    div().px(px(8.)).child(
-                        Label::new("[binary]")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                ),
-                Preview::Empty => div().child(
-                    div().px(px(8.)).child(
-                        Label::new("[empty]")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                ),
+                Preview::Directory(entries) => div()
+                    .children(
+                        entries
+                            .iter()
+                            .enumerate()
+                            .map(|(i, entry)| self.render_entry(entry, i, None, true, cx)),
+                    )
+                    .into_any_element(),
+                Preview::FileContent(content) => div()
+                    .child(
+                        div().px(px(8.)).py(px(2.)).child(
+                            Label::new(content.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .into_any_element(),
+                Preview::Binary(info) => render_binary_preview(info, cx).into_any_element(),
+                Preview::Empty => div()
+                    .child(
+                        div().px(px(8.)).child(
+                            Label::new("[empty]")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .into_any_element(),
             })
     }
 
@@ -445,6 +447,28 @@ impl Render for FileManager {
                     ),
             )
     }
+}
+
+fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
+    let header = format!("{} · {} · {}", info.name, human_size(info.size), info.mime);
+    let dump = format_hex_dump(&info.head);
+    let dump_lines: Vec<String> = dump.lines().map(|l| l.to_string()).collect();
+
+    v_flex()
+        .px(px(8.))
+        .py(px(2.))
+        .gap(px(2.))
+        .child(
+            Label::new(header)
+                .size(LabelSize::Small)
+                .color(Color::Default),
+        )
+        .child(v_flex().children(dump_lines.into_iter().map(|line| {
+            Label::new(SharedString::from(line))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .buffer_font(cx)
+        })))
 }
 
 fn human_size(bytes: u64) -> String {

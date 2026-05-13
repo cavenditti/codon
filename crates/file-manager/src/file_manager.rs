@@ -77,8 +77,19 @@ pub(crate) struct DirEntry {
 pub(crate) enum Preview {
     Directory(Vec<DirEntry>),
     FileContent(String),
-    Binary,
+    Binary(BinaryInfo),
     Empty,
+}
+
+/// Header + first-bytes snapshot used to render a non-text, non-image,
+/// non-archive file in the preview column. `head` carries at most 256
+/// bytes so the hex dump is bounded.
+#[derive(Clone)]
+pub(crate) struct BinaryInfo {
+    pub(crate) name: String,
+    pub(crate) size: u64,
+    pub(crate) mime: String,
+    pub(crate) head: Vec<u8>,
 }
 
 pub struct FileManager {
@@ -285,15 +296,20 @@ impl FileManager {
         if entry.is_dir {
             let children = read_dir_sync(&entry.path, self.show_hidden);
             self.preview = Preview::Directory(children);
-        } else {
-            match std::fs::read_to_string(&entry.path) {
-                Ok(content) => {
-                    let truncated: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
-                    self.preview = Preview::FileContent(truncated);
-                }
-                Err(_) => {
-                    self.preview = Preview::Binary;
-                }
+            return;
+        }
+
+        let path = entry.path.clone();
+        let name = entry.name.clone();
+        let size = entry.size;
+
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let truncated: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
+                self.preview = Preview::FileContent(truncated);
+            }
+            Err(_) => {
+                self.preview = Preview::Binary(read_binary_info(&path, name, size));
             }
         }
     }
@@ -1354,6 +1370,88 @@ pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
     entries
 }
 
+/// Maximum number of bytes shown in the hex/ASCII dump for the binary
+/// preview fallback. Sized to fit 16 lines of 16 bytes each.
+pub(crate) const BINARY_HEAD_BYTES: usize = 256;
+
+/// Build the metadata + first-bytes snapshot for the binary preview. The
+/// read failure path (permissions, vanishing entry) returns an empty
+/// `head` — the header line still renders so the user sees the name,
+/// size, and mime even when the bytes themselves are unreadable.
+pub(crate) fn read_binary_info(path: &Path, name: String, size: u64) -> BinaryInfo {
+    let mime = guess_mime(path);
+    let head = read_head_bytes(path, BINARY_HEAD_BYTES);
+    BinaryInfo {
+        name,
+        size,
+        mime,
+        head,
+    }
+}
+
+fn guess_mime(path: &Path) -> String {
+    mime_guess::from_path(path)
+        .first()
+        .map(|m| m.essence_str().to_string())
+        .unwrap_or_else(|| "application/octet-stream".to_string())
+}
+
+fn read_head_bytes(path: &Path, max: usize) -> Vec<u8> {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut buf = vec![0_u8; max];
+    match file.read(&mut buf) {
+        Ok(read) => {
+            buf.truncate(read);
+            buf
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Format `bytes` as `xxd`-style lines: 8-byte-aligned offset, hex pairs
+/// in two groups of eight separated by a wide gap, then the ASCII
+/// rendering (printable bytes verbatim, non-printable replaced with
+/// `.`). Each line covers up to 16 bytes; the final line is padded so
+/// the ASCII column lines up.
+pub(crate) fn format_hex_dump(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (chunk_index, chunk) in bytes.chunks(16).enumerate() {
+        let offset = chunk_index * 16;
+        out.push_str(&format!("{offset:08x}  "));
+
+        for i in 0..16 {
+            if let Some(byte) = chunk.get(i) {
+                out.push_str(&format!("{byte:02x} "));
+            } else {
+                out.push_str("   ");
+            }
+            if i == 7 {
+                out.push(' ');
+            }
+        }
+
+        out.push(' ');
+        out.push('|');
+        for byte in chunk {
+            let c = *byte;
+            if (0x20..=0x7e).contains(&c) {
+                out.push(c as char);
+            } else {
+                out.push('.');
+            }
+        }
+        for _ in chunk.len()..16 {
+            out.push(' ');
+        }
+        out.push('|');
+        out.push('\n');
+    }
+    out
+}
+
 pub fn init(cx: &mut App) {
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
@@ -1636,5 +1734,76 @@ mod tests {
         fs::write(dir.path().join("README"), b"").expect("touch");
         let p = next_available_path(dir.path(), std::ffi::OsStr::new("README"), &[]);
         assert_eq!(p.file_name().unwrap().to_string_lossy(), "README (2)");
+    }
+
+    #[test]
+    fn format_hex_dump_one_full_line() {
+        let bytes = [
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        let out = format_hex_dump(&bytes);
+        assert_eq!(
+            out,
+            "00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|\n"
+        );
+    }
+
+    #[test]
+    fn format_hex_dump_partial_last_line_pads_ascii_column() {
+        let bytes = [0x41, 0x42, 0x43];
+        let out = format_hex_dump(&bytes);
+        assert_eq!(
+            out,
+            "00000000  41 42 43                                          |ABC             |\n"
+        );
+    }
+
+    #[test]
+    fn format_hex_dump_empty_input_is_empty_string() {
+        assert_eq!(format_hex_dump(&[]), "");
+    }
+
+    #[test]
+    fn format_hex_dump_replaces_non_printable_with_dot() {
+        let bytes = [0x00, 0x09, 0x0a, 0x20, 0x7e, 0x7f, 0xff];
+        let out = format_hex_dump(&bytes);
+        assert!(out.contains("|... ~..         |"), "got: {out}");
+    }
+
+    #[test]
+    fn format_hex_dump_offset_increments_by_16() {
+        let bytes = vec![0u8; 17];
+        let out = format_hex_dump(&bytes);
+        assert!(out.starts_with("00000000  "));
+        assert!(out.contains("\n00000010  "));
+    }
+
+    #[test]
+    fn read_binary_info_truncates_at_256_bytes() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("blob.bin");
+        let payload: Vec<u8> = (0..512).map(|i| (i % 256) as u8).collect();
+        fs::write(&path, &payload).expect("write");
+        let info = read_binary_info(&path, "blob.bin".to_string(), payload.len() as u64);
+        assert_eq!(info.head.len(), BINARY_HEAD_BYTES);
+        assert_eq!(info.name, "blob.bin");
+        assert_eq!(info.size, 512);
+    }
+
+    #[test]
+    fn read_binary_info_missing_path_returns_empty_head() {
+        let info = read_binary_info(Path::new("/nonexistent/blob.bin"), "blob.bin".into(), 0);
+        assert!(info.head.is_empty());
+        assert_eq!(info.mime, "application/octet-stream");
+    }
+
+    #[test]
+    fn read_binary_info_uses_extension_mime_when_known() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("a.png");
+        fs::write(&path, b"\x89PNG\r\n\x1a\n").expect("write");
+        let info = read_binary_info(&path, "a.png".into(), 8);
+        assert_eq!(info.mime, "image/png");
     }
 }

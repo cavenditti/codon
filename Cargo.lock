@@ -6692,6 +6692,7 @@ dependencies = [
  "gpui",
  "log",
  "menu",
+ "mime_guess",
  "paths",
  "project",
  "settings",
