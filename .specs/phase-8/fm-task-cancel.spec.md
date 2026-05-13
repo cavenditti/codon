@@ -7,7 +7,7 @@ summary: >
   Live-progress notifications carry an `x` action that cooperatively
   cancels the task between per-entry chunks.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-tasks#c-task-cancel
 ---

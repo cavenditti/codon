@@ -8,7 +8,7 @@ summary: >
   live-progress notification, and resolve to success/failure on
   completion.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-tasks#c-task-as-notifications
 ---

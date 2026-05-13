@@ -7,7 +7,7 @@ summary: >
   `w` opens a modal listing the last 50 fs tasks (active + recent)
   with re-emit-as-notification per row.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-tasks#c-task-history
 ---
