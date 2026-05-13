@@ -2,22 +2,30 @@
 id: TOPIC:topics/phase-4
 type: topic
 status: draft
-version: 0.1.0
+version: 0.2.0
 summary: >
-  Define a Buffer trait that decouples codon panes from Zed's concrete
-  Buffer type and rebuild the git pane on top of it.
+  Git integration (panel + diff pane) and the unified TOML config.
+  The buffer-trait sub-goal is superseded — Helix-as-engine
+  integration was removed from the roadmap (codon uses Zed's
+  built-in Helix-style modal editing instead).
 owners: [carlo]
 ---
 
-# Phase 4 — Buffer trait & git integration
+# Phase 4 — Git integration & unified config
 
-The eventual goal is to plug Helix's `helix_view::Document` into codon
-without forking every consumer. To do that, codon needs its own Buffer
-trait that captures the dependencies Zed's editor / search / agent
-crates take.
+The original phase-4 framing also planned a codon Buffer trait to
+decouple consumers from `language::Buffer`, enabling a future
+Helix-as-engine integration. That sub-goal is **superseded as of
+2026-05-13** — codon adopted Zed's built-in Helix-style modal
+editing (vim mode with `helix_default` force-enabled) wholesale
+rather than vendoring helix-editor. See
+`REQ:codon/buffer-trait` for the historical record.
 
-Refining requirements (deferred drafts):
+Refining requirements (still in flight):
 
-- [REQ:codon/buffer-trait](spec:REQ:codon/buffer-trait)
 - [REQ:codon/git-pane](spec:REQ:codon/git-pane)
 - [REQ:codon/unified-config](spec:REQ:codon/unified-config)
+
+Superseded sub-goal (kept for traceability):
+
+- [REQ:codon/buffer-trait](spec:REQ:codon/buffer-trait) — superseded

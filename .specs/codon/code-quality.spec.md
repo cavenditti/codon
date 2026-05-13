@@ -87,7 +87,9 @@ The codon workspace SHOULD maintain:
 - {#c-speculative-abstractions} a trait with a single implementer and
   no current consumers MUST be tracked by an open task naming the
   expected second consumer and a defer/wontdo date if it does not
-  materialize. Applies today to `codon-buffer`.
+  materialize. The original target, `codon-buffer`, was marked
+  wontdo on 2026-05-13 when Helix-as-engine integration was removed
+  from the roadmap; the crate is slated for removal.
 - {#c-test-coverage-floor} crates whose primary surface is a UI pane
   (file-manager, codon-pickers) SHOULD have at least one unit test
   per non-trivial pure function (sort/filter/state-transition logic).

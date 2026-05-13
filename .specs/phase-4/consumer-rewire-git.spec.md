@@ -7,12 +7,25 @@ summary: >
   Rewire git_ui's Buffer callsites to take &dyn codon_buffer::Buffer
   at trait boundaries. Prerequisite for the git pane work below.
 owners: [carlo]
-progress: deferred
+progress: wontdo
 refines:
   - REQ:codon/buffer-trait#c-consumer-rewire
 ---
 
-## Deferred (2026-05-12)
+## Wontdo (2026-05-13)
+
+Helix-as-engine integration was removed from the roadmap — codon
+adopted Zed's built-in Helix-style modal editing (vim mode with
+`helix_default` force-enabled) rather than vendoring helix-editor.
+The buffer-trait abstraction exists only to support a second
+buffer impl (`helix_view::Document`); with that goal gone, there
+is no future caller to justify rewiring git_ui through
+`&dyn codon_buffer::Buffer`. `REQ:codon/buffer-trait` is now
+superseded; this task closes alongside it.
+
+The historical findings below are retained for the spec graph.
+
+## Original deferral note (2026-05-12)
 
 A survey of `git_ui` after the buffer-trait skeleton landed turned up
 no `&language::Buffer` direct parameters to rewire. Buffer usage is:

@@ -1,18 +1,17 @@
 ---
 id: TASK:phase-5/codon-buffer-second-consumer
 type: task
-status: accepted
-version: 0.1.0
+status: superseded
+version: 0.2.0
 summary: >
-  Track the `codon-buffer` trait until it earns a second consumer
-  (Helix's `Document`) — until then it is one-impl boilerplate and
-  imposes a maintenance tax on every change to `language::Buffer`'s
-  surface. **Deferred 2026-05-12** — verified zero current consumers
-  in codon crates / apps; consumer-migration path is not viable
-  today (no codon site reaches for `&language::Buffer` directly).
-  Re-evaluate when Helix integration enters scope (Phase 6+).
+  Wontdo 2026-05-13 — Helix-as-engine integration was removed from
+  the roadmap (codon uses Zed's built-in Helix-style modal editing
+  instead). No second consumer is planned, so the trait has no path
+  to earning its abstraction. REQ:codon/buffer-trait is now
+  superseded; the codon-buffer crate itself is slated for removal
+  under a follow-up cleanup.
 owners: [carlo]
-progress: deferred
+progress: wontdo
 refines:
   - REQ:codon/buffer-trait#c-helix-impl
   - REQ:codon/buffer-trait#c-consumer-rewire
