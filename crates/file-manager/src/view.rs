@@ -161,11 +161,34 @@ impl FileManager {
             return div().into_any_element();
         };
 
-        let (label, value) = match pending {
-            PendingInput::CreateFile(s) => ("new file: ", s.as_str()),
-            PendingInput::CreateDirectory(s) => ("new dir: ", s.as_str()),
-            PendingInput::Rename { new_name, .. } => ("rename: ", new_name.as_str()),
-            PendingInput::Filter => ("filter: ", self.filter_query.as_str()),
+        // Owned so the `ConfirmOverwrite` arm can produce a fresh string.
+        let (label, value): (&str, std::borrow::Cow<'_, str>) = match pending {
+            PendingInput::CreateFile(s) => ("new file: ", s.as_str().into()),
+            PendingInput::CreateDirectory(s) => ("new dir: ", s.as_str().into()),
+            PendingInput::Rename { new_name, .. } => ("rename: ", new_name.as_str().into()),
+            PendingInput::Filter => ("filter: ", self.filter_query.as_str().into()),
+            PendingInput::ConfirmOverwrite { plan, .. } => {
+                let conflicts = plan.iter().filter(|e| e.destination_exists).count();
+                let total = plan.len();
+                (
+                    "overwrite? ",
+                    format!("{conflicts}/{total} target(s) exist — y/N").into(),
+                )
+            }
+            PendingInput::ConfirmDeleteMarked { targets } => {
+                let count = targets.len();
+                (
+                    "delete? ",
+                    format!("{count} entries to trash — y/N").into(),
+                )
+            }
+            PendingInput::BulkRename { pattern, targets } => {
+                let count = targets.len();
+                (
+                    "bulk rename: ",
+                    format!("{pattern}   ({count} entries, use {{}} as counter)").into(),
+                )
+            }
         };
 
         let theme = cx.theme();

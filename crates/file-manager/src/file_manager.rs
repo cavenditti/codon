@@ -1,4 +1,5 @@
 use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
+use fs::{copy_recursive, CopyOptions, RenameOptions};
 use git::status::FileStatus;
 use gpui::{
     actions, prelude::*, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
@@ -32,8 +33,34 @@ actions!(
         ToggleMark,
         CopyMarked,
         MoveMarked,
+        Paste,
+        PasteOverwrite,
+        BulkRename,
     ]
 );
+
+/// In-memory clipboard for codon's file manager. Distinct from the OS
+/// clipboard so the user can `y` paths here and still paste text into a
+/// terminal pane from the system clipboard.
+#[derive(Clone)]
+pub(crate) enum FmClipboard {
+    Empty,
+    Yank(Vec<PathBuf>),
+    Cut(Vec<PathBuf>),
+}
+
+impl FmClipboard {
+    fn is_empty(&self) -> bool {
+        matches!(self, FmClipboard::Empty)
+    }
+
+    fn paths(&self) -> &[PathBuf] {
+        match self {
+            FmClipboard::Empty => &[],
+            FmClipboard::Yank(paths) | FmClipboard::Cut(paths) => paths,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct DirEntry {
@@ -73,6 +100,7 @@ pub struct FileManager {
     pub(crate) entries_unfiltered: Option<Vec<DirEntry>>,
     pub(crate) error_message: Option<String>,
     pub(crate) error_gen: u64,
+    pub(crate) clipboard: FmClipboard,
 }
 
 #[derive(Clone)]
@@ -81,6 +109,28 @@ pub(crate) enum PendingInput {
     CreateDirectory(String),
     Rename { original: PathBuf, new_name: String },
     Filter,
+    /// `P` overwrite prompt: show how many paths would clobber existing
+    /// entries, then wait for y/n. The full plan is kept so the single
+    /// confirmation applies to the whole batch.
+    ConfirmOverwrite { plan: Vec<PasteEntry>, is_cut: bool },
+    /// `D` with marks: confirm before trashing the whole marked set.
+    /// `targets` carries the snapshot of paths so the prompt is stable
+    /// even if the listing changes mid-input.
+    ConfirmDeleteMarked { targets: Vec<PathBuf> },
+    /// `R` with marks: input-bar pattern using `{}` as a counter
+    /// placeholder. `targets` is the snapshot of marked paths, in
+    /// display order, captured at the moment `R` was pressed.
+    BulkRename { pattern: String, targets: Vec<PathBuf> },
+}
+
+/// One unit of work for a paste operation: where the bytes come from and
+/// where they should land. `destination_exists` lets the paste handler
+/// distinguish "fresh write" from "user already confirmed overwrite".
+#[derive(Clone)]
+pub(crate) struct PasteEntry {
+    pub(crate) source: PathBuf,
+    pub(crate) destination: PathBuf,
+    pub(crate) destination_exists: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +177,7 @@ impl FileManager {
             entries_unfiltered: None,
             error_message: None,
             error_gen: 0,
+            clipboard: FmClipboard::Empty,
         };
         this.reload_entries_sync();
         this
@@ -395,10 +446,68 @@ impl FileManager {
         cx.notify();
     }
 
-    fn yank_path(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.entries.get(self.selected_index) {
-            let path_str = entry.path.display().to_string();
-            cx.write_to_clipboard(ClipboardItem::new_string(path_str));
+    /// `y` in Normal mode: store the current entry — or the whole marked
+    /// set if any — in the file-manager-local "yank" clipboard. `p` then
+    /// copies; `P` copies with overwrite confirmation. The OS clipboard is
+    /// not touched so terminal/agent panes can paste real text instead of
+    /// a path string.
+    fn yank_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.current_targets();
+        if paths.is_empty() {
+            return;
+        }
+        let count = paths.len();
+        self.clipboard = FmClipboard::Yank(paths);
+        self.marked.clear();
+        self.surface_error(format!("Yanked {count} entr{}", plural_y(count)), cx);
+        cx.notify();
+    }
+
+    /// `d` in Normal mode: mark the current entry (or marked set) for cut.
+    /// Actual filesystem rename happens on `p`/`P`. Deletion is bound to
+    /// `D` (shift-d) instead — see `delete_entry`.
+    fn cut_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.current_targets();
+        if paths.is_empty() {
+            return;
+        }
+        let count = paths.len();
+        self.clipboard = FmClipboard::Cut(paths);
+        self.marked.clear();
+        self.surface_error(format!("Cut {count} entr{}", plural_y(count)), cx);
+        cx.notify();
+    }
+
+    /// `Y` (shift-y): write the current path(s) to the OS clipboard as a
+    /// newline-joined string. Useful for pasting into a terminal pane.
+    fn copy_path_to_os_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.current_targets();
+        if paths.is_empty() {
+            return;
+        }
+        let joined = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.write_to_clipboard(ClipboardItem::new_string(joined));
+    }
+
+    /// Snapshot of which paths the next clipboard / file operation should
+    /// apply to: the marked set if non-empty, otherwise just the focused
+    /// entry. Returns owned PathBufs so callers can move the list into an
+    /// async task without borrowing `self`.
+    fn current_targets(&self) -> Vec<PathBuf> {
+        if self.marked.is_empty() {
+            self.entries
+                .get(self.selected_index)
+                .map(|e| vec![e.path.clone()])
+                .unwrap_or_default()
+        } else {
+            self.marked
+                .iter()
+                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+                .collect()
         }
     }
 
@@ -495,22 +604,32 @@ impl FileManager {
     }
 
     fn delete_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let targets: Vec<PathBuf> = if self.marked.is_empty() {
-            self.entries
-                .get(self.selected_index)
-                .map(|e| vec![e.path.clone()])
-                .unwrap_or_default()
-        } else {
-            self.marked
-                .iter()
-                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-                .collect()
-        };
+        let targets = self.current_targets();
 
         if targets.is_empty() {
             return;
         }
 
+        // With marks, the batch is destructive enough to warrant a
+        // confirmation prompt routed through the same input-bar pattern
+        // as `P`'s overwrite confirm. Single-entry delete keeps its
+        // immediate behavior to preserve the fm-copy-paste UX.
+        if !self.marked.is_empty() && targets.len() > 1 {
+            self.mode = PaneMode::Insert;
+            self.pending_input = Some(PendingInput::ConfirmDeleteMarked { targets });
+            cx.notify();
+            return;
+        }
+
+        self.execute_delete(targets, window, cx);
+    }
+
+    fn execute_delete(
+        &mut self,
+        targets: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let fs = self.fs.clone();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
@@ -530,6 +649,210 @@ impl FileManager {
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| path.display().to_string());
                     this.surface_error(format!("Couldn't trash {name}: {e}"), cx);
+                }
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `R` (shift-r): bulk-rename the marked set using a pattern that
+    /// includes `{}` as a counter placeholder, e.g. `screenshot-{}.png`.
+    /// With no marks this is a no-op (single `r` already covers single
+    /// rename). The initial pattern seeds from the first marked entry's
+    /// extension so the user keeps the original file type by default.
+    fn start_bulk_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.marked.is_empty() {
+            return;
+        }
+        let targets: Vec<PathBuf> = self
+            .marked
+            .iter()
+            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let pattern = default_bulk_rename_pattern(&targets[0]);
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::BulkRename { pattern, targets });
+        cx.notify();
+    }
+
+    fn execute_bulk_rename(
+        &mut self,
+        pattern: String,
+        targets: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if pattern.is_empty() || targets.is_empty() {
+            return;
+        }
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for (index, source) in targets.iter().enumerate() {
+                let parent = source.parent().unwrap_or(Path::new("/")).to_path_buf();
+                let new_name = apply_rename_pattern(&pattern, index + 1);
+                let destination = parent.join(&new_name);
+                if destination == *source {
+                    continue;
+                }
+                if destination.exists() {
+                    failures.push((
+                        source.clone(),
+                        anyhow::anyhow!("target {new_name} already exists"),
+                    ));
+                    continue;
+                }
+                let result = fs
+                    .rename(
+                        source,
+                        &destination,
+                        RenameOptions {
+                            overwrite: false,
+                            ignore_if_exists: false,
+                            create_parents: false,
+                        },
+                    )
+                    .await;
+                if let Err(e) = result {
+                    failures.push((source.clone(), e));
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    this.surface_error(format!("Couldn't rename {name}: {e}"), cx);
+                }
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `p` (Normal mode): for each path in the FM clipboard, place it into
+    /// the current directory, generating a numbered suffix when the
+    /// destination already exists. Yank entries are copied; cut entries
+    /// are renamed. Cut clears the clipboard once a paste succeeds; yank
+    /// is preserved so users can paste the same set repeatedly.
+    fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_paste(window, cx, false);
+    }
+
+    /// `P` (Normal mode): same as `paste_clipboard`, but if any
+    /// destination already exists, prompt the user once before
+    /// overwriting the whole batch.
+    fn paste_clipboard_overwrite(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_paste(window, cx, true);
+    }
+
+    fn start_paste(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        prompt_on_conflict: bool,
+    ) {
+        if self.clipboard.is_empty() {
+            self.surface_error("Clipboard is empty", cx);
+            return;
+        }
+
+        let is_cut = matches!(self.clipboard, FmClipboard::Cut(_));
+        let sources: Vec<PathBuf> = self.clipboard.paths().to_vec();
+        let destination_dir = self.current_dir.clone();
+        let mut used: Vec<PathBuf> = Vec::with_capacity(sources.len());
+        let mut plan: Vec<PasteEntry> = Vec::with_capacity(sources.len());
+
+        for source in sources {
+            let Some(file_name) = source.file_name() else {
+                continue;
+            };
+            let initial = destination_dir.join(file_name);
+            let initial_exists = initial.exists();
+
+            let destination = if initial_exists && !prompt_on_conflict {
+                next_available_path(&destination_dir, file_name, &used)
+            } else {
+                initial
+            };
+            used.push(destination.clone());
+            plan.push(PasteEntry {
+                source,
+                destination,
+                destination_exists: initial_exists,
+            });
+        }
+
+        if plan.is_empty() {
+            return;
+        }
+
+        if prompt_on_conflict && plan.iter().any(|e| e.destination_exists) {
+            self.mode = PaneMode::Insert;
+            self.pending_input = Some(PendingInput::ConfirmOverwrite { plan, is_cut });
+            cx.notify();
+            return;
+        }
+
+        self.execute_paste(plan, is_cut, /* allow_overwrite */ false, window, cx);
+    }
+
+    pub(crate) fn execute_paste(
+        &mut self,
+        plan: Vec<PasteEntry>,
+        is_cut: bool,
+        allow_overwrite: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for entry in &plan {
+                let result = if is_cut {
+                    fs.rename(
+                        &entry.source,
+                        &entry.destination,
+                        RenameOptions {
+                            overwrite: allow_overwrite,
+                            ignore_if_exists: false,
+                            create_parents: false,
+                        },
+                    )
+                    .await
+                } else {
+                    copy_path(
+                        fs.as_ref(),
+                        &entry.source,
+                        &entry.destination,
+                        allow_overwrite,
+                    )
+                    .await
+                };
+                if let Err(e) = result {
+                    failures.push((entry.source.clone(), e));
+                }
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    let verb = if is_cut { "move" } else { "copy" };
+                    this.surface_error(format!("Couldn't {verb} {name}: {e}"), cx);
+                }
+                if is_cut && failures.is_empty() {
+                    this.clipboard = FmClipboard::Empty;
                 }
                 this.reload_entries(window, cx);
             })
@@ -563,12 +886,18 @@ impl FileManager {
                 match pending {
                     PendingInput::CreateFile(s)
                     | PendingInput::CreateDirectory(s)
-                    | PendingInput::Rename { new_name: s, .. } => {
+                    | PendingInput::Rename { new_name: s, .. }
+                    | PendingInput::BulkRename { pattern: s, .. } => {
                         s.pop();
                     }
                     PendingInput::Filter => {
                         self.filter_query.pop();
                         self.apply_filter();
+                    }
+                    PendingInput::ConfirmOverwrite { .. }
+                    | PendingInput::ConfirmDeleteMarked { .. } => {
+                        // Nothing to edit on the prompt; expected response is
+                        // y/n or Esc.
                     }
                 }
                 cx.notify();
@@ -647,6 +976,19 @@ impl FileManager {
                         self.mode = PaneMode::Normal;
                         cx.notify();
                     }
+                    PendingInput::ConfirmOverwrite { .. }
+                    | PendingInput::ConfirmDeleteMarked { .. } => {
+                        // Bare Enter on a destructive prompt is treated as
+                        // "no" — safer default than acting without an
+                        // explicit `y`.
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                    }
+                    PendingInput::BulkRename { pattern, targets } if !pattern.is_empty() => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.execute_bulk_rename(pattern, targets, window, cx);
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -655,16 +997,47 @@ impl FileManager {
             }
             _ => {
                 if let Some(ch) = event.keystroke.key_char.as_deref().or(Some(key)) {
-                    if ch.len() == 1 {
+                    if matches!(
+                        pending,
+                        PendingInput::ConfirmOverwrite { .. }
+                            | PendingInput::ConfirmDeleteMarked { .. }
+                    ) {
+                        match ch {
+                            "y" | "Y" => match self.pending_input.take() {
+                                Some(PendingInput::ConfirmOverwrite { plan, is_cut }) => {
+                                    self.mode = PaneMode::Normal;
+                                    self.execute_paste(plan, is_cut, true, window, cx);
+                                }
+                                Some(PendingInput::ConfirmDeleteMarked { targets }) => {
+                                    self.mode = PaneMode::Normal;
+                                    self.execute_delete(targets, window, cx);
+                                }
+                                other => {
+                                    self.pending_input = other;
+                                }
+                            },
+                            "n" | "N" => {
+                                self.pending_input = None;
+                                self.mode = PaneMode::Normal;
+                                cx.notify();
+                            }
+                            _ => {}
+                        }
+                    } else if ch.len() == 1 {
                         match pending {
                             PendingInput::CreateFile(s)
                             | PendingInput::CreateDirectory(s)
-                            | PendingInput::Rename { new_name: s, .. } => {
+                            | PendingInput::Rename { new_name: s, .. }
+                            | PendingInput::BulkRename { pattern: s, .. } => {
                                 s.push_str(ch);
                             }
                             PendingInput::Filter => {
                                 self.filter_query.push_str(ch);
                                 self.apply_filter();
+                            }
+                            PendingInput::ConfirmOverwrite { .. }
+                            | PendingInput::ConfirmDeleteMarked { .. } => {
+                                // Handled in the branch above.
                             }
                         }
                         cx.notify();
@@ -708,11 +1081,18 @@ impl FileManager {
             // Selection
             "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
             // File operations
-            "y" if !shift => { self.yank_path(window, cx); true }
+            "y" if !shift => { self.yank_to_clipboard(window, cx); true }
+            "y" if shift => { self.copy_path_to_os_clipboard(window, cx); true }
             "a" if !shift => { self.create_file(window, cx); true }
             "a" if shift => { self.create_directory(window, cx); true }
-            "d" if !shift && !ctrl => { self.delete_entry(window, cx); true }
+            // Single-tap `d` marks for cut (paired with `p`/`P`). `D`
+            // performs the destructive delete that used to be on `d`.
+            "d" if !shift && !ctrl => { self.cut_to_clipboard(window, cx); true }
+            "d" if shift && !ctrl => { self.delete_entry(window, cx); true }
+            "p" if !shift => { self.paste_clipboard(window, cx); true }
+            "p" if shift => { self.paste_clipboard_overwrite(window, cx); true }
             "r" if !shift => { self.rename_entry(window, cx); true }
+            "r" if shift => { self.start_bulk_rename(window, cx); true }
             // Toggles
             "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
             // Fuzzy filter
@@ -818,6 +1198,125 @@ fn is_subsequence(needle: &[char], haystack: &str) -> bool {
     false
 }
 
+/// Find a destination filename that doesn't collide. If `foo.txt` exists,
+/// try `foo (2).txt`, `foo (3).txt`, etc. `used` are destinations already
+/// claimed by an in-flight paste batch so a single `p` of two files named
+/// `foo.txt` doesn't try to write both to the same target.
+fn next_available_path(
+    directory: &Path,
+    file_name: &std::ffi::OsStr,
+    used: &[PathBuf],
+) -> PathBuf {
+    let name_str = file_name.to_string_lossy();
+    let (stem, extension) = split_stem_extension(name_str.as_ref());
+    let mut counter: usize = 2;
+    loop {
+        let candidate_name = if extension.is_empty() {
+            format!("{stem} ({counter})")
+        } else {
+            format!("{stem} ({counter}).{extension}")
+        };
+        let candidate = directory.join(&candidate_name);
+        if !candidate.exists() && !used.iter().any(|p| p == &candidate) {
+            return candidate;
+        }
+        counter = counter.saturating_add(1);
+        if counter > 9999 {
+            // Extreme fallback: give up and return the latest candidate.
+            // Callers will surface the resulting fs error.
+            return candidate;
+        }
+    }
+}
+
+/// Split a filename into (stem, extension). Treats leading-dot files as
+/// extension-less so the numbered suffix lands at the end of
+/// `.gitignore` rather than mangling the hidden marker.
+fn split_stem_extension(name: &str) -> (&str, &str) {
+    if let Some(rest) = name.strip_prefix('.') {
+        if let Some(idx) = rest.rfind('.') {
+            // `.foo.bar` → stem = ".foo", ext = "bar"
+            let stem_end = idx + 1;
+            return (&name[..stem_end], &name[stem_end + 1..]);
+        }
+        return (name, "");
+    }
+    match name.rfind('.') {
+        None => (name, ""),
+        Some(idx) => (&name[..idx], &name[idx + 1..]),
+    }
+}
+
+async fn copy_path(
+    fs: &dyn fs::Fs,
+    source: &Path,
+    destination: &Path,
+    allow_overwrite: bool,
+) -> anyhow::Result<()> {
+    let options = CopyOptions {
+        overwrite: allow_overwrite,
+        ignore_if_exists: false,
+    };
+    if fs.is_dir(source).await {
+        // Mirror the source directory at `destination` first so the
+        // recursive walk has somewhere to write children into.
+        if allow_overwrite {
+            fs.remove_dir(
+                destination,
+                fs::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await
+            .log_err();
+        }
+        fs.create_dir(destination).await?;
+        copy_recursive(fs, source, destination, options).await
+    } else {
+        fs.copy_file(source, destination, options).await
+    }
+}
+
+fn plural_y(count: usize) -> &'static str {
+    if count == 1 { "y" } else { "ies" }
+}
+
+/// Substitute every `{}` in `pattern` with `index`. Multiple
+/// placeholders all receive the same counter value for the row; if no
+/// `{}` is present, the index is appended to the stem so the result is
+/// still unique per row. The stem-append branch tries to preserve the
+/// extension (e.g. `clean.png` with no `{}` and index 3 becomes
+/// `clean3.png`).
+fn apply_rename_pattern(pattern: &str, index: usize) -> String {
+    let counter = index.to_string();
+    if pattern.contains("{}") {
+        return pattern.replace("{}", &counter);
+    }
+    let (stem, extension) = split_stem_extension(pattern);
+    if extension.is_empty() {
+        format!("{stem}{counter}")
+    } else {
+        format!("{stem}{counter}.{extension}")
+    }
+}
+
+/// Seed the input bar with a sensible default pattern based on the
+/// first marked entry. Keeps the original extension so the user only
+/// has to type the stem before submitting.
+fn default_bulk_rename_pattern(first: &Path) -> String {
+    let name = first
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let (_, extension) = split_stem_extension(&name);
+    if extension.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{}}.{extension}")
+    }
+}
+
 
 pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
@@ -869,6 +1368,8 @@ pub fn init(cx: &mut App) {
     registry.register::<RenameEntry>(&[ObjectKind::File, ObjectKind::Dir]);
     registry.register::<YankPath>(&[ObjectKind::File, ObjectKind::Dir]);
     registry.register::<ToggleMark>(&[ObjectKind::File, ObjectKind::Dir]);
+    registry.register::<Paste>(&[]);
+    registry.register::<PasteOverwrite>(&[]);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
@@ -1030,5 +1531,110 @@ mod tests {
     fn is_subsequence_no_match() {
         let needle: Vec<char> = "xyz".chars().collect();
         assert!(!is_subsequence(&needle, "foobar"));
+    }
+
+    #[test]
+    fn split_stem_extension_simple_file() {
+        assert_eq!(split_stem_extension("foo.txt"), ("foo", "txt"));
+    }
+
+    #[test]
+    fn split_stem_extension_no_extension() {
+        assert_eq!(split_stem_extension("README"), ("README", ""));
+    }
+
+    #[test]
+    fn split_stem_extension_multiple_dots() {
+        // Only the rightmost dot is the extension boundary.
+        assert_eq!(split_stem_extension("foo.tar.gz"), ("foo.tar", "gz"));
+    }
+
+    #[test]
+    fn split_stem_extension_dotfile_no_extension() {
+        // `.gitignore` is the whole stem; suffix lands after the name.
+        assert_eq!(split_stem_extension(".gitignore"), (".gitignore", ""));
+    }
+
+    #[test]
+    fn split_stem_extension_dotfile_with_extension() {
+        // `.foo.bar` → stem keeps the leading dot.
+        assert_eq!(split_stem_extension(".foo.bar"), (".foo", "bar"));
+    }
+
+    #[test]
+    fn next_available_path_uses_collision_free_initial_when_unused() {
+        let dir = TempDir::new().expect("create tempdir");
+        let p = next_available_path(dir.path(), std::ffi::OsStr::new("brand_new.txt"), &[]);
+        // The function only generates numbered suffixes — it always picks
+        // a "(N)" variant. The initial collision-free case is handled by
+        // the caller (start_paste) before invoking this helper.
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "brand_new (2).txt");
+    }
+
+    #[test]
+    fn next_available_path_finds_first_free_slot() {
+        let dir = TempDir::new().expect("create tempdir");
+        fs::write(dir.path().join("foo.txt"), b"").expect("touch");
+        fs::write(dir.path().join("foo (2).txt"), b"").expect("touch");
+        let p = next_available_path(dir.path(), std::ffi::OsStr::new("foo.txt"), &[]);
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "foo (3).txt");
+    }
+
+    #[test]
+    fn next_available_path_respects_used_paths() {
+        let dir = TempDir::new().expect("create tempdir");
+        let already = dir.path().join("foo (2).txt");
+        let p =
+            next_available_path(dir.path(), std::ffi::OsStr::new("foo.txt"), &[already.clone()]);
+        // (2) is reserved by the in-flight batch even though it doesn't
+        // exist on disk yet.
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "foo (3).txt");
+    }
+
+    #[test]
+    fn apply_rename_pattern_substitutes_single_placeholder() {
+        assert_eq!(
+            apply_rename_pattern("screenshot-{}.png", 1),
+            "screenshot-1.png"
+        );
+        assert_eq!(
+            apply_rename_pattern("screenshot-{}.png", 42),
+            "screenshot-42.png"
+        );
+    }
+
+    #[test]
+    fn apply_rename_pattern_substitutes_every_placeholder() {
+        // Both `{}` get the same counter — keeps the rule trivially
+        // predictable.
+        assert_eq!(apply_rename_pattern("{}-{}.txt", 7), "7-7.txt");
+    }
+
+    #[test]
+    fn apply_rename_pattern_appends_when_no_placeholder() {
+        // Without `{}` the index appends before the extension so the
+        // rename is still unique per row.
+        assert_eq!(apply_rename_pattern("clean.png", 3), "clean3.png");
+        assert_eq!(apply_rename_pattern("README", 5), "README5");
+    }
+
+    #[test]
+    fn default_bulk_rename_pattern_preserves_extension() {
+        let p = Path::new("/tmp/foo.png");
+        assert_eq!(default_bulk_rename_pattern(p), "{}.png");
+    }
+
+    #[test]
+    fn default_bulk_rename_pattern_extensionless() {
+        let p = Path::new("/tmp/README");
+        assert_eq!(default_bulk_rename_pattern(p), "{}");
+    }
+
+    #[test]
+    fn next_available_path_handles_extensionless_name() {
+        let dir = TempDir::new().expect("create tempdir");
+        fs::write(dir.path().join("README"), b"").expect("touch");
+        let p = next_available_path(dir.path(), std::ffi::OsStr::new("README"), &[]);
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "README (2)");
     }
 }
