@@ -7,7 +7,7 @@ summary: >
   Render image files in the preview column via Zed's image_viewer
   primitives. Fall back to a metadata placeholder on decode failure.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-preview-richer#c-image-preview
 ---

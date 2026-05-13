@@ -7,7 +7,7 @@ summary: >
   Replace `[binary]` with a useful preview — size, mime guess, first
   256 bytes as hex + ASCII.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-preview-richer#c-binary-fallback-info
 ---

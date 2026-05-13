@@ -7,7 +7,7 @@ summary: >
   List archive contents in the preview column (top-level entries
   only, no extraction).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-preview-richer#c-archive-preview
 ---
