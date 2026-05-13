@@ -8,7 +8,7 @@ summary: >
   Extension / Random / Natural, selectable via `,n` `,s` `,m` `,b`
   `,e` `,r` `,N` chords.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-sort-display#c-sort-modes
 ---

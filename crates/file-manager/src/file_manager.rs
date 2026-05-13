@@ -3128,6 +3128,26 @@ mod tests {
     }
 
     #[test]
+    fn sort_entries_reverse_preserves_dirs_before_files() {
+        let dir = make_tree(&[
+            ("alpha-dir", true),
+            ("beta-dir", true),
+            ("alpha.txt", false),
+            ("beta.txt", false),
+        ]);
+        let entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                sort: crate::prefs::SortMode::Name,
+                reverse: true,
+                ..ReadDirOptions::default()
+            },
+        );
+        let is_dir: Vec<bool> = entries.iter().map(|e| e.is_dir).collect();
+        assert_eq!(is_dir, vec![true, true, false, false]);
+    }
+
+    #[test]
     fn sort_entries_extension_groups_by_suffix() {
         let dir = make_tree(&[
             ("note.md", false),
