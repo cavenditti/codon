@@ -17,6 +17,7 @@ db.workspace = true
 editor.workspace = true
 file-manager.workspace = true
 fuzzy.workspace = true
+git_ui.workspace = true
 gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true

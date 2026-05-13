@@ -26,8 +26,15 @@ actions!(
         SessionNew,
         /// Open a fuzzy picker to switch sessions.
         SessionSwitch,
+        /// Open a tmux-style grid overview of all sessions with arrow/hjkl
+        /// navigation; Enter attaches the highlighted session.
+        SessionOverview,
         /// Open a fuzzy picker to switch windows within the active session.
         WindowSwitch,
+        /// Open a tmux-style grid overview of all windows in the active
+        /// session with arrow/hjkl navigation; Enter switches to the
+        /// highlighted window. Each tile shows a tiny layout sketch.
+        WindowOverview,
         /// Rename the active session.
         SessionRename,
         /// Close the active session (refuses to remove the last one).
@@ -60,6 +67,11 @@ actions!(
         /// Focus the most-recently-active editor in the current window,
         /// or open a new buffer in the active pane if none exists.
         GotoOrOpenEditor,
+        /// Open a diff view. Today this is a thin wrapper that dispatches
+        /// Zed's upstream `git::Diff` (working tree vs HEAD); arbitrary
+        /// file-vs-file diffs are deferred until the phase-4 codon diff
+        /// pane lands. See `diff_open.rs`.
+        DiffOpen,
     ]
 );
 
@@ -76,7 +88,9 @@ pub fn register(_cx: &mut App) {}
 pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_session_new);
     workspace.register_action(handle_session_switch);
+    workspace.register_action(handle_session_overview);
     workspace.register_action(handle_window_switch);
+    workspace.register_action(handle_window_overview);
     workspace.register_action(handle_session_close);
     workspace.register_action(handle_window_new);
     workspace.register_action(handle_window_next);
@@ -85,6 +99,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_safe_close_active_item);
     workspace.register_action(handle_hold_quit);
     crate::goto_or_open::register_for_workspace(workspace);
+    crate::diff_open::register_for_workspace(workspace);
 }
 
 fn handle_session_new(
@@ -157,6 +172,18 @@ fn handle_session_switch(
     });
 }
 
+fn handle_session_overview(
+    workspace: &mut Workspace,
+    _: &SessionOverview,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let weak = workspace.weak_handle();
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        crate::session_overview::SessionOverviewModal::new(weak, window, cx)
+    });
+}
+
 fn handle_window_switch(
     workspace: &mut Workspace,
     _: &WindowSwitch,
@@ -166,6 +193,18 @@ fn handle_window_switch(
     let weak = workspace.weak_handle();
     workspace.toggle_modal(window, cx, move |window, cx| {
         crate::window_picker::WindowSwitchModal::new(weak, window, cx)
+    });
+}
+
+fn handle_window_overview(
+    workspace: &mut Workspace,
+    _: &WindowOverview,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let weak = workspace.weak_handle();
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        crate::window_overview::WindowOverviewModal::new(weak, window, cx)
     });
 }
 
