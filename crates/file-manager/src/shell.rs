@@ -1,4 +1,10 @@
+use gpui::{App, Context, Entity, Task, Window};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use terminal::Terminal;
+use terminal_view::TerminalView;
+use terminal_view::terminal_panel::TerminalPanel;
+use workspace::Workspace;
 
 /// Expand the file-manager shell-exec placeholders in `template` against
 /// the FM cursor / marked set / current directory.
@@ -126,6 +132,154 @@ fn quote_str(s: &str) -> String {
         Err(_) => fallback_single_quote(s),
     }
 }
+
+/// Outcome of [`pick_terminal_for_shell`]. `Existing` carries the
+/// most-recently-active idle terminal in the active window; `New` says
+/// the FM should spawn a fresh terminal split before sending the
+/// command.
+pub enum TerminalTarget {
+    Existing(Entity<TerminalView>),
+    New,
+}
+
+/// Find a terminal to host an FM-initiated shell command.
+///
+/// Idle = the PTY's foreground process group equals the shell's own
+/// PID (no child has stolen the foreground slot). Display-only and
+/// remote terminals are always treated as "busy" so we never reuse
+/// them. When nothing idle is reachable, returns [`TerminalTarget::New`]
+/// so the caller can spawn a new split.
+///
+/// This intentionally mirrors `recent_active_item_by_type::<TerminalView>`
+/// + an idle filter — the codon goto-or-open verb already uses the
+/// same MRU lookup for navigation, so we want the same affordance for
+/// shell exec.
+pub fn pick_terminal_for_shell(workspace: &Workspace, cx: &App) -> TerminalTarget {
+    let mut recent: Option<Entity<TerminalView>> = None;
+    let mut recent_timestamp: usize = 0;
+
+    for pane_handle in workspace.panes() {
+        let pane = pane_handle.read(cx);
+        for (item_id, item) in pane
+            .items()
+            .map(|item| (item.item_id(), item.clone()))
+            .collect::<Vec<_>>()
+        {
+            let Some(view) = item.act_as::<TerminalView>(cx) else {
+                continue;
+            };
+            if !terminal_is_idle(&view, cx) {
+                continue;
+            }
+            let timestamp = pane
+                .activation_history()
+                .iter()
+                .find(|e| e.entity_id == item_id)
+                .map(|e| e.timestamp)
+                .unwrap_or(0);
+            if timestamp >= recent_timestamp {
+                recent_timestamp = timestamp;
+                recent = Some(view);
+            }
+        }
+    }
+
+    match recent {
+        Some(view) => TerminalTarget::Existing(view),
+        None => TerminalTarget::New,
+    }
+}
+
+/// `true` when the wrapped PTY has no foreground child — i.e. only the
+/// shell process is in the foreground process group. Display-only
+/// terminals always report `false` so we never write to a frozen view.
+fn terminal_is_idle(view: &Entity<TerminalView>, cx: &App) -> bool {
+    let terminal = view.read(cx).entity().read(cx);
+    let Some(getter) = terminal.pid_getter() else {
+        return false;
+    };
+    let Some(foreground) = terminal.pid() else {
+        return false;
+    };
+    foreground == getter.fallback_pid()
+}
+
+/// Send `command` to `view`'s PTY, prefixed with `cd <cwd>` so the
+/// command runs from the FM's current directory. `command` is already
+/// fully substituted via [`apply_substitutions`]; this helper just
+/// frames it with `cd` + a trailing newline so the shell executes it.
+///
+/// Newlines inside `command` are forwarded verbatim — the user's shell
+/// is responsible for parsing them. Empty `command` is a no-op so a
+/// bare `!` Enter doesn't blast a stray newline.
+pub fn send_to_terminal(
+    view: &Entity<TerminalView>,
+    cwd: &Path,
+    command: &str,
+    cx: &mut App,
+) {
+    if command.trim().is_empty() {
+        return;
+    }
+    let terminal = view.read(cx).entity().clone();
+    let cwd_quoted = quote_path(cwd);
+    let payload = format!("cd {cwd_quoted} && {command}\n");
+    terminal.update(cx, |term, _cx| {
+        term.input(payload.into_bytes());
+    });
+}
+
+/// Activate `view` in its pane so the user sees the command output. No-op
+/// when the pane no longer hosts the view (e.g. it was closed between
+/// the substitution and the actual send).
+pub fn focus_terminal(
+    workspace: &mut Workspace,
+    view: &Entity<TerminalView>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    workspace.activate_item(view, true, true, window, cx);
+}
+
+/// Spawn a fresh center-pane terminal rooted at `cwd`, then run
+/// `command` once the terminal is ready. Returns a [`Task`] that
+/// resolves to the new terminal entity (so the caller can subscribe to
+/// it for the blocking-exec overlay) or `None` if the spawn failed.
+pub fn spawn_new_terminal_and_run(
+    workspace: &mut Workspace,
+    cwd: PathBuf,
+    command: String,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Option<Entity<Terminal>>> {
+    let task = TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+        project.create_terminal_shell(Some(cwd), cx)
+    });
+    cx.spawn(async move |_, cx| {
+        let terminal = task.await.ok()?.upgrade()?;
+        cx.update(|cx| {
+            terminal.update(cx, |term, _cx| {
+                let payload = format!("{command}\n");
+                term.input(payload.into_bytes());
+            });
+        });
+        Some(terminal)
+    })
+}
+
+/// Snapshot the last N non-empty lines from the terminal's scrollback —
+/// used by the blocking-exec stderr toast when the command exited
+/// non-zero. The terminal is the source of truth for what the user saw,
+/// so we sample it instead of capturing through a separate pipe.
+pub fn snapshot_tail(view: &Entity<TerminalView>, n: usize, cx: &App) -> Vec<String> {
+    view.read(cx).entity().read(cx).last_n_non_empty_lines(n)
+}
+
+/// Convenience: a small polling interval for the blocking-exec watcher.
+/// Exposed so call sites stay symmetric — they don't need to know the
+/// exact cadence, just that the watcher checks "is the foreground
+/// process still the shell".
+pub const SHELL_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 fn fallback_single_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
