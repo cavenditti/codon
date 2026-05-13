@@ -777,6 +777,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
+trash = { git = "https://github.com/zed-industries/trash-rs", rev = "3bf27effd4eb8699f2e484d3326b852fe3e53af7" }
 tree-sitter = { version = "0.26.8", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"

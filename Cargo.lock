@@ -6717,6 +6717,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "toml 0.8.23",
+ "trash",
  "ui",
  "util",
  "workspace",

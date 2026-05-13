@@ -43,6 +43,7 @@ terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 toml.workspace = true
+trash.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

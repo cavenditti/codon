@@ -7,7 +7,7 @@ summary: >
   `T` opens a modal listing the OS trash via `trash::os_limited::list`.
   Type-as-you-go fuzzy filter by original path.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-trash#c-trash-list
 ---

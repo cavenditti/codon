@@ -7,7 +7,7 @@ summary: >
   Enter restores the highlighted trash entry to its original location;
   Space marks for bulk restore.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-trash#c-trash-restore
 ---

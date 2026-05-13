@@ -1248,11 +1248,18 @@ impl FileManager {
         });
     }
 
-    /// `S` (shift-s): open the ripgrep-backed content-search picker. We
-    /// prompt for the query up-front through a `ContentSearchQuery`
-    /// `PendingInput` (rather than the picker's own query field) so the
-    /// `rg` invocation has a stable target before the modal mounts.
-    /// Missing ripgrep surfaces a toast and aborts.
+    fn open_trash_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let weak = cx.weak_entity();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                crate::trash::TrashModal::new(weak, window, cx)
+            });
+        });
+    }
+
     fn open_search_by_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if !crate::search::binary_available("rg") {
             self.surface_error("Install ripgrep for content search", cx);
@@ -2280,6 +2287,7 @@ impl FileManager {
             "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
             "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
             "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
+            "t" if shift && !ctrl => { self.open_trash_modal(window, cx); true }
             "escape" if self.shell_running.is_some() => {
                 self.terminate_shell_command(cx);
                 true
