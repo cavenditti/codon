@@ -7,7 +7,7 @@ summary: >
   `cw` opens a workspace buffer with marked entries' names, one per
   line. Save + close applies the line-for-line rename atomically.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-bulk-editor#c-bulk-rename-editor
 ---

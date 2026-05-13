@@ -1,4 +1,5 @@
 pub(crate) mod bookmarks;
+pub(crate) mod bulk_rename_editor;
 pub(crate) mod file_manager;
 pub(crate) mod goto_completer;
 pub(crate) mod prefs;

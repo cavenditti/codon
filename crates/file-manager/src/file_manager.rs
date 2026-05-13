@@ -312,7 +312,7 @@ impl FileManager {
         }
     }
 
-    fn surface_error(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
+    pub(crate) fn surface_error(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
         let msg = msg.into();
         log::warn!("file-manager: {msg}");
         self.error_gen = self.error_gen.wrapping_add(1);
@@ -1007,6 +1007,48 @@ impl FileManager {
         cx.notify();
     }
 
+    /// `cw` chord: capture the marked entries' paths (or the focused
+    /// entry, if no marks) and open the bulk-rename editor in the
+    /// active workspace pane. The roundtrip — opening the buffer,
+    /// observing its close, diffing, applying renames — lives in
+    /// `bulk_rename_editor.rs`.
+    fn start_bulk_rename_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let targets: Vec<PathBuf> = if self.marked.is_empty() {
+            self.entries
+                .get(self.selected_index)
+                .map(|e| vec![e.path.clone()])
+                .unwrap_or_default()
+        } else {
+            self.marked
+                .iter()
+                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+                .collect()
+        };
+        if targets.is_empty() {
+            return;
+        }
+        let weak_self = cx.weak_entity();
+        crate::bulk_rename_editor::open_bulk_rename_editor(
+            self.workspace.clone(),
+            self.fs.clone(),
+            targets,
+            weak_self,
+            window,
+            cx,
+        );
+    }
+
+    /// Called from the bulk-rename editor's release hook. We're back
+    /// on the main thread but without a `Window` — the FM's render
+    /// loop only needs an updated entry list and a `cx.notify()` to
+    /// repaint, so we drop the git-status refresh until the next
+    /// focus event.
+    pub(crate) fn reload_entries_after_bulk_rename(&mut self, cx: &mut Context<Self>) {
+        self.reload_entries_sync();
+        cx.emit(FileManagerEvent::PathChanged);
+        cx.notify();
+    }
+
     /// `cm` chord: snapshot the affected paths + their current mode and
     /// open the chmod input bar. If nothing is marked, fall back to the
     /// focused entry — `cm` should never be a silent no-op when the user
@@ -1543,6 +1585,12 @@ impl FileManager {
                 }
                 'c' if !shift && !ctrl && key == "m" => {
                     self.start_bulk_chmod(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                'c' if !shift && !ctrl && key == "w" => {
+                    self.start_bulk_rename_editor(window, cx);
                     cx.notify();
                     cx.stop_propagation();
                     return;
