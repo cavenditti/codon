@@ -144,6 +144,11 @@ pub struct FileManager {
     pub(crate) error_message: Option<String>,
     pub(crate) error_gen: u64,
     pub(crate) clipboard: FmClipboard,
+    /// First half of a two-key chord (e.g. `u` of `uv`). Cleared on the
+    /// next keystroke whether or not the chord completed. Designed to
+    /// host future bookmark chords (`m<letter>` / `'<letter>`) without
+    /// further state.
+    pub(crate) pending_chord: Option<char>,
 }
 
 #[derive(Clone)]
@@ -221,6 +226,7 @@ impl FileManager {
             error_message: None,
             error_gen: 0,
             clipboard: FmClipboard::Empty,
+            pending_chord: None,
         };
         this.reload_entries_sync();
         this
@@ -506,6 +512,17 @@ impl FileManager {
             self.selected_index += 1;
             self.update_preview_sync();
         }
+        cx.notify();
+    }
+
+    /// `uv` chord: drop every mark. Distinct from a single `v` toggle so
+    /// the user can wipe a large mark set in two keystrokes without
+    /// having to scroll back over every previously-marked row.
+    pub(crate) fn clear_marks(&mut self, cx: &mut Context<Self>) {
+        if self.marked.is_empty() {
+            return;
+        }
+        self.marked.clear();
         cx.notify();
     }
 
@@ -1127,6 +1144,22 @@ impl FileManager {
         let key = event.keystroke.key.as_str();
         let shift = event.keystroke.modifiers.shift;
         let ctrl = event.keystroke.modifiers.control;
+
+        // Chord completion: only `uv` is wired today. The pending-chord
+        // slot is consumed up-front so any non-matching second key
+        // (e.g. `u` then `j`) falls through to the regular dispatch
+        // with the chord already cleared.
+        let pending_chord = self.pending_chord.take();
+        if let Some('u') = pending_chord
+            && !shift
+            && !ctrl
+            && key == "v"
+        {
+            self.clear_marks(cx);
+            cx.stop_propagation();
+            return;
+        }
+
         let handled = match key {
             // Navigation
             "j" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
@@ -1139,6 +1172,13 @@ impl FileManager {
             // Scrolling
             "d" if ctrl => { self.half_page_down(window, cx); true }
             "u" if ctrl => { self.half_page_up(window, cx); true }
+            // Chord starter: bare `u` parks the next key for the `uv`
+            // (clear-marks) chord. Subsequent two-key chords (vim-style
+            // bookmarks etc.) can hang off the same slot.
+            "u" if !shift && !ctrl => {
+                self.pending_chord = Some('u');
+                true
+            }
             "pagedown" => { self.page_down(window, cx); true }
             "pageup" => { self.page_up(window, cx); true }
             // Selection
