@@ -1311,6 +1311,18 @@ impl FileManager {
         });
     }
 
+    fn open_task_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let weak_workspace = self.workspace.clone();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                crate::task_history_modal::TaskHistoryModal::new(weak_workspace, window, cx)
+            });
+        });
+    }
+
     fn open_search_by_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if !crate::search::binary_available("rg") {
             self.surface_error("Install ripgrep for content search", cx);
@@ -1646,10 +1658,24 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        use std::sync::atomic::Ordering;
         let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let total = targets.len();
+        let label = format!("Trashing {total} entries");
+        let mut handle = cx.update_global::<crate::tasks::FmTaskStore, _>(|_, cx| {
+            crate::tasks::begin(workspace.clone(), crate::tasks::FmTaskKind::Delete, label, total, cx)
+        });
+        let cancel_flag = handle.cancel_flag();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            let mut processed = 0_usize;
+            let mut cancelled = false;
             for path in targets {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
                 let options = fs::RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: false,
@@ -1657,7 +1683,30 @@ impl FileManager {
                 if let Err(e) = fs.trash(&path, options).await {
                     failures.push((path, e));
                 }
+                processed += 1;
+                let workspace = workspace.clone();
+                cx.update(|_, cx| {
+                    crate::tasks::tick(&mut handle, processed, workspace, cx);
+                })
+                .ok();
             }
+            let outcome = if cancelled {
+                crate::tasks::FmTaskOutcome::Cancelled
+            } else if failures.is_empty() {
+                crate::tasks::FmTaskOutcome::Done
+            } else {
+                crate::tasks::FmTaskOutcome::Failed {
+                    errors: failures
+                        .iter()
+                        .map(|(p, e)| format!("{}: {e}", p.display()))
+                        .collect(),
+                }
+            };
+            let workspace_finish = workspace.clone();
+            cx.update(|_, cx| {
+                crate::tasks::finish(handle, outcome, workspace_finish, cx);
+            })
+            .ok();
             this.update_in(cx, |this, window, cx| {
                 for (path, e) in &failures {
                     let name = path
@@ -2520,6 +2569,7 @@ impl FileManager {
             "t" if shift && !ctrl => { self.open_trash_modal(window, cx); true }
             "x" if shift && !ctrl => { self.start_skip_trash_delete(window, cx); true }
             "o" if shift && !ctrl => { self.choose_opener(window, cx); true }
+            "w" if !shift && !ctrl => { self.open_task_history(window, cx); true }
             "escape" if self.shell_running.is_some() => {
                 self.terminate_shell_command(cx);
                 true

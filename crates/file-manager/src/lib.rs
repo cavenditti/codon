@@ -7,6 +7,8 @@ pub(crate) mod openers;
 pub(crate) mod prefs;
 pub(crate) mod search;
 pub(crate) mod shell;
+pub(crate) mod task_history_modal;
+pub(crate) mod tasks;
 pub(crate) mod trash;
 mod view;
 
@@ -24,4 +26,5 @@ use gpui::App;
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     file_manager::init(cx);
     openers::init(fs, cx);
+    tasks::init(cx);
 }
