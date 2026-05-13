@@ -7,7 +7,7 @@ summary: >
   `s` opens a name-search picker rooted at current_dir. Uses `fd` if
   installed; `walkdir` fallback otherwise.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-find-search#c-search-by-name
 ---

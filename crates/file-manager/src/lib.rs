@@ -3,6 +3,7 @@ pub(crate) mod bulk_rename_editor;
 pub(crate) mod file_manager;
 pub(crate) mod goto_completer;
 pub(crate) mod prefs;
+pub(crate) mod search;
 mod view;
 
 pub use file_manager::{

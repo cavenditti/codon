@@ -1001,6 +1001,23 @@ impl FileManager {
         }
     }
 
+    /// `s`: open the name-search picker rooted at `current_dir`. The
+    /// picker uses `fd` if installed and falls back to a synchronous
+    /// `walkdir` capped at 5000 entries. Enter on a result reveals it
+    /// via the `codon_fm::Reveal` action.
+    fn open_search_by_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let root = self.current_dir.clone();
+        let weak = self.workspace.clone();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                crate::search::NameSearchModal::new(root, weak, window, cx)
+            });
+        });
+    }
+
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Re-entering filter mode while a filter is already committed
         // keeps the existing query so the user can edit it.
@@ -1889,6 +1906,9 @@ impl FileManager {
             "?" if !ctrl => { self.start_find_backward(window, cx); true }
             "n" if !shift && !ctrl => { self.find_next(cx); true }
             "n" if shift && !ctrl => { self.find_prev(cx); true }
+            // External search picker. `s` runs `fd` (or walkdir
+            // fallback) rooted at current_dir.
+            "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true
