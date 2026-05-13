@@ -7,7 +7,7 @@ summary: >
   `z` opens a zoxide-backed picker. Enter sets current_dir. No-op +
   toast when zoxide is missing.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-find-search#c-zoxide-jump
 ---

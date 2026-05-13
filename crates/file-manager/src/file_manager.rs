@@ -1037,6 +1037,51 @@ impl FileManager {
         cx.notify();
     }
 
+    /// `Z` (shift-z): open the zoxide picker. Plain `z` is the chord
+    /// starter for `zg` (toggle gitignore), so phase-7 keeps zoxide
+    /// on shift-Z to avoid clobbering the chord dispatcher. Missing
+    /// zoxide surfaces a toast and aborts.
+    fn open_zoxide_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !crate::search::binary_available("zoxide") {
+            self.surface_error("zoxide not installed", cx);
+            return;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let entries = crate::search::zoxide_query();
+        if entries.is_empty() {
+            self.surface_error("zoxide returned no results", cx);
+            return;
+        }
+        let weak = self.workspace.clone();
+        let weak_self = cx.weak_entity();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                crate::search::ZoxideModal::new(
+                    entries,
+                    {
+                        let weak_self = weak_self.clone();
+                        move |path, window, cx| {
+                            // Zoxide jump is a forward navigation — push
+                            // the current dir to the back stack and clear
+                            // the forward stack so the user can `[` back
+                            // to where they were.
+                            if let Some(this) = weak_self.upgrade() {
+                                this.update(cx, |fm, cx| {
+                                    fm.reveal_path(path.clone(), None, window, cx);
+                                });
+                            }
+                        }
+                    },
+                    weak,
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
     /// Open the content-search modal once the user has typed a query
     /// and pressed Enter on the `ContentSearchQuery` prompt.
     fn launch_content_search(
@@ -1957,9 +2002,13 @@ impl FileManager {
             "n" if shift && !ctrl => { self.find_prev(cx); true }
             // External search pickers. `s` runs `fd` (or walkdir
             // fallback) rooted at current_dir; `S` runs ripgrep on
-            // contents.
+            // contents; `Z` opens zoxide. Plain `z` is the chord
+            // starter for the sort cluster's `zg` (toggle gitignore),
+            // so we keep zoxide on shift-Z to avoid clobbering the
+            // chord dispatcher.
             "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
             "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
+            "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true

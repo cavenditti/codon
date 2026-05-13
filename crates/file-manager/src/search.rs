@@ -887,6 +887,283 @@ fn parse_rg_line(line: &str, root: &Path) -> Option<ContentHit> {
     })
 }
 
+#[derive(Clone, Debug)]
+struct ZoxideEntry {
+    abs_path: PathBuf,
+    display: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ZoxidePicked {
+    pub(crate) abs_path: PathBuf,
+}
+
+struct ZoxideDelegate {
+    candidates: Vec<ZoxideEntry>,
+    matches: Vec<fuzzy::StringMatch>,
+    selected_index: usize,
+    query: String,
+}
+
+impl ZoxideDelegate {
+    fn new(entries: Vec<ZoxideEntry>) -> Self {
+        let matches = entries
+            .iter()
+            .enumerate()
+            .map(|(ix, e)| fuzzy::StringMatch {
+                candidate_id: ix,
+                score: 0.0,
+                positions: Vec::new(),
+                string: e.display.clone(),
+            })
+            .collect();
+        Self {
+            candidates: entries,
+            matches,
+            selected_index: 0,
+            query: String::new(),
+        }
+    }
+}
+
+impl EventEmitter<ZoxidePicked> for Picker<ZoxideDelegate> {}
+impl EventEmitter<PickerDismissed> for Picker<ZoxideDelegate> {}
+
+impl PickerDelegate for ZoxideDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::from("Jump (zoxide)…")
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.query = query.clone();
+        let candidates: Vec<StringMatchCandidate> = self
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(ix, c)| StringMatchCandidate::new(ix, &c.display))
+            .collect();
+        let executor = cx.background_executor().clone();
+        let cancel = AtomicBool::new(false);
+        cx.spawn(async move |this, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                query.trim(),
+                false,
+                true,
+                200,
+                &cancel,
+                executor,
+            )
+            .await;
+            this.update(cx, |picker, cx| {
+                if query.trim().is_empty() {
+                    // Empty query preserves zoxide's score ordering by
+                    // re-emitting candidates in their original sequence.
+                    picker.delegate.matches = picker
+                        .delegate
+                        .candidates
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, c)| fuzzy::StringMatch {
+                            candidate_id: ix,
+                            score: 0.0,
+                            positions: Vec::new(),
+                            string: c.display.clone(),
+                        })
+                        .collect();
+                } else {
+                    picker.delegate.matches = matches;
+                }
+                if picker.delegate.selected_index >= picker.delegate.matches.len() {
+                    picker.delegate.selected_index = 0;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(matched) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let Some(candidate) = self.candidates.get(matched.candidate_id) else {
+            return;
+        };
+        cx.emit(ZoxidePicked {
+            abs_path: candidate.abs_path.clone(),
+        });
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(PickerDismissed);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let matched = self.matches.get(ix)?;
+        Some(
+            ListItem::new(ix)
+                .toggle_state(selected)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .child(
+                    h_flex()
+                        .flex_grow()
+                        .gap_3()
+                        .child(Icon::new(IconName::Folder).color(Color::Muted))
+                        .child(HighlightedLabel::new(
+                            matched.string.clone(),
+                            matched.positions.clone(),
+                        )),
+                ),
+        )
+    }
+}
+
+pub struct ZoxideModal {
+    picker: Entity<Picker<ZoxideDelegate>>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ZoxideModal {
+    /// `on_pick` is invoked with the chosen path when the user presses
+    /// Enter. Caller is responsible for navigating the file manager to
+    /// that directory.
+    pub fn new<F>(
+        entries: Vec<PathBuf>,
+        on_pick: F,
+        _workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        F: Fn(PathBuf, &mut Window, &mut App) + 'static,
+    {
+        let entries = entries
+            .into_iter()
+            .map(|p| {
+                let display = p.display().to_string();
+                ZoxideEntry { abs_path: p, display }
+            })
+            .collect::<Vec<_>>();
+        let delegate = ZoxideDelegate::new(entries);
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+
+        let on_select = cx.subscribe_in(
+            &picker,
+            window,
+            move |this, _, event: &ZoxidePicked, window, cx| {
+                on_pick(event.abs_path.clone(), window, cx);
+                this.dismiss(window, cx);
+            },
+        );
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
+                this.dismiss(window, cx);
+            },
+        );
+
+        Self {
+            picker,
+            _subscriptions: vec![on_select, on_dismiss],
+        }
+    }
+
+    fn dismiss(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+}
+
+impl ModalView for ZoxideModal {}
+impl EventEmitter<DismissEvent> for ZoxideModal {}
+impl Focusable for ZoxideModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for ZoxideModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .elevation_3(cx)
+            .w(rems(42.))
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .child(
+                        h_flex().px_3().py_1().child(
+                            Label::new("zoxide")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(self.picker.clone()),
+            )
+    }
+}
+
+/// Run `zoxide query -l` and return the list of paths, highest-scored
+/// first. Returns an empty vec if zoxide is missing or the command
+/// fails — callers are expected to check `binary_available("zoxide")`
+/// first and surface a toast for the missing-binary case.
+pub fn zoxide_query() -> Vec<PathBuf> {
+    let output = std::process::Command::new("zoxide")
+        .args(["query", "-l"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| PathBuf::from(line.trim()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,5 +1192,34 @@ mod tests {
         }
         let (_matches, truncated) = run_walkdir(dir.path());
         assert!(!truncated);
+    }
+
+    #[test]
+    fn parse_rg_line_extracts_path_line_col_and_match() {
+        let root = Path::new("/tmp/proj");
+        let line = r#"{"type":"match","data":{"path":{"text":"/tmp/proj/foo.rs"},"lines":{"text":"hello world\n"},"line_number":3,"absolute_offset":0,"submatches":[{"match":{"text":"world"},"start":6,"end":11}]}}"#;
+        let hit = parse_rg_line(line, root).expect("parsed");
+        assert_eq!(hit.line, 3);
+        assert_eq!(hit.column, 7);
+        assert!(hit.display.starts_with("foo.rs:3:7  "));
+        assert!(hit.display.contains("hello world"));
+        let highlighted = &hit.display[hit.match_start..hit.match_end];
+        assert_eq!(highlighted, "world");
+    }
+
+    #[test]
+    fn parse_rg_line_ignores_non_match_events() {
+        let root = Path::new("/tmp/proj");
+        let begin = r#"{"type":"begin","data":{"path":{"text":"/tmp/proj/x.rs"}}}"#;
+        let summary = r#"{"type":"summary","data":{"elapsed_total":{"human":"0.01s"}}}"#;
+        assert!(parse_rg_line(begin, root).is_none());
+        assert!(parse_rg_line(summary, root).is_none());
+    }
+
+    #[test]
+    fn zoxide_query_returns_empty_when_missing() {
+        if which("zoxide").is_none() {
+            assert!(zoxide_query().is_empty());
+        }
     }
 }
