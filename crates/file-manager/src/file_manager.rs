@@ -2158,8 +2158,8 @@ impl FileManager {
                 // TerminalView — we look it up afterward via the same
                 // MRU lookup so the watcher gets the view handle.
                 let cmd_for_spawn = command.clone();
-                let template_for_arm = template.clone();
-                let command_for_arm = command.clone();
+                let template_for_arm = template;
+                let command_for_arm = command;
                 let spawn_task = workspace.update(cx, |workspace, cx| {
                     crate::shell::spawn_new_terminal_and_run(
                         workspace,
