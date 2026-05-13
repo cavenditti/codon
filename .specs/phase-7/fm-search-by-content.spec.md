@@ -7,7 +7,7 @@ summary: >
   `S` opens a ripgrep-backed content-search picker. Results show
   `path:line: snippet`; Enter opens the file at the line.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-find-search#c-search-by-content
 ---

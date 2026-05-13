@@ -6707,6 +6707,7 @@ dependencies = [
  "rand 0.9.4",
  "schemars 1.2.1",
  "serde",
+ "serde_json",
  "settings",
  "tar",
  "tempfile",

@@ -226,6 +226,7 @@ impl FileManager {
             }
             PendingInput::FindForward { query, .. } => ("find: ", query.as_str().into()),
             PendingInput::FindBackward { query, .. } => ("find?: ", query.as_str().into()),
+            PendingInput::ContentSearchQuery(query) => ("rg: ", query.as_str().into()),
         };
 
         let theme = cx.theme();

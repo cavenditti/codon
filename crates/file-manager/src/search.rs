@@ -2,6 +2,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 
 use fuzzy::StringMatchCandidate;
@@ -425,6 +426,465 @@ pub(crate) fn which(bin: &str) -> Option<PathBuf> {
 /// bail out before opening a modal that would have nothing to show.
 pub fn binary_available(bin: &str) -> bool {
     which(bin).is_some()
+}
+
+#[derive(Clone, Debug)]
+struct ContentHit {
+    abs_path: PathBuf,
+    line: u32,
+    column: u32,
+    /// `<relative-path>:<line>:<col>  <snippet>` — the row text shown in
+    /// the picker. Highlight offsets index into this string.
+    display: String,
+    /// Byte offset within `display` where the matched substring begins.
+    match_start: usize,
+    /// Byte offset within `display` where the matched substring ends.
+    match_end: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ContentSelected {
+    pub(crate) abs_path: PathBuf,
+    pub(crate) row: u32,
+    pub(crate) column: u32,
+}
+
+struct ContentSearchDelegate {
+    root: PathBuf,
+    query: String,
+    candidates: Vec<ContentHit>,
+    matches: Vec<fuzzy::StringMatch>,
+    selected_index: usize,
+}
+
+impl ContentSearchDelegate {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            query: String::new(),
+            candidates: Vec::new(),
+            matches: Vec::new(),
+            selected_index: 0,
+        }
+    }
+
+    fn append_batch(
+        &mut self,
+        batch: Vec<ContentHit>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if batch.is_empty() {
+            return;
+        }
+        let remaining = MAX_CANDIDATES.saturating_sub(self.candidates.len());
+        let take = remaining.min(batch.len());
+        if take == 0 {
+            return;
+        }
+        self.candidates.extend(batch.into_iter().take(take));
+        self.matches = self
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(ix, c)| fuzzy::StringMatch {
+                candidate_id: ix,
+                score: 0.0,
+                positions: (c.match_start..c.match_end).collect(),
+                string: c.display.clone(),
+            })
+            .collect();
+        if self.selected_index >= self.matches.len() {
+            self.selected_index = 0;
+        }
+        cx.notify();
+        let query = self.query.clone();
+        self.update_matches(query, window, cx).detach();
+    }
+}
+
+impl EventEmitter<ContentSelected> for Picker<ContentSearchDelegate> {}
+impl EventEmitter<PickerDismissed> for Picker<ContentSearchDelegate> {}
+
+impl PickerDelegate for ContentSearchDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::from("Filter results…")
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.query = query.clone();
+        // Empty filter — show the raw rg-ordered hits with their
+        // submatch highlights preserved.
+        if query.trim().is_empty() {
+            self.matches = self
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(ix, c)| fuzzy::StringMatch {
+                    candidate_id: ix,
+                    score: 0.0,
+                    positions: (c.match_start..c.match_end).collect(),
+                    string: c.display.clone(),
+                })
+                .collect();
+            if self.selected_index >= self.matches.len() {
+                self.selected_index = 0;
+            }
+            cx.notify();
+            return Task::ready(());
+        }
+
+        let candidates: Vec<StringMatchCandidate> = self
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(ix, c)| StringMatchCandidate::new(ix, &c.display))
+            .collect();
+        let executor = cx.background_executor().clone();
+        let cancel = AtomicBool::new(false);
+        cx.spawn(async move |this, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                query.trim(),
+                false,
+                true,
+                200,
+                &cancel,
+                executor,
+            )
+            .await;
+            this.update(cx, |picker, cx| {
+                picker.delegate.matches = matches;
+                if picker.delegate.selected_index >= picker.delegate.matches.len() {
+                    picker.delegate.selected_index = 0;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(matched) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let Some(candidate) = self.candidates.get(matched.candidate_id) else {
+            return;
+        };
+        cx.emit(ContentSelected {
+            abs_path: candidate.abs_path.clone(),
+            row: candidate.line,
+            column: candidate.column,
+        });
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(PickerDismissed);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let matched = self.matches.get(ix)?;
+        Some(
+            ListItem::new(ix)
+                .toggle_state(selected)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .child(
+                    h_flex()
+                        .flex_grow()
+                        .gap_3()
+                        .child(Icon::new(IconName::FileCode).color(Color::Muted))
+                        .child(HighlightedLabel::new(
+                            matched.string.clone(),
+                            matched.positions.clone(),
+                        )),
+                ),
+        )
+    }
+}
+
+pub struct ContentSearchModal {
+    picker: Entity<Picker<ContentSearchDelegate>>,
+    _task: Task<()>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ContentSearchModal {
+    pub fn new(
+        root: PathBuf,
+        query: String,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = ContentSearchDelegate::new(root.clone());
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+
+        let on_select = cx.subscribe_in(
+            &picker,
+            window,
+            move |this, _, event: &ContentSelected, window, cx| {
+                let path = event.abs_path.clone();
+                let row = event.row;
+                let col = event.column;
+                if let Some(ws) = workspace.upgrade() {
+                    let task = ws.update(cx, |ws, cx| {
+                        ws.open_abs_path(
+                            path.clone(),
+                            workspace::OpenOptions::default(),
+                            window,
+                            cx,
+                        )
+                    });
+                    cx.spawn_in(window, async move |_modal, cx| {
+                        let opened = task.await.ok();
+                        if let Some(item) = opened {
+                            cx.update(|window, cx| {
+                                go_to_position(item, row, col, window, cx);
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
+                }
+                this.dismiss(window, cx);
+            },
+        );
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
+                this.dismiss(window, cx);
+            },
+        );
+
+        let task = spawn_content_producer(root, query, picker.downgrade(), window, cx);
+        Self {
+            picker,
+            _task: task,
+            _subscriptions: vec![on_select, on_dismiss],
+        }
+    }
+
+    fn dismiss(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+}
+
+impl ModalView for ContentSearchModal {}
+impl EventEmitter<DismissEvent> for ContentSearchModal {}
+impl Focusable for ContentSearchModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for ContentSearchModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (root, query) = {
+            let delegate = &self.picker.read(cx).delegate;
+            (delegate.root.display().to_string(), delegate.query.clone())
+        };
+        let header = if query.is_empty() {
+            format!("content: {root}")
+        } else {
+            format!("content: {root}  /{query}/")
+        };
+        div()
+            .elevation_3(cx)
+            .w(rems(60.))
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .child(
+                        h_flex().px_3().py_1().child(
+                            Label::new(header)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(self.picker.clone()),
+            )
+    }
+}
+
+/// Move the editor's cursor to (row, col), where both are 1-based as
+/// ripgrep emits them. No-op on items that aren't editors.
+fn go_to_position(
+    item: Box<dyn workspace::item::ItemHandle>,
+    row: u32,
+    col: u32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(editor) = item.act_as::<editor::Editor>(cx) else {
+        return;
+    };
+    let row = row.saturating_sub(1);
+    let col = col.saturating_sub(1);
+    editor.update(cx, |editor, cx| {
+        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+            return;
+        };
+        let snapshot = buffer.read(cx).snapshot();
+        let point = snapshot.point_from_external_input(row, col);
+        editor.go_to_singleton_buffer_point(point, window, cx);
+    });
+}
+
+fn spawn_content_producer(
+    root: PathBuf,
+    query: String,
+    weak_picker: gpui::WeakEntity<Picker<ContentSearchDelegate>>,
+    window: &mut Window,
+    cx: &mut Context<ContentSearchModal>,
+) -> Task<()> {
+    cx.spawn_in(window, async move |_modal, cx| {
+        let batches = cx
+            .background_spawn(async move { run_ripgrep(&root, &query) })
+            .await;
+        for batch in batches {
+            weak_picker
+                .update_in(cx, |picker, window, cx| {
+                    picker.delegate.append_batch(batch, window, cx);
+                })
+                .ok();
+            // Yield so the picker can paint before we push the next chunk.
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
+        }
+    })
+}
+
+/// Run ripgrep with `--json` and parse the streamed output into
+/// `ContentHit` rows. Output is chunked into ~32-row batches so the
+/// picker repaints while results are still arriving.
+fn run_ripgrep(root: &Path, query: &str) -> Vec<Vec<ContentHit>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let output = std::process::Command::new("rg")
+        .args([
+            "--json",
+            "--max-count=50",
+            "--max-columns=200",
+            "--no-heading",
+            "--",
+            query,
+        ])
+        .arg(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut batches: Vec<Vec<ContentHit>> = Vec::new();
+    let mut batch: Vec<ContentHit> = Vec::with_capacity(32);
+    let mut count = 0usize;
+    for line in stdout.lines() {
+        if count >= MAX_CANDIDATES {
+            break;
+        }
+        let Some(hit) = parse_rg_line(line, root) else {
+            continue;
+        };
+        batch.push(hit);
+        count += 1;
+        if batch.len() == 32 {
+            batches.push(std::mem::take(&mut batch));
+            batch = Vec::with_capacity(32);
+        }
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
+}
+
+/// Parse a single `rg --json` line into a `ContentHit`. Returns `None`
+/// for non-match events (begin/end/summary). rg's match-event shape is
+/// stable and narrow, so we use a hand-rolled traversal of the parsed
+/// `serde_json::Value` rather than declaring a dedicated struct.
+fn parse_rg_line(line: &str, root: &Path) -> Option<ContentHit> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type")?.as_str()? != "match" {
+        return None;
+    }
+    let data = v.get("data")?;
+    let path_text = data.get("path")?.get("text")?.as_str()?.to_string();
+    let abs_path = PathBuf::from(&path_text);
+    let line_no = data.get("line_number")?.as_u64()? as u32;
+    let lines_text = data.get("lines")?.get("text")?.as_str()?;
+    let trimmed_line = lines_text.trim_end_matches('\n');
+
+    let submatches = data.get("submatches")?.as_array()?;
+    let first = submatches.first()?;
+    let match_text = first.get("match")?.get("text")?.as_str()?.to_string();
+    let start_byte = first.get("start")?.as_u64()? as usize;
+    let column = start_byte as u32 + 1;
+
+    let rel = abs_path
+        .strip_prefix(root)
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|_| abs_path.clone());
+    let header = format!("{}:{line_no}:{column}  ", rel.display());
+    let highlight_start = header.len() + start_byte;
+    let highlight_end = highlight_start + match_text.len();
+    let display = format!("{header}{trimmed_line}");
+    // Guard against malformed offsets — the display string is what we
+    // index into, so anything out of range is silently truncated rather
+    // than crashing the picker.
+    let highlight_end = highlight_end.min(display.len());
+    let highlight_start = highlight_start.min(highlight_end);
+
+    Some(ContentHit {
+        abs_path,
+        line: line_no,
+        column,
+        display,
+        match_start: highlight_start,
+        match_end: highlight_end,
+    })
 }
 
 #[cfg(test)]

@@ -214,6 +214,10 @@ pub(crate) enum PendingInput {
     },
     FindForward { query: String, origin_index: usize },
     FindBackward { query: String, origin_index: usize },
+    /// `S` content-search query prompt — typed before the rg modal opens
+    /// so the rg invocation has something to search for. Enter launches
+    /// the modal; Esc aborts.
+    ContentSearchQuery(String),
 }
 
 /// One unit of work for a paste operation: where the bytes come from and
@@ -1018,6 +1022,44 @@ impl FileManager {
         });
     }
 
+    /// `S` (shift-s): open the ripgrep-backed content-search picker. We
+    /// prompt for the query up-front through a `ContentSearchQuery`
+    /// `PendingInput` (rather than the picker's own query field) so the
+    /// `rg` invocation has a stable target before the modal mounts.
+    /// Missing ripgrep surfaces a toast and aborts.
+    fn open_search_by_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !crate::search::binary_available("rg") {
+            self.surface_error("Install ripgrep for content search", cx);
+            return;
+        }
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::ContentSearchQuery(String::new()));
+        cx.notify();
+    }
+
+    /// Open the content-search modal once the user has typed a query
+    /// and pressed Enter on the `ContentSearchQuery` prompt.
+    fn launch_content_search(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if query.trim().is_empty() {
+            return;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let root = self.current_dir.clone();
+        let weak = self.workspace.clone();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                crate::search::ContentSearchModal::new(root, query, weak, window, cx)
+            });
+        });
+    }
+
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Re-entering filter mode while a filter is already committed
         // keeps the existing query so the user can edit it.
@@ -1499,7 +1541,8 @@ impl FileManager {
                     | PendingInput::Rename { new_name: s, .. }
                     | PendingInput::BulkRename { pattern: s, .. }
                     | PendingInput::GotoPath { query: s }
-                    | PendingInput::Chmod { input: s, .. } => {
+                    | PendingInput::Chmod { input: s, .. }
+                    | PendingInput::ContentSearchQuery(s) => {
                         s.pop();
                         None
                     }
@@ -1642,6 +1685,11 @@ impl FileManager {
                         self.mode = PaneMode::Normal;
                         cx.notify();
                     }
+                    PendingInput::ContentSearchQuery(query) => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.launch_content_search(query, window, cx);
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -1683,7 +1731,8 @@ impl FileManager {
                             | PendingInput::Rename { new_name: s, .. }
                             | PendingInput::BulkRename { pattern: s, .. }
                             | PendingInput::GotoPath { query: s }
-                            | PendingInput::Chmod { input: s, .. } => {
+                            | PendingInput::Chmod { input: s, .. }
+                            | PendingInput::ContentSearchQuery(s) => {
                                 s.push_str(ch);
                                 None
                             }
@@ -1906,9 +1955,11 @@ impl FileManager {
             "?" if !ctrl => { self.start_find_backward(window, cx); true }
             "n" if !shift && !ctrl => { self.find_next(cx); true }
             "n" if shift && !ctrl => { self.find_prev(cx); true }
-            // External search picker. `s` runs `fd` (or walkdir
-            // fallback) rooted at current_dir.
+            // External search pickers. `s` runs `fd` (or walkdir
+            // fallback) rooted at current_dir; `S` runs ripgrep on
+            // contents.
             "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
+            "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true
