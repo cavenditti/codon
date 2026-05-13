@@ -109,6 +109,7 @@ const DEFAULT_KEYMAP: &str = r#"
 # Sessions (cmd-k s prefix)
 "cmd-k s n" = "codon_session::SessionNew"
 "cmd-k s s" = "codon_session::SessionSwitch"
+"cmd-k s o" = "codon_session::SessionOverview"
 "cmd-k s c" = "codon_session::SessionClose"
 
 # Windows (cmd-k W prefix — capital W, lowercase w is "close active item")
@@ -117,6 +118,7 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-w h" = "codon_session::WindowPrev"
 "cmd-k shift-w c" = "codon_session::WindowClose"
 "cmd-k shift-w w" = "codon_session::WindowSwitch"
+"cmd-k shift-w o" = "codon_session::WindowOverview"
 
 # Fuzzy window picker within the active session (tmux-style ctrl-w w).
 "ctrl-w w" = "codon_session::WindowSwitch"
@@ -130,6 +132,15 @@ const DEFAULT_KEYMAP: &str = r#"
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
 "cmd-k g s" = "git_panel::ToggleFocus"
+
+# Diff / diagnostics panes (cmd-k d prefix).
+# `cmd-k d d` opens the project diff view (working tree vs HEAD) — thin
+# wrapper over Zed's `git::Diff`; arbitrary file-vs-file true-diff is
+# deferred to phase-4/git-diff-pane.
+# `cmd-k d g` opens Zed's project diagnostics view (`g` for "diagnostics"
+# leaves `d` itself reserved for the diff viewer above).
+"cmd-k d d" = "codon_session::DiffOpen"
+"cmd-k d g" = "diagnostics::Deploy"
 
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -383,7 +394,10 @@ fn resolve_binding(
         // Codon session
         "codon_session::SessionNew" => bind!(codon_session::SessionNew),
         "codon_session::SessionSwitch" => bind!(codon_session::SessionSwitch),
+        "codon_session::SessionOverview" => bind!(codon_session::SessionOverview),
         "codon_session::WindowSwitch" => bind!(codon_session::WindowSwitch),
+        "codon_session::WindowOverview" => bind!(codon_session::WindowOverview),
+        "codon_session::DiffOpen" => bind!(codon_session::DiffOpen),
         "codon_session::SessionClose" => bind!(codon_session::SessionClose),
         "codon_session::SessionRename" => bind!(codon_session::SessionRename),
         "codon_session::WindowNew" => bind!(codon_session::WindowNew),
@@ -409,6 +423,9 @@ fn resolve_binding(
         "git::UnstageFile" => bind!(git::UnstageFile),
         "git::ToggleStaged" => bind!(git::ToggleStaged),
         "git_panel::ToggleFocus" => bind!(git_ui::git_panel::ToggleFocus),
+
+        // Diagnostics pane
+        "diagnostics::Deploy" => bind!(diagnostics::Deploy),
         "git_panel::FocusEditor" => bind!(git_ui::git_panel::FocusEditor),
         "git_panel::FocusChanges" => bind!(git_ui::git_panel::FocusChanges),
         "git_panel::NextEntry" => bind!(git_ui::git_panel::NextEntry),
