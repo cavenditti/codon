@@ -1,3 +1,4 @@
+pub(crate) mod bookmarks;
 pub(crate) mod file_manager;
 mod view;
 

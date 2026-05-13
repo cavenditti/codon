@@ -6685,6 +6685,7 @@ name = "file-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-config",
  "codon-mode",
  "file_icons",
  "flate2",
@@ -6703,6 +6704,7 @@ dependencies = [
  "tar",
  "tempfile",
  "theme",
+ "toml 0.8.23",
  "ui",
  "util",
  "workspace",

@@ -9,7 +9,7 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::{Icon, IconName};
@@ -49,6 +49,8 @@ actions!(
 #[action(namespace = codon_fm)]
 #[serde(deny_unknown_fields)]
 pub struct Reveal(pub PathBuf);
+
+const HISTORY_CAP: usize = 64;
 
 /// In-memory clipboard for codon's file manager. Distinct from the OS
 /// clipboard so the user can `y` paths here and still paste text into a
@@ -155,20 +157,9 @@ pub struct FileManager {
     pub(crate) error_message: Option<String>,
     pub(crate) error_gen: u64,
     pub(crate) clipboard: FmClipboard,
-    /// First half of a two-key chord (e.g. `u` of `uv`). Cleared on the
-    /// next keystroke whether or not the chord completed. Designed to
-    /// host future bookmark chords (`m<letter>` / `'<letter>`) without
-    /// further state.
+    pub(crate) back_stack: VecDeque<PathBuf>,
+    pub(crate) forward_stack: VecDeque<PathBuf>,
     pub(crate) pending_chord: Option<char>,
-    /// FM-local visual-line selection state. `None` means today's
-    /// "single mark" behavior. `Some(anchor)` means `V` has been pressed
-    /// at row `anchor` and j/k navigation now drives the marked range
-    /// from there.
-    ///
-    /// This is intentionally NOT routed through `codon-mode::PaneMode`:
-    /// the FM stays in `PaneMode::Normal` so the global mode tracker and
-    /// keymap predicates keep working as they do today. Visual-range is
-    /// a narrow, pane-local UI mode rather than a third top-level mode.
     pub(crate) visual_anchor: Option<usize>,
 }
 
@@ -247,11 +238,30 @@ impl FileManager {
             error_message: None,
             error_gen: 0,
             clipboard: FmClipboard::Empty,
+            back_stack: VecDeque::new(),
+            forward_stack: VecDeque::new(),
             pending_chord: None,
             visual_anchor: None,
         };
         this.reload_entries_sync();
         this
+    }
+
+    pub(crate) fn push_history_back(&mut self, dir: PathBuf) {
+        if self.back_stack.back() == Some(&dir) {
+            return;
+        }
+        self.back_stack.push_back(dir);
+        while self.back_stack.len() > HISTORY_CAP {
+            self.back_stack.pop_front();
+        }
+    }
+
+    pub(crate) fn push_history_forward(&mut self, dir: PathBuf) {
+        self.forward_stack.push_back(dir);
+        while self.forward_stack.len() > HISTORY_CAP {
+            self.forward_stack.pop_front();
+        }
     }
 
     fn surface_error(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
@@ -1283,25 +1293,35 @@ impl FileManager {
         let shift = event.keystroke.modifiers.shift;
         let ctrl = event.keystroke.modifiers.control;
 
-        // Chord completion: only `uv` is wired today. The pending-chord
-        // slot is consumed up-front so any non-matching second key
-        // (e.g. `u` then `j`) falls through to the regular dispatch
-        // with the chord already cleared.
-        let pending_chord = self.pending_chord.take();
-        if let Some('u') = pending_chord
-            && !shift
-            && !ctrl
-            && key == "v"
-        {
-            self.clear_marks(cx);
-            cx.stop_propagation();
-            return;
+        if let Some(chord) = self.pending_chord.take() {
+            match chord {
+                'u' if !shift && !ctrl && key == "v" => {
+                    self.clear_marks(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                'm' | '\'' if key != "escape" => {
+                    let letter = event
+                        .keystroke
+                        .key_char
+                        .as_deref()
+                        .and_then(|s| s.chars().next())
+                        .filter(|c| c.is_ascii_alphabetic());
+                    if let Some(letter) = letter {
+                        match chord {
+                            'm' => self.save_bookmark(letter, cx),
+                            '\'' => self.jump_bookmark(letter, window, cx),
+                            _ => unreachable!(),
+                        }
+                    }
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
         }
 
-        // Visual-range housekeeping: any key outside the
-        // extend / commit / mark-verb set drops the anchor before the
-        // dispatch table sees the key. Marks themselves survive — they
-        // become the input to the next y / d / p / D / R verb.
         if self.visual_anchor.is_some() {
             let extends = matches!(key, "j" | "k") && !shift && !ctrl;
             let commits = matches!(key, "escape" | "enter" | "\n");
@@ -1339,6 +1359,19 @@ impl FileManager {
             }
             "pagedown" => { self.page_down(window, cx); true }
             "pageup" => { self.page_up(window, cx); true }
+            // Bookmarks: vi-style two-key chords. `m<letter>` saves
+            // `current_dir`; `'<letter>` jumps. Resolved on the next
+            // keystroke via `pending_chord`.
+            "m" if !shift && !ctrl => {
+                self.pending_chord = Some('m');
+                cx.notify();
+                true
+            }
+            "'" if !ctrl => {
+                self.pending_chord = Some('\'');
+                cx.notify();
+                true
+            }
             // Selection
             "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
             // `V` (shift-v) starts visual-line selection. The anchor is
@@ -1393,6 +1426,40 @@ impl FileManager {
         }
     }
 
+    fn save_bookmark(&mut self, letter: char, cx: &mut Context<Self>) {
+        let dir = self.current_dir.clone();
+        let displayed = dir.display().to_string();
+        cx.update_global::<crate::bookmarks::BookmarkStore, _>(|store, _| {
+            store.set(letter, dir);
+        });
+        self.surface_error(format!("Bookmarked '{letter}' → {displayed}"), cx);
+    }
+
+    fn jump_bookmark(&mut self, letter: char, window: &mut Window, cx: &mut Context<Self>) {
+        let target = cx
+            .global::<crate::bookmarks::BookmarkStore>()
+            .get(letter)
+            .map(|p| p.to_path_buf());
+        let Some(target) = target else {
+            self.surface_error(format!("Bookmark '{letter}' is empty"), cx);
+            return;
+        };
+        if !target.is_dir() {
+            self.surface_error(
+                format!("Bookmark '{letter}' → {} no longer exists", target.display()),
+                cx,
+            );
+            return;
+        }
+        if target == self.current_dir {
+            return;
+        }
+        self.push_history_back(self.current_dir.clone());
+        self.forward_stack.clear();
+        self.current_dir = target;
+        self.selected_index = 0;
+        self.reload_entries(window, cx);
+    }
 }
 
 impl Focusable for FileManager {
@@ -1842,6 +1909,7 @@ fn collect_tar_entries<R: std::io::Read>(mut archive: tar::Archive<R>) -> Option
 }
 
 pub fn init(cx: &mut App) {
+    crate::bookmarks::init(cx);
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
     registry.register::<NavigateDown>(&[ObjectKind::File, ObjectKind::Dir]);
