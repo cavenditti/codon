@@ -197,6 +197,7 @@ impl FileManager {
                     format!("{pattern}   ({count} entries, use {{}} as counter)").into(),
                 )
             }
+            PendingInput::GotoPath { query } => (":cd ", query.as_str().into()),
         };
 
         let theme = cx.theme();

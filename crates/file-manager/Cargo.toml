@@ -12,6 +12,7 @@ tempfile.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+codon-command-palette.workspace = true
 codon-config.workspace = true
 codon-mode.workspace = true
 file_icons.workspace = true

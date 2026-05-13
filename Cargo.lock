@@ -6685,6 +6685,7 @@ name = "file-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-command-palette",
  "codon-config",
  "codon-mode",
  "file_icons",

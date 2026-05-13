@@ -52,6 +52,14 @@ actions!(
 #[serde(deny_unknown_fields)]
 pub struct Reveal(pub PathBuf);
 
+/// Open the FM's `:cd <path>` input bar. Optional `seed` pre-fills the
+/// query — used by the `:cd` palette command. Tab in the input bar
+/// extends with longest-common-prefix; Enter resolves and navigates.
+#[derive(Clone, Debug, PartialEq, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = codon_fm)]
+#[serde(deny_unknown_fields)]
+pub struct GotoPath(#[serde(default)] pub String);
+
 const HISTORY_CAP: usize = 64;
 
 /// In-memory clipboard for codon's file manager. Distinct from the OS
@@ -183,6 +191,9 @@ pub(crate) enum PendingInput {
     /// placeholder. `targets` is the snapshot of marked paths, in
     /// display order, captured at the moment `R` was pressed.
     BulkRename { pattern: String, targets: Vec<PathBuf> },
+    /// `:cd <path>` prompt — Tab extends with longest-common-prefix of
+    /// filesystem matches; Enter resolves and navigates.
+    GotoPath { query: String },
 }
 
 /// One unit of work for a paste operation: where the bytes come from and
@@ -790,6 +801,17 @@ impl FileManager {
         cx.stop_propagation();
     }
 
+    pub(crate) fn start_goto_path(
+        &mut self,
+        seed: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::GotoPath { query: seed });
+        cx.notify();
+    }
+
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Re-entering filter mode while a filter is already committed
         // keeps the existing query so the user can edit it.
@@ -1123,7 +1145,8 @@ impl FileManager {
                     PendingInput::CreateFile(s)
                     | PendingInput::CreateDirectory(s)
                     | PendingInput::Rename { new_name: s, .. }
-                    | PendingInput::BulkRename { pattern: s, .. } => {
+                    | PendingInput::BulkRename { pattern: s, .. }
+                    | PendingInput::GotoPath { query: s } => {
                         s.pop();
                     }
                     PendingInput::Filter => {
@@ -1137,6 +1160,15 @@ impl FileManager {
                     }
                 }
                 cx.notify();
+            }
+            "tab" => {
+                if let Some(PendingInput::GotoPath { query }) = self.pending_input.as_mut() {
+                    let extended = extend_goto_completion(query, &self.current_dir);
+                    if extended != *query {
+                        *query = extended;
+                        cx.notify();
+                    }
+                }
             }
             "enter" | "\n" => {
                 let pending = self.pending_input.take().unwrap();
@@ -1225,6 +1257,11 @@ impl FileManager {
                         cx.notify();
                         self.execute_bulk_rename(pattern, targets, window, cx);
                     }
+                    PendingInput::GotoPath { query } if !query.trim().is_empty() => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.goto_path(&query, window, cx);
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -1264,7 +1301,8 @@ impl FileManager {
                             PendingInput::CreateFile(s)
                             | PendingInput::CreateDirectory(s)
                             | PendingInput::Rename { new_name: s, .. }
-                            | PendingInput::BulkRename { pattern: s, .. } => {
+                            | PendingInput::BulkRename { pattern: s, .. }
+                            | PendingInput::GotoPath { query: s } => {
                                 s.push_str(ch);
                             }
                             PendingInput::Filter => {
@@ -1437,6 +1475,44 @@ impl FileManager {
         if handled {
             cx.stop_propagation();
         }
+    }
+
+    /// Resolve `query` against `current_dir` (expanding a leading `~`)
+    /// and navigate. Failures surface via the existing `surface_error`
+    /// toast: empty path, missing target, non-directory, or unreadable.
+    pub(crate) fn goto_path(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let resolved = match resolve_goto_query(query, &self.current_dir) {
+            Some(p) => p,
+            None => {
+                self.surface_error("Empty path", cx);
+                return;
+            }
+        };
+        if !resolved.exists() {
+            self.surface_error(format!("Path does not exist: {}", resolved.display()), cx);
+            return;
+        }
+        if !resolved.is_dir() {
+            self.surface_error(format!("Not a directory: {}", resolved.display()), cx);
+            return;
+        }
+        if std::fs::read_dir(&resolved).is_err() {
+            self.surface_error(format!("Cannot read: {}", resolved.display()), cx);
+            return;
+        }
+        if resolved == self.current_dir {
+            return;
+        }
+        self.push_history_back(self.current_dir.clone());
+        self.forward_stack.clear();
+        self.current_dir = resolved;
+        self.selected_index = 0;
+        self.reload_entries(window, cx);
     }
 
     fn history_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1941,8 +2017,115 @@ fn collect_tar_entries<R: std::io::Read>(mut archive: tar::Archive<R>) -> Option
     Some(ArchiveListing { entries, extra })
 }
 
+/// Resolve a user-typed goto query against `current_dir`. Returns `None`
+/// for an empty input. Expands a leading `~` to `$HOME` and resolves
+/// relative paths against `current_dir`.
+pub(crate) fn resolve_goto_query(query: &str, current_dir: &Path) -> Option<PathBuf> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let expanded = expand_tilde(trimmed);
+    let candidate = if expanded.is_absolute() {
+        expanded
+    } else {
+        current_dir.join(expanded)
+    };
+    Some(candidate)
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    } else if path == "~"
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home);
+    }
+    PathBuf::from(path)
+}
+
+/// Extend `query` with the longest-common-prefix of filesystem entries
+/// that start with the typed leaf. Splits `query` at the rightmost `/`
+/// and reads the directory portion against `current_dir`. Appends a
+/// trailing `/` when exactly one candidate matches and it's a directory.
+pub(crate) fn extend_goto_completion(query: &str, current_dir: &Path) -> String {
+    let (dir_part, leaf) = split_dir_leaf(query);
+    let base =
+        resolve_goto_query(dir_part, current_dir).unwrap_or_else(|| current_dir.to_path_buf());
+    let Ok(entries) = std::fs::read_dir(&base) else {
+        return query.to_string();
+    };
+    let candidates: Vec<(String, bool)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with(leaf) {
+                return None;
+            }
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            Some((name, is_dir))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return query.to_string();
+    }
+    let lcp = longest_common_prefix(candidates.iter().map(|(n, _)| n.as_str()));
+    let completed = if candidates.len() == 1 && candidates[0].1 {
+        format!("{}/", candidates[0].0)
+    } else {
+        lcp
+    };
+    if completed.len() <= leaf.len() {
+        return query.to_string();
+    }
+    if dir_part.is_empty() {
+        completed
+    } else if dir_part.ends_with('/') {
+        format!("{dir_part}{completed}")
+    } else {
+        format!("{dir_part}/{completed}")
+    }
+}
+
+fn split_dir_leaf(query: &str) -> (&str, &str) {
+    match query.rfind('/') {
+        Some(ix) => (&query[..=ix], &query[ix + 1..]),
+        None => ("", query),
+    }
+}
+
+fn longest_common_prefix<'a, I>(items: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut iter = items.into_iter();
+    let Some(first) = iter.next() else {
+        return String::new();
+    };
+    let mut prefix: Vec<char> = first.chars().collect();
+    for s in iter {
+        let mut new_len = 0;
+        for (a, b) in prefix.iter().zip(s.chars()) {
+            if *a == b {
+                new_len += 1;
+            } else {
+                break;
+            }
+        }
+        prefix.truncate(new_len);
+        if prefix.is_empty() {
+            return String::new();
+        }
+    }
+    prefix.into_iter().collect()
+}
+
 pub fn init(cx: &mut App) {
     crate::bookmarks::init(cx);
+    crate::goto_completer::register();
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
     registry.register::<NavigateDown>(&[ObjectKind::File, ObjectKind::Dir]);
@@ -1971,8 +2154,33 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, action: &Reveal, window, cx| {
             handle_reveal(workspace, action.0.clone(), window, cx);
         });
+        workspace.register_action(|workspace, action: &GotoPath, window, cx| {
+            let seed = action.0.clone();
+            focus_or_open_fm_then(workspace, window, cx, |fm, window, cx| {
+                fm.start_goto_path(seed, window, cx);
+            });
+        });
     })
     .detach();
+}
+
+fn focus_or_open_fm_then<F>(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+    body: F,
+) where
+    F: FnOnce(&mut FileManager, &mut Window, &mut Context<FileManager>),
+{
+    if let Some(item) = workspace.recent_active_item_by_type::<FileManager>(cx) {
+        workspace.activate_item(&item, true, true, window, cx);
+        item.update(cx, |fm, cx| body(fm, window, cx));
+        return;
+    }
+    open_file_manager(workspace, window, cx);
+    if let Some(item) = workspace.recent_active_item_by_type::<FileManager>(cx) {
+        item.update(cx, |fm, cx| body(fm, window, cx));
+    }
 }
 
 fn handle_reveal(
@@ -2505,5 +2713,82 @@ mod tests {
         let info = read_image_info(&path, "broken.png".into(), 14);
         assert_eq!(info.dimensions, None);
         assert_eq!(info.mime, "image/png");
+    }
+
+    #[test]
+    fn resolve_goto_query_handles_empty() {
+        let cwd = Path::new("/tmp");
+        assert_eq!(resolve_goto_query("", cwd), None);
+        assert_eq!(resolve_goto_query("   ", cwd), None);
+    }
+
+    #[test]
+    fn resolve_goto_query_absolute_passthrough() {
+        let resolved = resolve_goto_query("/etc", Path::new("/tmp")).unwrap();
+        assert_eq!(resolved, PathBuf::from("/etc"));
+    }
+
+    #[test]
+    fn resolve_goto_query_relative_joins_with_cwd() {
+        let resolved = resolve_goto_query("foo/bar", Path::new("/tmp/x")).unwrap();
+        assert_eq!(resolved, PathBuf::from("/tmp/x/foo/bar"));
+    }
+
+    #[test]
+    fn resolve_goto_query_expands_tilde() {
+        if let Some(home) = std::env::var_os("HOME") {
+            let resolved = resolve_goto_query("~/sub", Path::new("/anywhere")).unwrap();
+            let expected = PathBuf::from(home).join("sub");
+            assert_eq!(resolved, expected);
+        }
+    }
+
+    #[test]
+    fn extend_goto_completion_extends_unique_directory() {
+        let dir = make_tree(&[("alpha", true), ("alpine", true), ("beta", true)]);
+        let extended = extend_goto_completion("a", dir.path());
+        assert_eq!(extended, "alp");
+    }
+
+    #[test]
+    fn extend_goto_completion_appends_slash_on_single_dir_match() {
+        let dir = make_tree(&[("alpha", true), ("beta", true)]);
+        let extended = extend_goto_completion("al", dir.path());
+        assert_eq!(extended, "alpha/");
+    }
+
+    #[test]
+    fn extend_goto_completion_preserves_query_when_no_match() {
+        let dir = make_tree(&[("alpha", true)]);
+        let extended = extend_goto_completion("zzz", dir.path());
+        assert_eq!(extended, "zzz");
+    }
+
+    #[test]
+    fn longest_common_prefix_basic() {
+        assert_eq!(
+            longest_common_prefix(["abcd", "abce", "abcf"].iter().copied()),
+            "abc"
+        );
+        assert_eq!(longest_common_prefix(["abc"].iter().copied()), "abc");
+        assert_eq!(
+            longest_common_prefix(["abc", "xyz"].iter().copied()),
+            String::new()
+        );
+        assert_eq!(longest_common_prefix(std::iter::empty()), String::new());
+    }
+
+    #[test]
+    fn split_dir_leaf_no_slash() {
+        let (d, l) = split_dir_leaf("foo");
+        assert_eq!(d, "");
+        assert_eq!(l, "foo");
+    }
+
+    #[test]
+    fn split_dir_leaf_with_slash() {
+        let (d, l) = split_dir_leaf("a/b/c");
+        assert_eq!(d, "a/b/");
+        assert_eq!(l, "c");
     }
 }
