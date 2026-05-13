@@ -1,7 +1,7 @@
 use git::status::FileStatus;
 use gpui::{
     App, Context, IntoElement, ObjectFit, Render, SharedString, StyledImage, Window, div, img,
-    prelude::*, px, uniform_list,
+    prelude::*, px, relative, uniform_list,
 };
 use theme::ActiveTheme;
 use ui::{
@@ -441,7 +441,7 @@ impl Render for FileManager {
                     .min_h_0()
                     .child(
                         div()
-                            .w_1_4()
+                            .w(relative(parent_fraction(self.preview_fraction)))
                             .h_full()
                             .overflow_hidden()
                             .border_r_1()
@@ -459,7 +459,7 @@ impl Render for FileManager {
                     )
                     .child(
                         div()
-                            .w_1_3()
+                            .w(relative(self.preview_fraction))
                             .h_full()
                             .overflow_hidden()
                             .child(preview_col),
@@ -575,6 +575,22 @@ fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
                 .color(Color::Muted)
                 .buffer_font(cx)
         })))
+}
+
+/// Parent-column fraction as a function of the preview-column fraction.
+/// Stays at 1/4 when preview is at its default 1/3, then scales down
+/// proportionally as the preview column grows so the middle column
+/// always retains usable width even at the 0.80 ceiling. Below the
+/// default preview, parent stays pinned at 1/4 rather than expanding —
+/// the middle column absorbs the freed space, which is the column the
+/// user is steering with j/k.
+pub(crate) fn parent_fraction(preview_fraction: f32) -> f32 {
+    let denom = 1.0 - crate::prefs::PREVIEW_FRACTION_DEFAULT;
+    if denom <= 0.0 {
+        return 0.25;
+    }
+    let factor = ((1.0 - preview_fraction) / denom).clamp(0.0, 1.0);
+    0.25 * factor
 }
 
 /// Width in pixels of the right-aligned metadata column. Sized to fit
@@ -809,6 +825,34 @@ mod tests {
         assert_eq!(format_owner(Some(501), Some(20)), "501:20");
         assert_eq!(format_owner(None, None), "?:?");
         assert_eq!(format_owner(Some(0), None), "0:?");
+    }
+
+    #[test]
+    fn parent_fraction_holds_at_default() {
+        let f = parent_fraction(crate::prefs::PREVIEW_FRACTION_DEFAULT);
+        assert!((f - 0.25).abs() < 1e-4);
+    }
+
+    #[test]
+    fn parent_fraction_shrinks_as_preview_grows() {
+        let f_default = parent_fraction(crate::prefs::PREVIEW_FRACTION_DEFAULT);
+        let f_big = parent_fraction(0.80);
+        assert!(f_big < f_default);
+        assert!(f_big > 0.0);
+    }
+
+    #[test]
+    fn parent_fraction_clamped_below_default() {
+        let f = parent_fraction(0.10);
+        assert!((f - 0.25).abs() < 1e-4);
+    }
+
+    #[test]
+    fn middle_column_never_collapses_at_ceiling() {
+        let preview = crate::prefs::PREVIEW_FRACTION_MAX;
+        let parent = parent_fraction(preview);
+        let middle = 1.0 - preview - parent;
+        assert!(middle > 0.10);
     }
 
     #[test]

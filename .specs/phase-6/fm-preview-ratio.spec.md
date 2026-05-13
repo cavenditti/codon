@@ -7,7 +7,7 @@ summary: >
   `<` shrinks and `>` grows the preview column. Floor 10%, ceiling
   80%; persisted across launches.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-sort-display#c-preview-ratio
 ---

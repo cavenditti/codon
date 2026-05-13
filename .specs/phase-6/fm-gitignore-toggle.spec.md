@@ -7,7 +7,7 @@ summary: >
   `zg` hides / shows git-ignored entries — orthogonal to the existing
   `.` hidden-files toggle.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-sort-display#c-gitignore-toggle
 ---

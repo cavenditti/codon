@@ -7,7 +7,7 @@ summary: >
   Per-entry metadata column — cycle through None / Size / Mtime /
   Permissions / Owner with `M`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-sort-display#c-line-modes
 ---

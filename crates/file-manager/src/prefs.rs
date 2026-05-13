@@ -17,9 +17,10 @@ pub(crate) const PREVIEW_FRACTION_MAX: f32 = 0.80;
 pub(crate) const PREVIEW_FRACTION_DEFAULT: f32 = 0.333;
 pub(crate) const PREVIEW_FRACTION_STEP: f32 = 0.05;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortMode {
+    #[default]
     Name,
     Size,
     Mtime,
@@ -29,26 +30,15 @@ pub enum SortMode {
     Natural,
 }
 
-impl Default for SortMode {
-    fn default() -> Self {
-        SortMode::Name
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineMode {
+    #[default]
     None,
     Size,
     Mtime,
     Permissions,
     Owner,
-}
-
-impl Default for LineMode {
-    fn default() -> Self {
-        LineMode::None
-    }
 }
 
 impl LineMode {
