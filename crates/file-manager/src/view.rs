@@ -217,6 +217,13 @@ impl FileManager {
                 )
             }
             PendingInput::GotoPath { query } => (":cd ", query.as_str().into()),
+            PendingInput::Chmod { input, targets } => {
+                let count = targets.len();
+                (
+                    "chmod: ",
+                    format!("{input}   ({count} entries — octal or symbolic)").into(),
+                )
+            }
         };
 
         let theme = cx.theme();

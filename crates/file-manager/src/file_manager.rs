@@ -204,6 +204,16 @@ pub(crate) enum PendingInput {
     /// `:cd <path>` prompt — Tab extends with longest-common-prefix of
     /// filesystem matches; Enter resolves and navigates.
     GotoPath { query: String },
+    /// `cm` chmod prompt: octal (`755`, `0o755`) or symbolic
+    /// (`u+x`, `a=r,g-w`) mode string. `targets` is the snapshot of
+    /// affected paths captured when the chord resolved — either the
+    /// marked set or, if no marks, the focused entry. Each entry's
+    /// current mode is paired alongside so symbolic clauses (which
+    /// build on the existing mode) survive a directory change.
+    Chmod {
+        input: String,
+        targets: Vec<(PathBuf, Option<u32>)>,
+    },
 }
 
 /// One unit of work for a paste operation: where the bytes come from and
@@ -997,6 +1007,95 @@ impl FileManager {
         cx.notify();
     }
 
+    /// `cm` chord: snapshot the affected paths + their current mode and
+    /// open the chmod input bar. If nothing is marked, fall back to the
+    /// focused entry — `cm` should never be a silent no-op when the user
+    /// pressed `m` after `c`.
+    fn start_bulk_chmod(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let targets: Vec<(PathBuf, Option<u32>)> = if self.marked.is_empty() {
+            self.entries
+                .get(self.selected_index)
+                .map(|e| vec![(e.path.clone(), e.mode)])
+                .unwrap_or_default()
+        } else {
+            self.marked
+                .iter()
+                .filter_map(|&i| {
+                    self.entries
+                        .get(i)
+                        .map(|e| (e.path.clone(), e.mode))
+                })
+                .collect()
+        };
+        if targets.is_empty() {
+            return;
+        }
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::Chmod {
+            input: String::new(),
+            targets,
+        });
+        cx.notify();
+    }
+
+    /// Apply `input` (octal or symbolic) to every snapshot path. On
+    /// Windows this is a no-op + toast — `fs::Fs::set_permissions` itself
+    /// is a no-op on non-unix, but we surface a message so the user
+    /// knows the keystroke landed and was ignored.
+    fn execute_bulk_chmod(
+        &mut self,
+        input: String,
+        targets: Vec<(PathBuf, Option<u32>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(not(unix))]
+        {
+            let _ = (input, targets, window);
+            self.surface_error("chmod is a unix-only operation", cx);
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            let trimmed = input.trim();
+            let plan: Result<Vec<(PathBuf, u32)>, String> = targets
+                .iter()
+                .map(|(path, current)| {
+                    apply_chmod_input(trimmed, *current).map(|mode| (path.clone(), mode))
+                })
+                .collect();
+            let plan = match plan {
+                Ok(plan) => plan,
+                Err(message) => {
+                    self.surface_error(format!("Bad chmod input: {message}"), cx);
+                    return;
+                }
+            };
+            let fs = self.fs.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+                for (path, mode) in plan {
+                    if let Err(e) = fs.set_permissions(&path, mode).await {
+                        failures.push((path, e));
+                    }
+                }
+                this.update_in(cx, |this, window, cx| {
+                    for (path, e) in &failures {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        this.surface_error(format!("chmod {name}: {e}"), cx);
+                    }
+                    this.reload_entries(window, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
     fn execute_bulk_rename(
         &mut self,
         pattern: String,
@@ -1205,7 +1304,8 @@ impl FileManager {
                     | PendingInput::CreateDirectory(s)
                     | PendingInput::Rename { new_name: s, .. }
                     | PendingInput::BulkRename { pattern: s, .. }
-                    | PendingInput::GotoPath { query: s } => {
+                    | PendingInput::GotoPath { query: s }
+                    | PendingInput::Chmod { input: s, .. } => {
                         s.pop();
                     }
                     PendingInput::Filter => {
@@ -1321,6 +1421,11 @@ impl FileManager {
                         cx.notify();
                         self.goto_path(&query, window, cx);
                     }
+                    PendingInput::Chmod { input, targets } if !input.trim().is_empty() => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.execute_bulk_chmod(input, targets, window, cx);
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -1361,7 +1466,8 @@ impl FileManager {
                             | PendingInput::CreateDirectory(s)
                             | PendingInput::Rename { new_name: s, .. }
                             | PendingInput::BulkRename { pattern: s, .. }
-                            | PendingInput::GotoPath { query: s } => {
+                            | PendingInput::GotoPath { query: s }
+                            | PendingInput::Chmod { input: s, .. } => {
                                 s.push_str(ch);
                             }
                             PendingInput::Filter => {
@@ -1435,6 +1541,12 @@ impl FileManager {
                     cx.stop_propagation();
                     return;
                 }
+                'c' if !shift && !ctrl && key == "m" => {
+                    self.start_bulk_chmod(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
                 _ => {}
             }
         }
@@ -1501,6 +1613,13 @@ impl FileManager {
             }
             "z" if !shift && !ctrl => {
                 self.pending_chord = Some('z');
+                cx.notify();
+                true
+            }
+            // `c` chord starter: `cm` opens the bulk-chmod input,
+            // `cw` opens the bulk-rename buffer in the workspace.
+            "c" if !shift && !ctrl => {
+                self.pending_chord = Some('c');
                 cx.notify();
                 true
             }
@@ -1900,6 +2019,105 @@ fn apply_rename_pattern(pattern: &str, index: usize) -> String {
     } else {
         format!("{stem}{counter}.{extension}")
     }
+}
+
+/// Resolve a chmod input string against the entry's current mode.
+/// Accepts either an octal number (`755`, `0755`, `0o755`) or one or
+/// more symbolic clauses separated by `,` (`u+x`, `a=r,go-w`). The
+/// `current` mode is only consulted for symbolic input; pure-octal
+/// input replaces the mode outright. Returns the final mode masked to
+/// `0o7777` (so set-uid / set-gid bits survive) on success, or a short
+/// human message describing why the input was rejected.
+pub(crate) fn apply_chmod_input(input: &str, current: Option<u32>) -> Result<u32, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("empty input".to_string());
+    }
+    if let Some(mode) = parse_octal_mode(trimmed) {
+        return Ok(mode & 0o7777);
+    }
+    let base = current.unwrap_or(0) & 0o7777;
+    apply_symbolic_chmod(trimmed, base).map(|m| m & 0o7777)
+}
+
+fn parse_octal_mode(input: &str) -> Option<u32> {
+    let stripped = input
+        .strip_prefix("0o")
+        .or_else(|| input.strip_prefix("0O"))
+        .or_else(|| input.strip_prefix('0'))
+        .unwrap_or(input);
+    let candidate = if stripped.is_empty() { input } else { stripped };
+    if candidate.is_empty() || !candidate.chars().all(|c| ('0'..='7').contains(&c)) {
+        return None;
+    }
+    u32::from_str_radix(candidate, 8).ok()
+}
+
+/// Parse a comma-separated chmod symbolic expression and fold it over
+/// `base`. Grammar (a subset of GNU chmod's): `[ugoa]*[+-=][rwx]+`.
+/// Empty `who` is treated as `a` (matching chmod's default minus the
+/// umask wrinkle — we apply to all three classes since this is an
+/// interactive verb on already-existing files).
+fn apply_symbolic_chmod(input: &str, base: u32) -> Result<u32, String> {
+    let mut mode = base;
+    for clause in input.split(',') {
+        let clause = clause.trim();
+        if clause.is_empty() {
+            return Err(format!("empty clause in '{input}'"));
+        }
+        mode = apply_symbolic_clause(clause, mode)?;
+    }
+    Ok(mode)
+}
+
+fn apply_symbolic_clause(clause: &str, mode: u32) -> Result<u32, String> {
+    let bytes = clause.as_bytes();
+    let mut idx = 0;
+    let mut who_mask: u32 = 0;
+    while idx < bytes.len() {
+        let bit = match bytes[idx] {
+            b'u' => 0o700,
+            b'g' => 0o070,
+            b'o' => 0o007,
+            b'a' => 0o777,
+            _ => break,
+        };
+        who_mask |= bit;
+        idx += 1;
+    }
+    if who_mask == 0 {
+        who_mask = 0o777;
+    }
+    if idx >= bytes.len() {
+        return Err(format!("missing operator in '{clause}'"));
+    }
+    let op = bytes[idx];
+    if !matches!(op, b'+' | b'-' | b'=') {
+        return Err(format!("expected +/-/= in '{clause}'"));
+    }
+    idx += 1;
+    let mut perm_bits: u32 = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'r' => perm_bits |= 0o444,
+            b'w' => perm_bits |= 0o222,
+            b'x' => perm_bits |= 0o111,
+            other => {
+                return Err(format!(
+                    "unsupported permission '{}' in '{clause}'",
+                    other as char
+                ));
+            }
+        }
+        idx += 1;
+    }
+    let masked = perm_bits & who_mask;
+    Ok(match op {
+        b'+' => mode | masked,
+        b'-' => mode & !masked,
+        b'=' => (mode & !who_mask) | masked,
+        _ => unreachable!(),
+    })
 }
 
 /// Seed the input bar with a sensible default pattern based on the
@@ -3175,5 +3393,36 @@ mod tests {
         );
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["note.md", "lib.rs", "main.rs", "readme.txt"]);
+    }
+
+    #[test]
+    fn apply_chmod_input_octal_replaces_mode() {
+        assert_eq!(apply_chmod_input("755", Some(0o644)), Ok(0o755));
+        assert_eq!(apply_chmod_input("0755", Some(0o644)), Ok(0o755));
+        assert_eq!(apply_chmod_input("0o755", Some(0o644)), Ok(0o755));
+        // Set-uid bits round-trip.
+        assert_eq!(apply_chmod_input("4755", Some(0o644)), Ok(0o4755));
+    }
+
+    #[test]
+    fn apply_chmod_input_symbolic_combines_with_current() {
+        // u+x flips owner-execute on a 644 file.
+        assert_eq!(apply_chmod_input("u+x", Some(0o644)), Ok(0o744));
+        // Default who = a; +x sets execute for everyone.
+        assert_eq!(apply_chmod_input("+x", Some(0o644)), Ok(0o755));
+        // Comma-separated clauses fold in order.
+        assert_eq!(apply_chmod_input("u+x,go-w", Some(0o666)), Ok(0o744));
+        // = wipes the targeted who-class first.
+        assert_eq!(apply_chmod_input("a=r", Some(0o777)), Ok(0o444));
+    }
+
+    #[test]
+    fn apply_chmod_input_rejects_bad_inputs() {
+        assert!(apply_chmod_input("", Some(0o644)).is_err());
+        // 9 is not a valid octal digit, and there's no operator either.
+        assert!(apply_chmod_input("9", Some(0o644)).is_err());
+        assert!(apply_chmod_input("u", Some(0o644)).is_err());
+        assert!(apply_chmod_input("u+z", Some(0o644)).is_err());
+        assert!(apply_chmod_input("u+x,", Some(0o644)).is_err());
     }
 }

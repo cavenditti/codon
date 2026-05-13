@@ -7,7 +7,7 @@ summary: >
   `cm` opens an input bar for octal (`755`) or symbolic (`u+x`)
   modes. Applies to marked entries via `fs::Fs::set_permissions`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-bulk-editor#c-bulk-chmod
 ---
