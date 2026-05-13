@@ -209,6 +209,13 @@ impl FileManager {
                     format!("{count} entries to trash — y/N").into(),
                 )
             }
+            PendingInput::ConfirmSkipTrashDelete { targets } => {
+                let count = targets.len();
+                (
+                    "skip-trash? ",
+                    format!("permanently delete {count} entries — y/N").into(),
+                )
+            }
             PendingInput::BulkRename { pattern, targets } => {
                 let count = targets.len();
                 (

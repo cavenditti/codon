@@ -219,6 +219,7 @@ pub(crate) enum PendingInput {
     /// `targets` carries the snapshot of paths so the prompt is stable
     /// even if the listing changes mid-input.
     ConfirmDeleteMarked { targets: Vec<PathBuf> },
+    ConfirmSkipTrashDelete { targets: Vec<PathBuf> },
     /// `R` with marks: input-bar pattern using `{}` as a counter
     /// placeholder. `targets` is the snapshot of marked paths, in
     /// display order, captured at the moment `R` was pressed.
@@ -1408,6 +1409,55 @@ impl FileManager {
         self.execute_delete(targets, window, cx);
     }
 
+    fn start_skip_trash_delete(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let targets = self.current_targets();
+        if targets.is_empty() {
+            return;
+        }
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::ConfirmSkipTrashDelete { targets });
+        cx.notify();
+    }
+
+    fn execute_hard_delete(
+        &mut self,
+        targets: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for path in targets {
+                let options = fs::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                };
+                let is_dir = fs.is_dir(&path).await;
+                let result = if is_dir {
+                    fs.remove_dir(&path, options).await
+                } else {
+                    fs.remove_file(&path, options).await
+                };
+                if let Err(e) = result {
+                    failures.push((path, e));
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    this.surface_error(format!("Couldn't delete {name}: {e}"), cx);
+                }
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn execute_delete(
         &mut self,
         targets: Vec<PathBuf>,
@@ -1840,11 +1890,8 @@ impl FileManager {
                         Some((query.clone(), *origin_index, false))
                     }
                     PendingInput::ConfirmOverwrite { .. }
-                    | PendingInput::ConfirmDeleteMarked { .. } => {
-                        // Nothing to edit on the prompt; expected response is
-                        // y/n or Esc.
-                        None
-                    }
+                    | PendingInput::ConfirmDeleteMarked { .. }
+                    | PendingInput::ConfirmSkipTrashDelete { .. } => None,
                 };
                 if let Some((q, origin, forward)) = find_step {
                     self.apply_find_preview(&q, origin, forward);
@@ -1935,10 +1982,8 @@ impl FileManager {
                         cx.notify();
                     }
                     PendingInput::ConfirmOverwrite { .. }
-                    | PendingInput::ConfirmDeleteMarked { .. } => {
-                        // Bare Enter on a destructive prompt is treated as
-                        // "no" — safer default than acting without an
-                        // explicit `y`.
+                    | PendingInput::ConfirmDeleteMarked { .. }
+                    | PendingInput::ConfirmSkipTrashDelete { .. } => {
                         self.mode = PaneMode::Normal;
                         cx.notify();
                     }
@@ -1992,6 +2037,7 @@ impl FileManager {
                         pending,
                         PendingInput::ConfirmOverwrite { .. }
                             | PendingInput::ConfirmDeleteMarked { .. }
+                            | PendingInput::ConfirmSkipTrashDelete { .. }
                     ) {
                         match ch {
                             "y" | "Y" => match self.pending_input.take() {
@@ -2002,6 +2048,10 @@ impl FileManager {
                                 Some(PendingInput::ConfirmDeleteMarked { targets }) => {
                                     self.mode = PaneMode::Normal;
                                     self.execute_delete(targets, window, cx);
+                                }
+                                Some(PendingInput::ConfirmSkipTrashDelete { targets }) => {
+                                    self.mode = PaneMode::Normal;
+                                    self.execute_hard_delete(targets, window, cx);
                                 }
                                 other => {
                                     self.pending_input = other;
@@ -2042,10 +2092,8 @@ impl FileManager {
                                 Some((query.clone(), *origin_index, false))
                             }
                             PendingInput::ConfirmOverwrite { .. }
-                            | PendingInput::ConfirmDeleteMarked { .. } => {
-                                // Handled in the branch above.
-                                None
-                            }
+                            | PendingInput::ConfirmDeleteMarked { .. }
+                            | PendingInput::ConfirmSkipTrashDelete { .. } => None,
                         };
                         if let Some((q, origin, forward)) = find_step {
                             self.apply_find_preview(&q, origin, forward);
@@ -2288,6 +2336,7 @@ impl FileManager {
             "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
             "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
             "t" if shift && !ctrl => { self.open_trash_modal(window, cx); true }
+            "x" if shift && !ctrl => { self.start_skip_trash_delete(window, cx); true }
             "escape" if self.shell_running.is_some() => {
                 self.terminate_shell_command(cx);
                 true
