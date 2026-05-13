@@ -436,7 +436,7 @@ impl Render for FileManager {
                                 .color(Color::Accent),
                         )
                         .child(
-                            Label::new("(Esc to clear, / to edit)")
+                            Label::new("(Esc to clear, f to edit)")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),

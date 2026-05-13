@@ -1709,8 +1709,8 @@ impl FileManager {
             "r" if shift => { self.start_bulk_rename(window, cx); true }
             // Toggles
             "." if !shift && !ctrl => { self.toggle_hidden(&ToggleHidden, window, cx); true }
-            // Fuzzy filter
-            "/" => { self.start_filter(window, cx); true }
+            // Fuzzy filter (phase-7: moved from `/` to `f`; `/` is now find-forward).
+            "f" if !shift && !ctrl => { self.start_filter(window, cx); true }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true

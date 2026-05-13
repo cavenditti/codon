@@ -7,7 +7,7 @@ summary: >
   Migrate codon's existing `/`-as-filter behavior to `f`. Frees `/` for
   find-forward (see TASK:phase-7/fm-find-mode).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-find-search#c-filter-rebind
 ---
