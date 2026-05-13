@@ -630,17 +630,51 @@ impl FileManager {
             self.current_dir = entry.path;
             self.selected_index = 0;
             self.reload_entries(window, cx);
-        } else {
-            let path = entry.path;
-            let workspace = self.workspace.clone();
-            cx.spawn_in(window, async move |_, cx| {
-                if let Ok(task) = workspace.update_in(cx, |workspace, window, cx| {
-                    workspace.open_abs_path(path, Default::default(), window, cx)
-                }) {
-                    task.await.log_err();
-                }
-            })
-            .detach();
+            return;
+        }
+
+        self.open_focused_file(entry.path, window, cx);
+    }
+
+    /// File-branch routing for `enter_directory`. Consults the
+    /// `OpenerStore` first:
+    ///
+    /// - unique match → spawn it through the existing shell-exec
+    ///   dispatch, fully respecting marked-set semantics (so Enter on
+    ///   any marked entry runs the opener for the whole marked set
+    ///   when the user has marks live);
+    /// - multiple matches → surface the `O` picker so the user picks
+    ///   explicitly instead of guessing the first match;
+    /// - zero matches → fall through to today's
+    ///   `workspace.open_abs_path` path.
+    ///
+    /// The fallthrough preserves Zed's project-item registry behavior
+    /// for files codon already knows how to handle (text, images, …),
+    /// so users with no opener config keep today's UX exactly.
+    fn open_focused_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let matches = cx
+            .try_global::<crate::openers::OpenerStore>()
+            .map(|s| s.matches_for(&path))
+            .unwrap_or_default();
+
+        match matches.len() {
+            0 => self.open_paths_default(vec![path], window, cx),
+            1 => {
+                let opener = matches.into_iter().next().expect("len == 1");
+                let targets = self.opener_targets();
+                self.run_opener_choice(
+                    crate::openers::OpenerChoice::Opener(opener),
+                    targets,
+                    window,
+                    cx,
+                );
+            }
+            _ => self.choose_opener(window, cx),
         }
     }
 
@@ -1389,7 +1423,7 @@ impl FileManager {
                             });
                         }
                     },
-                    weak.clone(),
+                    weak,
                     window,
                     cx,
                 )
@@ -1433,9 +1467,9 @@ impl FileManager {
         match choice {
             crate::openers::OpenerChoice::Default => {
                 let paths = if targets.marked.is_empty() {
-                    vec![targets.cursor.clone()]
+                    vec![targets.cursor]
                 } else {
-                    targets.marked.clone()
+                    targets.marked
                 };
                 self.open_paths_default(paths, window, cx);
             }

@@ -8,7 +8,7 @@ summary: >
   workspace.open_abs_path. Unique-match opens directly; multi-match
   surfaces the `O` picker.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-openers#c-default-opener-route
 ---
