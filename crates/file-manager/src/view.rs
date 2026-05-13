@@ -227,6 +227,8 @@ impl FileManager {
             PendingInput::FindForward { query, .. } => ("find: ", query.as_str().into()),
             PendingInput::FindBackward { query, .. } => ("find?: ", query.as_str().into()),
             PendingInput::ContentSearchQuery(query) => ("rg: ", query.as_str().into()),
+            PendingInput::ShellBlocking { input } => ("! ", input.as_str().into()),
+            PendingInput::ShellAsync { input } => ("; ", input.as_str().into()),
         };
 
         let theme = cx.theme();
@@ -293,6 +295,10 @@ impl Render for FileManager {
             parts.join(" | ")
         };
         let error_message = self.error_message.clone();
+        let shell_banner = self
+            .shell_running
+            .as_ref()
+            .map(|r| r.command.clone());
 
         let entries = self.entries.clone();
         let marked = self.marked.clone();
@@ -476,6 +482,36 @@ impl Render for FileManager {
                     ),
             )
             .child(input_bar)
+            .when_some(shell_banner, |this, cmd| {
+                let truncated: String = cmd.chars().take(80).collect();
+                this.child(
+                    div()
+                        .px(px(8.))
+                        .py(px(2.))
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(theme.colors().editor_background)
+                        .child(
+                            h_flex()
+                                .gap(px(6.))
+                                .child(
+                                    Label::new("running:")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(truncated)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Default),
+                                )
+                                .child(
+                                    Label::new("(Esc to terminate)")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        ),
+                )
+            })
             .when_some(error_message, |this, msg| {
                 this.child(
                     div()

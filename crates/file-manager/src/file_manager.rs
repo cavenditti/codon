@@ -181,10 +181,8 @@ pub struct FileManager {
     pub(crate) line_mode: crate::prefs::LineMode,
     pub(crate) show_gitignored: bool,
     pub(crate) preview_fraction: f32,
-    /// Last committed find query (from `/` or `?`). `n` and `N` walk
-    /// forward / backward through matches of this pattern. None until
-    /// the user commits a find via Enter.
     pub(crate) last_find_pattern: Option<String>,
+    pub(crate) shell_running: Option<ShellRunState>,
 }
 
 #[derive(Clone)]
@@ -214,10 +212,16 @@ pub(crate) enum PendingInput {
     },
     FindForward { query: String, origin_index: usize },
     FindBackward { query: String, origin_index: usize },
-    /// `S` content-search query prompt — typed before the rg modal opens
-    /// so the rg invocation has something to search for. Enter launches
-    /// the modal; Esc aborts.
     ContentSearchQuery(String),
+    ShellBlocking { input: String },
+    ShellAsync { input: String },
+}
+
+pub(crate) struct ShellRunState {
+    pub(crate) command: String,
+    pub(crate) terminal: gpui::WeakEntity<terminal_view::TerminalView>,
+    pub(crate) escape_count: u8,
+    pub(crate) _watcher: Task<()>,
 }
 
 /// One unit of work for a paste operation: where the bytes come from and
@@ -287,6 +291,7 @@ impl FileManager {
             show_gitignored: prefs.show_gitignored,
             preview_fraction: crate::prefs::clamp_fraction(prefs.preview_fraction),
             last_find_pattern: None,
+            shell_running: None,
         };
         this.reload_entries_sync();
         this
@@ -1587,7 +1592,9 @@ impl FileManager {
                     | PendingInput::BulkRename { pattern: s, .. }
                     | PendingInput::GotoPath { query: s }
                     | PendingInput::Chmod { input: s, .. }
-                    | PendingInput::ContentSearchQuery(s) => {
+                    | PendingInput::ContentSearchQuery(s)
+                    | PendingInput::ShellBlocking { input: s }
+                    | PendingInput::ShellAsync { input: s } => {
                         s.pop();
                         None
                     }
@@ -1735,6 +1742,16 @@ impl FileManager {
                         cx.notify();
                         self.launch_content_search(query, window, cx);
                     }
+                    PendingInput::ShellBlocking { input } if !input.trim().is_empty() => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.execute_shell_blocking(input, window, cx);
+                    }
+                    PendingInput::ShellAsync { input } if !input.trim().is_empty() => {
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                        self.execute_shell_async(input, window, cx);
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -1777,7 +1794,9 @@ impl FileManager {
                             | PendingInput::BulkRename { pattern: s, .. }
                             | PendingInput::GotoPath { query: s }
                             | PendingInput::Chmod { input: s, .. }
-                            | PendingInput::ContentSearchQuery(s) => {
+                            | PendingInput::ContentSearchQuery(s)
+                            | PendingInput::ShellBlocking { input: s }
+                            | PendingInput::ShellAsync { input: s } => {
                                 s.push_str(ch);
                                 None
                             }
@@ -1991,24 +2010,18 @@ impl FileManager {
             "r" if shift => { self.start_bulk_rename(window, cx); true }
             // Toggles
             "." if !shift && !ctrl => { self.toggle_hidden(&ToggleHidden, window, cx); true }
-            // Fuzzy filter (phase-7: moved from `/` to `f`; `/` is now find-forward).
             "f" if !shift && !ctrl => { self.start_filter(window, cx); true }
-            // Find: yazi-style incremental jump. `/` searches forward, `?`
-            // backward; on commit the query is parked in
-            // `last_find_pattern` so `n` / `N` repeat the walk.
             "/" if !ctrl => { self.start_find_forward(window, cx); true }
             "?" if !ctrl => { self.start_find_backward(window, cx); true }
             "n" if !shift && !ctrl => { self.find_next(cx); true }
             "n" if shift && !ctrl => { self.find_prev(cx); true }
-            // External search pickers. `s` runs `fd` (or walkdir
-            // fallback) rooted at current_dir; `S` runs ripgrep on
-            // contents; `Z` opens zoxide. Plain `z` is the chord
-            // starter for the sort cluster's `zg` (toggle gitignore),
-            // so we keep zoxide on shift-Z to avoid clobbering the
-            // chord dispatcher.
             "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
             "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
             "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
+            "escape" if self.shell_running.is_some() => {
+                self.terminate_shell_command(cx);
+                true
+            }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true
@@ -2023,11 +2036,291 @@ impl FileManager {
                 window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
                 true
             }
+            // Shell exec
+            ";" if !shift && !ctrl => { self.start_shell_async(window, cx); true }
+            "!" if !ctrl => { self.start_shell_blocking(window, cx); true }
             _ => false,
         };
         if handled {
             cx.stop_propagation();
         }
+    }
+
+    /// `!` (blocking) — open an Insert-mode prompt seeded for the user
+    /// to type a shell command. While `shell_running` is `Some`, the FM
+    /// grays out and a foreground-process watcher releases it.
+    fn start_shell_blocking(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.shell_running.is_some() {
+            return;
+        }
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::ShellBlocking {
+            input: String::new(),
+        });
+        cx.notify();
+    }
+
+    /// `;` (async) — same prompt as `!` minus the overlay + the toast.
+    /// `shell_running` is never set on this path.
+    fn start_shell_async(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::ShellAsync {
+            input: String::new(),
+        });
+        cx.notify();
+    }
+
+    /// Apply `{path}` / `{paths}` / `{name}` / `{names}` / `{cwd}` /
+    /// `{parent}` against the current FM state. Used by both the
+    /// blocking and async exec paths so the substitution rules stay in
+    /// one place.
+    fn substitute_shell_template(&self, template: &str) -> String {
+        let cursor = self
+            .entries
+            .get(self.selected_index)
+            .map(|e| e.path.clone())
+            .unwrap_or_else(|| self.current_dir.clone());
+        let marked: Vec<PathBuf> = self
+            .marked
+            .iter()
+            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+            .collect();
+        crate::shell::apply_substitutions(template, &cursor, &marked, &self.current_dir)
+    }
+
+    /// `!` Enter path — pick (or spawn) the terminal, send the
+    /// substituted command, then arm a foreground-process watcher that
+    /// surfaces stderr / clears the overlay when the command exits.
+    fn execute_shell_blocking(
+        &mut self,
+        template: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = self.substitute_shell_template(&template);
+        if command.trim().is_empty() {
+            return;
+        }
+        self.dispatch_shell_command(template, command, /* blocking */ true, window, cx);
+    }
+
+    /// `;` Enter path — pick (or spawn) the terminal and send the
+    /// substituted command. No overlay, no watcher, no toast.
+    fn execute_shell_async(
+        &mut self,
+        template: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = self.substitute_shell_template(&template);
+        if command.trim().is_empty() {
+            return;
+        }
+        self.dispatch_shell_command(template, command, /* blocking */ false, window, cx);
+    }
+
+    fn dispatch_shell_command(
+        &mut self,
+        template: String,
+        command: String,
+        blocking: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            self.surface_error("Workspace unavailable", cx);
+            return;
+        };
+        let cwd = self.current_dir.clone();
+
+        let target = {
+            let ws = workspace.read(cx);
+            crate::shell::pick_terminal_for_shell(ws, cx)
+        };
+
+        match target {
+            crate::shell::TerminalTarget::Existing(view) => {
+                // Reuse path: activate the pane, frame the command with
+                // a cd so the user gets `cwd`-relative behavior.
+                let view_clone = view.clone();
+                workspace.update(cx, |workspace, cx| {
+                    crate::shell::focus_terminal(workspace, &view_clone, window, cx);
+                });
+                crate::shell::send_to_terminal(&view, &cwd, &command, blocking, cx);
+                if blocking {
+                    self.arm_shell_watcher(template, command, view, window, cx);
+                }
+            }
+            crate::shell::TerminalTarget::New => {
+                // New-terminal path: spawn a fresh shell rooted at
+                // `cwd`, send the command once the PTY is ready. The
+                // returned Terminal entity is wrapped by the panel as a
+                // TerminalView — we look it up afterward via the same
+                // MRU lookup so the watcher gets the view handle.
+                let cmd_for_spawn = command.clone();
+                let template_for_arm = template.clone();
+                let command_for_arm = command.clone();
+                let spawn_task = workspace.update(cx, |workspace, cx| {
+                    crate::shell::spawn_new_terminal_and_run(
+                        workspace,
+                        cwd,
+                        cmd_for_spawn,
+                        blocking,
+                        window,
+                        cx,
+                    )
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let _terminal = spawn_task.await;
+                    if !blocking {
+                        return;
+                    }
+                    let Ok(view) = cx.update(|_, cx| {
+                        workspace
+                            .read(cx)
+                            .recent_active_item_by_type::<terminal_view::TerminalView>(cx)
+                    }) else {
+                        return;
+                    };
+                    let Some(view) = view else { return };
+                    this.update_in(cx, |this, window, cx| {
+                        this.arm_shell_watcher(
+                            template_for_arm,
+                            command_for_arm,
+                            view,
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        }
+    }
+
+    /// Hold a polling task that compares the PTY's foreground pgrp to
+    /// the shell's own pid; when they re-converge the command has
+    /// exited and we drop the overlay + (if non-zero) surface stderr.
+    fn arm_shell_watcher(
+        &mut self,
+        _template: String,
+        command: String,
+        view: gpui::Entity<terminal_view::TerminalView>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak_view = view.downgrade();
+        let weak_view_for_state = weak_view.clone();
+        let weak_self = cx.entity().downgrade();
+        let watcher = cx.spawn(async move |_this, cx| {
+            // Give the shell a moment to start the child before we look
+            // for the foreground pgrp — otherwise the very first poll
+            // observes the still-idle shell and the overlay closes
+            // instantly.
+            cx.background_executor()
+                .timer(crate::shell::SHELL_POLL_INTERVAL)
+                .await;
+            loop {
+                let still_running = cx.update(|cx| {
+                    let Some(view) = weak_view.upgrade() else {
+                        return false;
+                    };
+                    let term = view.read(cx).entity().read(cx);
+                    let Some(getter) = term.pid_getter() else {
+                        return false;
+                    };
+                    let Some(foreground) = term.pid() else {
+                        return false;
+                    };
+                    foreground != getter.fallback_pid()
+                });
+                if !still_running {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(crate::shell::SHELL_POLL_INTERVAL)
+                    .await;
+            }
+            let tail = cx.update(|cx| match weak_view.upgrade() {
+                Some(view) => crate::shell::snapshot_tail(&view, 8, cx),
+                None => Vec::new(),
+            });
+            weak_self
+                .update(cx, |fm, cx| {
+                    fm.finish_shell_blocking(tail, cx);
+                })
+                .ok();
+        });
+        self.shell_running = Some(ShellRunState {
+            command,
+            terminal: weak_view_for_state,
+            escape_count: 0,
+            _watcher: watcher,
+        });
+        cx.notify();
+    }
+
+    /// Called by the watcher once the PTY foreground pgrp re-converges
+    /// to the shell — i.e. the command exited. If the captured stderr
+    /// tail contains a `__codon_exit_marker:N` line with `N != 0`, the
+    /// last 8 lines surface via `surface_error`. Otherwise the overlay
+    /// is just dismissed.
+    fn finish_shell_blocking(&mut self, tail: Vec<String>, cx: &mut Context<Self>) {
+        let Some(run) = self.shell_running.take() else {
+            return;
+        };
+        let command = run.command;
+        cx.notify();
+
+        let (exit_status, body) = parse_shell_tail(&tail);
+
+        let title: String = command.chars().take(60).collect();
+        match exit_status {
+            Some(0) | None => {
+                // Success or unknown exit — no toast. (Unknown means we
+                // couldn't parse a marker line; assume the user saw the
+                // output in the terminal pane already.)
+            }
+            Some(_) => {
+                let msg = if body.is_empty() {
+                    format!("{title} (exit {})", exit_status.unwrap_or_default())
+                } else {
+                    format!("{title}\n{body}")
+                };
+                self.surface_error(msg, cx);
+            }
+        }
+    }
+
+    /// `Esc` while a `!` command is running:
+    ///   - first press: send Ctrl-C (`\x03`) — the foreground process
+    ///     group receives SIGINT through the PTY.
+    ///   - second press: send Ctrl-\\ (`\x1c`, SIGQUIT) so a hung
+    ///     program that ignored SIGINT still gets killed.
+    /// The third press drops the overlay outright so the user can
+    /// regain FM control even when the program is wedged in the kernel.
+    fn terminate_shell_command(&mut self, cx: &mut Context<Self>) {
+        let Some(run) = self.shell_running.as_mut() else {
+            return;
+        };
+        run.escape_count = run.escape_count.saturating_add(1);
+        let count = run.escape_count;
+        if let Some(view) = run.terminal.upgrade() {
+            let signal: &[u8] = match count {
+                1 => b"\x03",
+                _ => b"\x1c",
+            };
+            let bytes: Vec<u8> = signal.to_vec();
+            let terminal = view.read(cx).entity().clone();
+            terminal.update(cx, |term, _cx| {
+                term.input(bytes);
+            });
+        }
+        if count >= 3 {
+            self.shell_running = None;
+        }
+        cx.notify();
     }
 
     /// Resolve `query` against `current_dir` (expanding a leading `~`)
@@ -2346,6 +2639,30 @@ async fn copy_path(
 
 fn plural_y(count: usize) -> &'static str {
     if count == 1 { "y" } else { "ies" }
+}
+
+/// Inspect the last few lines of terminal output for a
+/// `__codon_exit_marker:N` line emitted by the blocking-exec frame.
+/// Returns the captured exit status (when present) and the
+/// (newline-joined) tail with the marker line stripped — used as the
+/// body of the `surface_error` toast when the exit was non-zero.
+///
+/// The marker is a codon-internal convention; we don't bother with PIDs
+/// or correlation IDs because the terminal pane only ever runs one of
+/// our blocking commands at a time (the FM blocks while it's running).
+fn parse_shell_tail(tail: &[String]) -> (Option<i32>, String) {
+    let mut exit_status: Option<i32> = None;
+    let mut filtered: Vec<&str> = Vec::with_capacity(tail.len());
+    for line in tail {
+        if let Some(rest) = line.trim().strip_prefix("__codon_exit_marker:")
+            && let Ok(n) = rest.parse::<i32>()
+        {
+            exit_status = Some(n);
+            continue;
+        }
+        filtered.push(line.as_str());
+    }
+    (exit_status, filtered.join("\n"))
 }
 
 /// Substitute every `{}` in `pattern` with `index`. Multiple
@@ -3770,5 +4087,36 @@ mod tests {
         assert!(apply_chmod_input("u", Some(0o644)).is_err());
         assert!(apply_chmod_input("u+z", Some(0o644)).is_err());
         assert!(apply_chmod_input("u+x,", Some(0o644)).is_err());
+    }
+
+    #[test]
+    fn parse_shell_tail_extracts_exit_status_and_filters_marker() {
+        let tail = vec![
+            "error: something went wrong".to_string(),
+            "stack frame".to_string(),
+            "__codon_exit_marker:1".to_string(),
+        ];
+        let (status, body) = parse_shell_tail(&tail);
+        assert_eq!(status, Some(1));
+        assert_eq!(body, "error: something went wrong\nstack frame");
+    }
+
+    #[test]
+    fn parse_shell_tail_returns_none_when_no_marker() {
+        let tail = vec!["hello".to_string(), "world".to_string()];
+        let (status, body) = parse_shell_tail(&tail);
+        assert!(status.is_none());
+        assert_eq!(body, "hello\nworld");
+    }
+
+    #[test]
+    fn parse_shell_tail_handles_success_marker() {
+        let tail = vec![
+            "build complete".to_string(),
+            "__codon_exit_marker:0".to_string(),
+        ];
+        let (status, body) = parse_shell_tail(&tail);
+        assert_eq!(status, Some(0));
+        assert_eq!(body, "build complete");
     }
 }

@@ -209,6 +209,12 @@ fn terminal_is_idle(view: &Entity<TerminalView>, cx: &App) -> bool {
 /// fully substituted via [`apply_substitutions`]; this helper just
 /// frames it with `cd` + a trailing newline so the shell executes it.
 ///
+/// When `mark_exit` is true the frame trails with
+/// `echo __codon_exit_marker:$?` so the blocking-exec watcher can read
+/// the command's exit status off the scrollback — the user pipes their
+/// stderr through the same terminal anyway, so a marker line is the
+/// least-invasive way to surface the status.
+///
 /// Newlines inside `command` are forwarded verbatim — the user's shell
 /// is responsible for parsing them. Empty `command` is a no-op so a
 /// bare `!` Enter doesn't blast a stray newline.
@@ -216,6 +222,7 @@ pub fn send_to_terminal(
     view: &Entity<TerminalView>,
     cwd: &Path,
     command: &str,
+    mark_exit: bool,
     cx: &mut App,
 ) {
     if command.trim().is_empty() {
@@ -223,7 +230,11 @@ pub fn send_to_terminal(
     }
     let terminal = view.read(cx).entity().clone();
     let cwd_quoted = quote_path(cwd);
-    let payload = format!("cd {cwd_quoted} && {command}\n");
+    let payload = if mark_exit {
+        format!("cd {cwd_quoted} && {{ {command} ; }} ; echo __codon_exit_marker:$?\n")
+    } else {
+        format!("cd {cwd_quoted} && {command}\n")
+    };
     terminal.update(cx, |term, _cx| {
         term.input(payload.into_bytes());
     });
@@ -249,6 +260,7 @@ pub fn spawn_new_terminal_and_run(
     workspace: &mut Workspace,
     cwd: PathBuf,
     command: String,
+    mark_exit: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Option<Entity<Terminal>>> {
@@ -259,7 +271,11 @@ pub fn spawn_new_terminal_and_run(
         let terminal = task.await.ok()?.upgrade()?;
         cx.update(|cx| {
             terminal.update(cx, |term, _cx| {
-                let payload = format!("{command}\n");
+                let payload = if mark_exit {
+                    format!("{{ {command} ; }} ; echo __codon_exit_marker:$?\n")
+                } else {
+                    format!("{command}\n")
+                };
                 term.input(payload.into_bytes());
             });
         });
