@@ -6697,6 +6697,8 @@ dependencies = [
  "mime_guess",
  "paths",
  "project",
+ "schemars 1.2.1",
+ "serde",
  "settings",
  "tar",
  "tempfile",

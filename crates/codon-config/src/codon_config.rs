@@ -40,6 +40,17 @@ pub fn user_config_path() -> Option<PathBuf> {
     codon_config_dir().map(|d| d.join("codon.toml"))
 }
 
+/// Resolve codon's user state directory — `~/.local/state/codon` by
+/// default, overridable via `$XDG_STATE_HOME`. Distinct from the config
+/// dir: state holds machine-generated artefacts (bookmarks, history,
+/// session caches) that a user typically does not check into dotfiles.
+pub fn codon_state_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(xdg).join("codon"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state").join("codon"))
+}
+
 /// Read the user config from disk and apply the `[settings]` sub-tree to
 /// the workspace `SettingsStore`. Idempotent — safe to call from a file
 /// watcher on every change. Missing file is a no-op; parse errors are

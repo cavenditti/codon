@@ -3,7 +3,7 @@ mod view;
 
 pub use file_manager::{
     CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, MoveMarked, Open,
-    RenameEntry, ToggleMark, YankPath,
+    RenameEntry, Reveal, ToggleMark, YankPath,
 };
 
 use gpui::App;

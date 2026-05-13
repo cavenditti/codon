@@ -2,10 +2,12 @@ use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSou
 use fs::{copy_recursive, CopyOptions, RenameOptions};
 use git::status::FileStatus;
 use gpui::{
-    actions, prelude::*, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    actions, prelude::*, Action, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, KeyContext, ScrollStrategy, SharedString, Task, UniformListScrollHandle, WeakEntity,
     Window,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::cmp;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -38,6 +40,15 @@ actions!(
         BulkRename,
     ]
 );
+
+/// Codon-wide "navigate the file manager here" action. The payload is an
+/// absolute path: the handler opens (or focuses) the most-recently-active
+/// FM pane, navigates it to `path.parent()`, then selects the matching
+/// entry. Used by phase-7 search pickers and phase-8 symlink-follow.
+#[derive(Clone, Debug, PartialEq, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = codon_fm)]
+#[serde(deny_unknown_fields)]
+pub struct Reveal(pub PathBuf);
 
 /// In-memory clipboard for codon's file manager. Distinct from the OS
 /// clipboard so the user can `y` paths here and still paste text into a
@@ -301,6 +312,35 @@ impl FileManager {
         self.ensure_visible();
         cx.emit(FileManagerEvent::PathChanged);
         cx.notify();
+    }
+
+    pub(crate) fn select_entry_by_name(&mut self, name: &str, cx: &mut Context<Self>) {
+        if let Some(idx) = self.entries.iter().position(|e| e.name == name) {
+            self.selected_index = idx;
+            self.ensure_visible();
+            self.update_preview_sync();
+            cx.notify();
+        }
+    }
+
+    /// Navigate to `target_dir` and optionally select an entry by name.
+    /// Called by the `codon_fm::Reveal` action so any pane can ask the
+    /// file manager to surface a path.
+    pub(crate) fn reveal_path(
+        &mut self,
+        target_dir: PathBuf,
+        select_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if target_dir != self.current_dir {
+            self.current_dir = target_dir;
+            self.selected_index = 0;
+            self.reload_entries(window, cx);
+        }
+        if let Some(name) = select_name {
+            self.select_entry_by_name(&name, cx);
+        }
     }
 
     fn populate_git_status(&mut self, cx: &App) {
@@ -1827,8 +1867,44 @@ pub fn init(cx: &mut App) {
                 open_file_manager(workspace, window, cx);
             },
         );
+        workspace.register_action(|workspace, action: &Reveal, window, cx| {
+            handle_reveal(workspace, action.0.clone(), window, cx);
+        });
     })
     .detach();
+}
+
+fn handle_reveal(
+    workspace: &mut Workspace,
+    path: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    let target_dir = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| path.clone());
+    let select_name = path.file_name().map(|n| n.to_string_lossy().to_string());
+
+    if let Some(item) = workspace.recent_active_item_by_type::<FileManager>(cx) {
+        workspace.activate_item(&item, true, true, window, cx);
+        item.update(cx, |fm, cx| {
+            fm.reveal_path(target_dir, select_name, window, cx)
+        });
+        return;
+    }
+
+    let fs = workspace.app_state().fs.clone();
+    let weak_workspace = workspace.weak_handle();
+    let file_manager =
+        cx.new(|cx| FileManager::new(target_dir.clone(), weak_workspace, fs, window, cx));
+    if let Some(name) = select_name {
+        file_manager.update(cx, |fm, cx| fm.select_entry_by_name(&name, cx));
+    }
+    workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
 }
 
 fn open_file_manager(
