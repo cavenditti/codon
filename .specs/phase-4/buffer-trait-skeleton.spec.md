@@ -2,17 +2,38 @@
 id: TASK:phase-4/buffer-trait-skeleton
 type: task
 status: accepted
-version: 0.0.1
+version: 0.2.0
 summary: >
-  New crates/codon-buffer with a Buffer trait capturing the minimal
-  read + edit surface used by editor, search, agent_ui, and git_ui.
+  Wontdo 2026-05-13 — the trait was originally created (the crate
+  shipped in phase-4) but never earned a consumer. With Helix-as-
+  engine integration removed from the roadmap, REQ:codon/buffer-
+  trait is superseded and the crate was removed. Treating the task
+  as wontdo so the spec graph reflects a clean state.
 owners: [carlo]
-progress: done
+progress: wontdo
 refines:
   - REQ:codon/buffer-trait#c-trait-definition
 ---
 
-# codon-buffer crate skeleton
+# codon-buffer crate skeleton (wontdo)
+
+## Wontdo (2026-05-13)
+
+The crate physically shipped (trait + `impl Buffer for
+language::Buffer` forwarder, 95 LOC at `crates/codon-buffer/`) but
+never reached the point of being useful — no codon site ever took
+a `&dyn codon_buffer::Buffer`, no second implementer was added,
+and the consumer-rewire turned out to need similar abstractions
+across many adjacent types (Entity erasure, BufferSnapshot, edit
+pathways), which made the cost / benefit lopsided. With Helix
+integration off the roadmap the second consumer will never come,
+so the work shipped → got removed. Treating as wontdo for
+spec-graph coherence even though commits exist.
+
+The original planning notes are kept below for historical
+traceability.
+
+## Original framing
 
 Stand up a new `crates/codon-buffer` crate that defines a `Buffer`
 trait — the minimum dependency surface every consumer needs.

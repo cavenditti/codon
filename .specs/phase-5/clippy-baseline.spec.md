@@ -91,9 +91,9 @@ diagnostics observed on the 2026-05-12 tree, grouped:
 ## Acceptance
 
 - `cargo clippy --all-targets -p codon-mode -p codon-keymap -p
-  codon-session -p codon-agent -p codon-buffer -p
-  codon-command-palette -p codon-config -p codon-pickers -p
-  file-manager` returns zero diagnostics, *without* `--keep-going`.
+  codon-session -p codon-agent -p codon-command-palette -p
+  codon-config -p codon-pickers -p file-manager` returns zero
+  diagnostics, *without* `--keep-going`.
 - No `#[allow(...)]` attributes added except the deliberately-scoped
   `approx_constant` suppression in test fixtures (and only if the
   literal-swap path is rejected during review).

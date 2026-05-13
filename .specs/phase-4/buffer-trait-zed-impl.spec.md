@@ -2,16 +2,24 @@
 id: TASK:phase-4/buffer-trait-zed-impl
 type: task
 status: accepted
-version: 0.0.1
+version: 0.2.0
 summary: >
-  Implement codon_buffer::Buffer for language::Buffer — pure delegation.
+  Wontdo 2026-05-13 — the `impl Buffer for language::Buffer`
+  shipped originally (46 LOC of forwarding inside the codon-buffer
+  crate) but was removed alongside the crate when
+  REQ:codon/buffer-trait was superseded. See
+  TASK:phase-4/buffer-trait-skeleton for the full reasoning. The
+  impl was never invoked — no callsite ever took
+  `&dyn codon_buffer::Buffer`.
 owners: [carlo]
-progress: done
+progress: wontdo
 refines:
   - REQ:codon/buffer-trait#c-zed-impl
 ---
 
-# Buffer impl for language::Buffer
+# Buffer impl for language::Buffer (wontdo)
+
+## Original framing (retained for history)
 
 `impl codon_buffer::Buffer for language::Buffer` — every trait method
 maps 1:1 to an existing inherent method on `language::Buffer`.

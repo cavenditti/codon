@@ -42,7 +42,6 @@ Deferring to a future pass alongside
 [TASK:phase-4/git-hunk-staging](spec:TASK:phase-4/git-hunk-staging),
 which would naturally live in the same `[bindings.git_diff.normal]`
 block. The original framing about "refactor through `&dyn
-codon_buffer::Buffer`" is also moot — the buffer-trait rewire in
-git_ui is deferred (see
-[TASK:phase-4/consumer-rewire-git](spec:TASK:phase-4/consumer-rewire-git))
-and `ProjectDiff` works fine on Zed's concrete `Buffer`.
+codon_buffer::Buffer`" is moot — `REQ:codon/buffer-trait` is
+superseded (Helix-as-engine integration is wontdo) and
+`ProjectDiff` works fine on Zed's concrete `Buffer`.

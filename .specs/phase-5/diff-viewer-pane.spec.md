@@ -26,10 +26,9 @@ A `workspace::Item` pane that renders a two-buffer diff. Opens via:
 
 The actual diff rendering is owned by
 [TASK:phase-4/git-diff-pane](spec:TASK:phase-4/git-diff-pane) — that
-work produces a reusable component that takes
-`&dyn codon_buffer::Buffer` for both sides. The diff viewer just
-constructs that component from arbitrary buffers (not just working
-tree vs HEAD).
+work produces a reusable component over Zed's concrete
+`language::Buffer`. The diff viewer just constructs that component
+from arbitrary buffers (not just working tree vs HEAD).
 
 ## Approach
 

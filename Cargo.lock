@@ -3429,17 +3429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codon-buffer"
-version = "0.1.0"
-dependencies = [
- "clock",
- "encoding_rs",
- "fs",
- "language",
- "text",
-]
-
-[[package]]
 name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
@@ -3476,6 +3465,7 @@ dependencies = [
  "settings",
  "settings_json",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]
@@ -6702,6 +6692,7 @@ dependencies = [
  "paths",
  "project",
  "settings",
+ "tempfile",
  "theme",
  "ui",
  "util",
