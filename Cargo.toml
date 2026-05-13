@@ -599,6 +599,7 @@ env_logger = "0.11"
 encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.17.0"
+flate2 = "1.1"
 fork = "0.4.0"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
@@ -752,6 +753,7 @@ syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.37.0"
 take-until = "0.2.0"
+tar = "0.4"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
 time = { version = "0.3", features = [
@@ -830,6 +832,7 @@ windows-core = "0.61"
 yaml-rust2 = "0.8"
 yawc = "0.2.5"
 zeroize = "1.8"
+zip = { version = "1.1", default-features = false, features = ["deflate"] }
 zstd = "0.11"
 
 

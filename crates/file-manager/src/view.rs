@@ -6,7 +6,7 @@ use ui::{
 };
 
 use crate::file_manager::{
-    BinaryInfo, DirEntry, FileManager, PendingInput, Preview, format_hex_dump,
+    ArchiveListing, BinaryInfo, DirEntry, FileManager, PendingInput, Preview, format_hex_dump,
 };
 
 impl FileManager {
@@ -145,6 +145,7 @@ impl FileManager {
                         ),
                     )
                     .into_any_element(),
+                Preview::Archive(listing) => render_archive_preview(listing).into_any_element(),
                 Preview::Binary(info) => render_binary_preview(info, cx).into_any_element(),
                 Preview::Empty => div()
                     .child(
@@ -447,6 +448,25 @@ impl Render for FileManager {
                     ),
             )
     }
+}
+
+fn render_archive_preview(listing: &ArchiveListing) -> impl IntoElement {
+    let mut lines: Vec<String> = listing
+        .entries
+        .iter()
+        .map(|entry| match entry.size {
+            Some(size) => format!("{}    {}", entry.name, human_size(size)),
+            None => entry.name.clone(),
+        })
+        .collect();
+    if listing.extra > 0 {
+        lines.push(format!("… {} more", listing.extra));
+    }
+    v_flex().px(px(8.)).py(px(2.)).children(lines.into_iter().map(|line| {
+        Label::new(SharedString::from(line))
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+    }))
 }
 
 fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {

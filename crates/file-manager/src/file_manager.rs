@@ -77,6 +77,7 @@ pub(crate) struct DirEntry {
 pub(crate) enum Preview {
     Directory(Vec<DirEntry>),
     FileContent(String),
+    Archive(ArchiveListing),
     Binary(BinaryInfo),
     Empty,
 }
@@ -90,6 +91,23 @@ pub(crate) struct BinaryInfo {
     pub(crate) size: u64,
     pub(crate) mime: String,
     pub(crate) head: Vec<u8>,
+}
+
+/// One entry inside an archive. `size` is the *uncompressed* size when
+/// the format reports one (zip, tar); other formats leave it `None`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ArchiveEntry {
+    pub(crate) name: String,
+    pub(crate) size: Option<u64>,
+}
+
+/// Truncated listing of an archive's entries.  When the archive has more
+/// entries than `ARCHIVE_ENTRIES_CAP`, `extra` carries the leftover
+/// count so the view can render a `… N more` line.
+#[derive(Clone)]
+pub(crate) struct ArchiveListing {
+    pub(crate) entries: Vec<ArchiveEntry>,
+    pub(crate) extra: usize,
 }
 
 pub struct FileManager {
@@ -302,6 +320,16 @@ impl FileManager {
         let path = entry.path.clone();
         let name = entry.name.clone();
         let size = entry.size;
+
+        if is_archive_path(&path) {
+            if let Some(listing) = read_archive_listing(&path) {
+                self.preview = Preview::Archive(listing);
+                return;
+            }
+            // Recognised extension but the archive failed to open — fall
+            // through to the binary fallback so the user still sees the
+            // header / hex dump instead of a silent blank pane.
+        }
 
         match std::fs::read_to_string(&path) {
             Ok(content) => {
@@ -1452,6 +1480,100 @@ pub(crate) fn format_hex_dump(bytes: &[u8]) -> String {
     out
 }
 
+/// Upper bound on the number of archive entries surfaced in the
+/// preview. Anything beyond gets summarised as a `… N more` line.
+pub(crate) const ARCHIVE_ENTRIES_CAP: usize = 200;
+
+/// Returns true when `path`'s extension marks it as one of the archive
+/// formats the preview pane can list. Multi-dot variants (`.tar.gz`,
+/// `.tar.bz2`) are detected explicitly because `Path::extension` only
+/// returns the rightmost segment.
+pub(crate) fn is_archive_path(path: &Path) -> bool {
+    archive_kind(path).is_some()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArchiveKind {
+    Zip,
+    Tar,
+    TarGz,
+}
+
+fn archive_kind(path: &Path) -> Option<ArchiveKind> {
+    let lower = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        return Some(ArchiveKind::TarGz);
+    }
+    if lower.ends_with(".tar") {
+        return Some(ArchiveKind::Tar);
+    }
+    if lower.ends_with(".zip") {
+        return Some(ArchiveKind::Zip);
+    }
+    None
+}
+
+/// Open `path` as an archive and collect its entries up to the cap. The
+/// returned listing distinguishes "entries we kept" from "extra entries
+/// we omitted" so the view can show a `… N more` line.
+pub(crate) fn read_archive_listing(path: &Path) -> Option<ArchiveListing> {
+    let kind = archive_kind(path)?;
+    match kind {
+        ArchiveKind::Zip => read_zip_listing(path),
+        ArchiveKind::Tar => read_tar_listing(path),
+        ArchiveKind::TarGz => read_tar_gz_listing(path),
+    }
+}
+
+fn read_zip_listing(path: &Path) -> Option<ArchiveListing> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let total = archive.len();
+    let mut entries = Vec::with_capacity(total.min(ARCHIVE_ENTRIES_CAP));
+    for index in 0..total.min(ARCHIVE_ENTRIES_CAP) {
+        let Ok(file) = archive.by_index(index) else {
+            break;
+        };
+        entries.push(ArchiveEntry {
+            name: file.name().to_string(),
+            size: Some(file.size()),
+        });
+    }
+    let extra = total.saturating_sub(entries.len());
+    Some(ArchiveListing { entries, extra })
+}
+
+fn read_tar_listing(path: &Path) -> Option<ArchiveListing> {
+    let file = std::fs::File::open(path).ok()?;
+    collect_tar_entries(tar::Archive::new(file))
+}
+
+fn read_tar_gz_listing(path: &Path) -> Option<ArchiveListing> {
+    let file = std::fs::File::open(path).ok()?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    collect_tar_entries(tar::Archive::new(decoder))
+}
+
+fn collect_tar_entries<R: std::io::Read>(mut archive: tar::Archive<R>) -> Option<ArchiveListing> {
+    let iter = archive.entries().ok()?;
+    let mut entries = Vec::new();
+    let mut extra = 0_usize;
+    for entry in iter {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Ok(path) = entry.path() else { continue };
+        let name = path.to_string_lossy().to_string();
+        let size = entry.header().size().ok();
+        if entries.len() < ARCHIVE_ENTRIES_CAP {
+            entries.push(ArchiveEntry { name, size });
+        } else {
+            extra += 1;
+        }
+    }
+    Some(ArchiveListing { entries, extra })
+}
+
 pub fn init(cx: &mut App) {
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
@@ -1805,5 +1927,132 @@ mod tests {
         fs::write(&path, b"\x89PNG\r\n\x1a\n").expect("write");
         let info = read_binary_info(&path, "a.png".into(), 8);
         assert_eq!(info.mime, "image/png");
+    }
+
+    #[test]
+    fn is_archive_path_recognises_known_extensions() {
+        assert!(is_archive_path(Path::new("foo.zip")));
+        assert!(is_archive_path(Path::new("foo.tar")));
+        assert!(is_archive_path(Path::new("foo.tar.gz")));
+        assert!(is_archive_path(Path::new("FOO.TGZ")));
+        assert!(is_archive_path(Path::new("Foo.Tar.Gz")));
+        assert!(!is_archive_path(Path::new("foo.txt")));
+        assert!(!is_archive_path(Path::new("foo")));
+        // Currently unsupported but documented in the spec — must not
+        // be flagged as archive so the fallback handles it.
+        assert!(!is_archive_path(Path::new("foo.7z")));
+    }
+
+    #[test]
+    fn read_zip_listing_returns_entries_with_uncompressed_size() {
+        use std::io::Write;
+        use zip::write::FileOptions;
+        let dir = TempDir::new().expect("tempdir");
+        let zip_path = dir.path().join("a.zip");
+        let file = std::fs::File::create(&zip_path).expect("create zip");
+        let mut writer = zip::ZipWriter::new(file);
+        let options: FileOptions<()> =
+            FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("hello.txt", options).expect("start");
+        writer.write_all(b"hello").expect("write");
+        writer.start_file("notes/inner.md", options).expect("start");
+        writer.write_all(b"# inner").expect("write");
+        writer.finish().expect("finish zip");
+
+        let listing = read_archive_listing(&zip_path).expect("zip listing");
+        assert_eq!(listing.extra, 0);
+        assert_eq!(
+            listing.entries,
+            vec![
+                ArchiveEntry {
+                    name: "hello.txt".into(),
+                    size: Some(5),
+                },
+                ArchiveEntry {
+                    name: "notes/inner.md".into(),
+                    size: Some(7),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn read_zip_listing_truncates_at_cap_and_reports_extra() {
+        use zip::write::FileOptions;
+        let dir = TempDir::new().expect("tempdir");
+        let zip_path = dir.path().join("big.zip");
+        let file = std::fs::File::create(&zip_path).expect("create");
+        let mut writer = zip::ZipWriter::new(file);
+        let options: FileOptions<()> =
+            FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let total = ARCHIVE_ENTRIES_CAP + 5;
+        for i in 0..total {
+            writer
+                .start_file(format!("f{i}.txt"), options)
+                .expect("start");
+        }
+        writer.finish().expect("finish");
+
+        let listing = read_archive_listing(&zip_path).expect("listing");
+        assert_eq!(listing.entries.len(), ARCHIVE_ENTRIES_CAP);
+        assert_eq!(listing.extra, 5);
+    }
+
+    #[test]
+    fn read_tar_listing_returns_entries() {
+        let dir = TempDir::new().expect("tempdir");
+        let tar_path = dir.path().join("a.tar");
+        let file = std::fs::File::create(&tar_path).expect("create");
+        let mut builder = tar::Builder::new(file);
+        let payload = b"hello tar";
+        let mut header = tar::Header::new_gnu();
+        header.set_path("inside.txt").expect("set path");
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, &payload[..])
+            .expect("append entry");
+        builder.finish().expect("finish");
+        drop(builder);
+
+        let listing = read_archive_listing(&tar_path).expect("listing");
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "inside.txt");
+        assert_eq!(listing.entries[0].size, Some(payload.len() as u64));
+    }
+
+    #[test]
+    fn read_tar_gz_listing_decompresses_then_lists() {
+        let dir = TempDir::new().expect("tempdir");
+        let tar_path = dir.path().join("a.tar.gz");
+        let gz = flate2::write::GzEncoder::new(
+            std::fs::File::create(&tar_path).expect("create"),
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(gz);
+        let payload = b"compressed";
+        let mut header = tar::Header::new_gnu();
+        header.set_path("doc.md").expect("set path");
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, &payload[..])
+            .expect("append entry");
+        let gz = builder.into_inner().expect("inner");
+        gz.finish().expect("finish gz");
+
+        let listing = read_archive_listing(&tar_path).expect("listing");
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "doc.md");
+    }
+
+    #[test]
+    fn read_archive_listing_unknown_extension_is_none() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("a.txt");
+        fs::write(&path, b"plain text").expect("write");
+        assert!(read_archive_listing(&path).is_none());
     }
 }
