@@ -62,6 +62,11 @@ pub struct GotoPath(#[serde(default)] pub String);
 
 const HISTORY_CAP: usize = 64;
 
+/// Maximum number of `read_link` hops `resolve_with_depth_cap` will
+/// follow before giving up. Matches the value most BSD / Linux kernels
+/// use for `ELOOP` so the FM behaves consistently with shell tools.
+const SYMLINK_DEPTH_CAP: usize = 16;
+
 /// In-memory clipboard for codon's file manager. Distinct from the OS
 /// clipboard so the user can `y` paths here and still paste text into a
 /// terminal pane from the system clipboard.
@@ -584,6 +589,12 @@ impl FileManager {
         cx.notify();
     }
 
+    /// Enter the focused entry — for directories that means descending
+    /// into them, for files that means handing off to the workspace's
+    /// open path. Symlinks are followed implicitly: `entry.is_dir` is
+    /// populated from `std::fs::metadata` which dereferences links, so
+    /// a symlink pointing at a directory is treated the same as the
+    /// directory itself.
     fn enter_directory(
         &mut self,
         _: &EnterDirectory,
@@ -612,6 +623,28 @@ impl FileManager {
             })
             .detach();
         }
+    }
+
+    /// `F` (shift-f): resolve the focused entry's symlink chain and
+    /// reveal the final target in its parent directory. No-op when the
+    /// focused entry is not a symlink. Loops are bounded by
+    /// `resolve_with_depth_cap` so a pathological `a -> b -> a` does
+    /// not hang the FM.
+    fn follow_symlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.entries.get(self.selected_index).cloned() else {
+            return;
+        };
+        if !entry.is_symlink {
+            return;
+        }
+        let target = match resolve_with_depth_cap(&entry.path, SYMLINK_DEPTH_CAP) {
+            Ok(t) => t,
+            Err(e) => {
+                self.surface_error(format!("Couldn't resolve symlink: {e}"), cx);
+                return;
+            }
+        };
+        window.dispatch_action(Box::new(Reveal(target)), cx);
     }
 
     fn parent_directory(
@@ -1979,6 +2012,11 @@ impl FileManager {
             "." if shift && !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
             "<" if !ctrl => { self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
             ">" if !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
+            // `F` (shift-f): resolve the focused symlink and reveal the
+            // target in its parent directory via `codon_fm::Reveal`.
+            // Non-symlinks are a no-op so the binding stays cheap to
+            // probe. Symlink-loop protection caps traversal at 16 hops.
+            "f" if shift && !ctrl => { self.follow_symlink(window, cx); true }
             // Selection
             "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
             // `V` (shift-v) starts visual-line selection. The anchor is
@@ -2555,6 +2593,36 @@ fn is_subsequence(needle: &[char], haystack: &str) -> bool {
         }
     }
     false
+}
+
+/// Walk a symlink chain starting at `path`, hopping one `read_link` at
+/// a time, until either a non-symlink target is reached or `max_hops`
+/// have been consumed. Relative link targets are resolved against the
+/// link's parent directory so the result is always absolute. Returns
+/// `Err` on the first IO failure (broken link, permission denied, …)
+/// or when the hop budget is exhausted — a pathological loop
+/// (`a -> b -> a`) is therefore bounded, not infinite.
+fn resolve_with_depth_cap(path: &Path, max_hops: usize) -> std::io::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..max_hops {
+        let meta = std::fs::symlink_metadata(&current)?;
+        if !meta.file_type().is_symlink() {
+            return Ok(current);
+        }
+        let raw_target = std::fs::read_link(&current)?;
+        current = if raw_target.is_absolute() {
+            raw_target
+        } else {
+            current
+                .parent()
+                .map(|p| p.join(&raw_target))
+                .unwrap_or(raw_target)
+        };
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!("symlink chain exceeded {max_hops} hops"),
+    ))
 }
 
 /// Find a destination filename that doesn't collide. If `foo.txt` exists,

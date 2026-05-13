@@ -7,7 +7,7 @@ summary: >
   Enter on a symlinked dir follows the link. `F` (shift-f) on any
   symlinked entry resolves and reveals via codon_fm::Reveal.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/fm-symlinks#c-follow-symlink
 ---
