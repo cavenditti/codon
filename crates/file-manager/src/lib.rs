@@ -4,6 +4,7 @@ pub(crate) mod file_manager;
 pub(crate) mod goto_completer;
 pub(crate) mod prefs;
 pub(crate) mod search;
+pub(crate) mod shell;
 mod view;
 
 pub use file_manager::{
