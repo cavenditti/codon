@@ -67,6 +67,15 @@ const HISTORY_CAP: usize = 64;
 /// use for `ELOOP` so the FM behaves consistently with shell tools.
 const SYMLINK_DEPTH_CAP: usize = 16;
 
+/// How long the `l`-as-chord arm waits for a followup before
+/// committing `enter_directory`. Short enough that the bare `l`
+/// muscle memory keeps feeling immediate; long enough that a
+/// deliberate `l n` always lands in the chord branch even on a slow
+/// keyboard. The global GPUI chord timeout (5 s) is intentionally
+/// not reused here — that's tuned for `cmd-k` chord prefixes, not
+/// for an action key that doubles as a chord starter.
+const L_CHORD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(220);
+
 /// In-memory clipboard for codon's file manager. Distinct from the OS
 /// clipboard so the user can `y` paths here and still paste text into a
 /// terminal pane from the system clipboard.
@@ -180,6 +189,12 @@ pub struct FileManager {
     pub(crate) back_stack: VecDeque<PathBuf>,
     pub(crate) forward_stack: VecDeque<PathBuf>,
     pub(crate) pending_chord: Option<char>,
+    /// Bumped every time `pending_chord` is armed. Lets a delayed
+    /// fallback task (notably the `l`-as-chord-or-enter timer) tell
+    /// "the chord I was scheduled for is still the active one" from
+    /// "a fresh chord landed in the meantime" and skip the fallback
+    /// in the latter case.
+    pub(crate) pending_chord_gen: u64,
     pub(crate) visual_anchor: Option<usize>,
     pub(crate) sort: crate::prefs::SortMode,
     pub(crate) reverse: bool,
@@ -289,6 +304,7 @@ impl FileManager {
             back_stack: VecDeque::new(),
             forward_stack: VecDeque::new(),
             pending_chord: None,
+            pending_chord_gen: 0,
             visual_anchor: None,
             sort: prefs.sort,
             reverse: prefs.reverse,
@@ -711,6 +727,87 @@ impl FileManager {
             self.update_preview_sync();
         }
         cx.notify();
+    }
+
+    /// Arm the `l`-as-chord state and schedule a fallback that fires
+    /// `enter_directory` if no chord followup (a `n` for symlink, or
+    /// any other key that would also commit the bare `l`) lands
+    /// within `L_CHORD_TIMEOUT`. The generation counter lets the
+    /// timer detect whether the chord it was scheduled for is still
+    /// the active one.
+    fn arm_l_chord(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_chord = Some('l');
+        self.pending_chord_gen = self.pending_chord_gen.wrapping_add(1);
+        let captured_gen = self.pending_chord_gen;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(L_CHORD_TIMEOUT).await;
+            this.update_in(cx, |this, window, cx| {
+                if this.pending_chord == Some('l') && this.pending_chord_gen == captured_gen {
+                    this.pending_chord = None;
+                    this.enter_directory(&EnterDirectory, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `ln` chord verb: for each target (the marked set, or just the
+    /// cursor entry when no marks exist) create a symlink in
+    /// `current_dir` whose name is the target's basename. Conflicts
+    /// fall back to the same numbered-suffix scheme `next_available_path`
+    /// uses for paste, so `foo` becomes `foo (2)` and so on. The
+    /// filesystem call is routed through `Fs::create_symlink` so a
+    /// fake `Fs` in tests can intercept it the same way it does for
+    /// rename / copy.
+    fn make_symlinks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sources = self.current_targets();
+        if sources.is_empty() {
+            return;
+        }
+        let destination_dir = self.current_dir.clone();
+        let mut used: Vec<PathBuf> = Vec::with_capacity(sources.len());
+        let mut plan: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(sources.len());
+        for source in sources {
+            let Some(file_name) = source.file_name() else {
+                continue;
+            };
+            let initial = destination_dir.join(file_name);
+            let destination = if initial.exists() || used.iter().any(|p| p == &initial) {
+                next_available_path(&destination_dir, file_name, &used)
+            } else {
+                initial
+            };
+            used.push(destination.clone());
+            plan.push((source, destination));
+        }
+        if plan.is_empty() {
+            return;
+        }
+
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for (source, destination) in &plan {
+                if let Err(e) = fs.create_symlink(destination, source.clone()).await {
+                    failures.push((source.clone(), e));
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    this.surface_error(format!("Couldn't link {name}: {e}"), cx);
+                }
+                this.marked.clear();
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `uv` chord: drop every mark. Distinct from a single `v` toggle so
@@ -1929,6 +2026,19 @@ impl FileManager {
                     cx.stop_propagation();
                     return;
                 }
+                'l' if !shift && !ctrl && key == "n" => {
+                    self.make_symlinks(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                'l' if key == "escape" => {
+                    cx.stop_propagation();
+                    return;
+                }
+                'l' => {
+                    self.enter_directory(&EnterDirectory, window, cx);
+                }
                 _ => {}
             }
         }
@@ -1945,7 +2055,11 @@ impl FileManager {
             // Navigation
             "j" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
             "k" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
-            "l" if !shift && !ctrl => { self.enter_directory(&EnterDirectory, window, cx); true }
+            // Bare `l` arms a short-window chord: if `n` lands next
+            // we make symlinks; if any other key (or the timeout)
+            // fires first we commit `enter_directory` instead. See
+            // `arm_l_chord` for the timer logic.
+            "l" if !shift && !ctrl => { self.arm_l_chord(window, cx); true }
             // Enter while sweeping a visual range commits the sweep
             // instead of opening the focused entry. That mirrors helix
             // and yazi behavior — the user just selected a range and

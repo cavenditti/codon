@@ -7,7 +7,7 @@ summary: >
   `ln` chord — create symlinks in current_dir pointing at marked
   targets (or the cursor's target with no marks).
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/fm-symlinks#c-make-symlink
 ---
