@@ -7,7 +7,7 @@ summary: >
   `,,` toggles the sort direction. Persisted with the chosen sort
   mode.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-sort-display#c-sort-reverse
 ---

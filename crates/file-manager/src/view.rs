@@ -12,6 +12,8 @@ use crate::file_manager::{
     ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
     format_hex_dump,
 };
+use crate::prefs::LineMode;
+use std::time::SystemTime;
 
 impl FileManager {
     fn render_entry(
@@ -20,6 +22,7 @@ impl FileManager {
         index: usize,
         selected: Option<usize>,
         dimmed: bool,
+        line_mode: LineMode,
         cx: &App,
     ) -> impl IntoElement {
         // Marks are intrinsically tied to the current column's index space
@@ -71,6 +74,8 @@ impl FileManager {
         let symlink_indicator = entry.is_symlink;
         let (git_glyph, git_color) = git_status_decoration(entry.git_status);
 
+        let meta = entry_meta_label(entry, line_mode);
+
         h_flex()
             .w_full()
             .px(px(4.))
@@ -86,16 +91,28 @@ impl FileManager {
             )
             .child(icon_element)
             .child(
-                Label::new(entry.name.clone())
-                    .size(LabelSize::Small)
-                    .color(text_color)
-                    .single_line(),
+                div().flex_1().min_w_0().child(
+                    Label::new(entry.name.clone())
+                        .size(LabelSize::Small)
+                        .color(text_color)
+                        .single_line(),
+                ),
             )
             .when(symlink_indicator, |el| {
                 el.child(
                     Icon::new(IconName::ArrowUpRight)
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
+                )
+            })
+            .when_some(meta, |el, text| {
+                el.child(
+                    div().w(px(META_COLUMN_WIDTH)).child(
+                        Label::new(SharedString::from(text))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .single_line(),
+                    ),
                 )
             })
     }
@@ -108,6 +125,7 @@ impl FileManager {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let bg = theme.colors().surface_background;
+        let line_mode = self.line_mode;
 
         v_flex()
             .flex_1()
@@ -118,13 +136,14 @@ impl FileManager {
                 entries
                     .iter()
                     .enumerate()
-                    .map(|(i, entry)| self.render_entry(entry, i, None, dimmed, cx)),
+                    .map(|(i, entry)| self.render_entry(entry, i, None, dimmed, line_mode, cx)),
             )
     }
 
     fn render_preview(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bg = theme.colors().surface_background;
+        let line_mode = self.line_mode;
 
         v_flex()
             .flex_1()
@@ -137,7 +156,7 @@ impl FileManager {
                         entries
                             .iter()
                             .enumerate()
-                            .map(|(i, entry)| self.render_entry(entry, i, None, true, cx)),
+                            .map(|(i, entry)| self.render_entry(entry, i, None, true, line_mode, cx)),
                     )
                     .into_any_element(),
                 Preview::FileContent(content) => div()
@@ -269,6 +288,7 @@ impl Render for FileManager {
         let marked = self.marked.clone();
         let this = cx.entity().downgrade();
         let focus = self.focus_handle.clone();
+        let line_mode = self.line_mode;
 
         let current_col = uniform_list("file-list", entries.len(), {
             move |range, _window, cx| {
@@ -319,6 +339,7 @@ impl Render for FileManager {
                         let this = this.clone();
                         let focus = focus.clone();
                         let (git_glyph, git_color) = git_status_decoration(entry.git_status);
+                        let meta = entry_meta_label(entry, line_mode);
 
                         div()
                             .id(("file-entry", i))
@@ -339,16 +360,28 @@ impl Render for FileManager {
                                     )
                                     .child(icon_element)
                                     .child(
-                                        Label::new(entry.name.clone())
-                                            .size(LabelSize::Small)
-                                            .color(text_color)
-                                            .single_line(),
+                                        div().flex_1().min_w_0().child(
+                                            Label::new(entry.name.clone())
+                                                .size(LabelSize::Small)
+                                                .color(text_color)
+                                                .single_line(),
+                                        ),
                                     )
                                     .when(entry.is_symlink, |el| {
                                         el.child(
                                             Icon::new(IconName::ArrowUpRight)
                                                 .size(IconSize::XSmall)
                                                 .color(Color::Muted),
+                                        )
+                                    })
+                                    .when_some(meta, |el, text| {
+                                        el.child(
+                                            div().w(px(META_COLUMN_WIDTH)).child(
+                                                Label::new(SharedString::from(text))
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .single_line(),
+                                            ),
                                         )
                                     }),
                             )
@@ -544,6 +577,81 @@ fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
         })))
 }
 
+/// Width in pixels of the right-aligned metadata column. Sized to fit
+/// "drwxrwxr-x" comfortably (the widest variant) so columns line up
+/// across modes and toggling `M` does not shift the entry text.
+pub(crate) const META_COLUMN_WIDTH: f32 = 90.0;
+
+pub(crate) fn entry_meta_label(entry: &DirEntry, mode: LineMode) -> Option<String> {
+    match mode {
+        LineMode::None => None,
+        LineMode::Size => {
+            if entry.is_dir {
+                None
+            } else {
+                Some(human_size(entry.size))
+            }
+        }
+        LineMode::Mtime => entry.mtime.map(format_relative_time),
+        LineMode::Permissions => Some(format_permissions(entry.is_dir, entry.is_symlink, entry.mode)),
+        LineMode::Owner => Some(format_owner(entry.uid, entry.gid)),
+    }
+}
+
+fn format_relative_time(t: SystemTime) -> String {
+    let now = SystemTime::now();
+    let (sign, dur) = match now.duration_since(t) {
+        Ok(d) => ("ago", d),
+        Err(e) => ("from now", e.duration()),
+    };
+    let secs = dur.as_secs();
+    let label = if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else if secs < 86400 * 30 {
+        format!("{}d", secs / 86400)
+    } else if secs < 86400 * 365 {
+        format!("{}mo", secs / (86400 * 30))
+    } else {
+        format!("{}y", secs / (86400 * 365))
+    };
+    format!("{label} {sign}")
+}
+
+fn format_permissions(is_dir: bool, is_symlink: bool, mode: Option<u32>) -> String {
+    let Some(mode) = mode else {
+        return "----------".to_string();
+    };
+    let typ = if is_symlink {
+        'l'
+    } else if is_dir {
+        'd'
+    } else {
+        '-'
+    };
+    let bits = mode & 0o777;
+    let triplet = |shift: u32| -> String {
+        let v = (bits >> shift) & 0o7;
+        let r = if v & 0o4 != 0 { 'r' } else { '-' };
+        let w = if v & 0o2 != 0 { 'w' } else { '-' };
+        let x = if v & 0o1 != 0 { 'x' } else { '-' };
+        format!("{r}{w}{x}")
+    };
+    format!("{typ}{}{}{}", triplet(6), triplet(3), triplet(0))
+}
+
+fn format_owner(uid: Option<u32>, gid: Option<u32>) -> String {
+    match (uid, gid) {
+        (Some(u), Some(g)) => format!("{u}:{g}"),
+        (Some(u), None) => format!("{u}:?"),
+        (None, Some(g)) => format!("?:{g}"),
+        (None, None) => "?:?".to_string(),
+    }
+}
+
 fn human_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
@@ -686,5 +794,45 @@ mod tests {
             let (g, _) = git_status_decoration(Some(tracked(code, StatusCode::Unmodified)));
             assert_eq!(g, glyph, "code {code:?} should map to {glyph}");
         }
+    }
+
+    #[test]
+    fn format_permissions_known_modes() {
+        assert_eq!(format_permissions(true, false, Some(0o755)), "drwxr-xr-x");
+        assert_eq!(format_permissions(false, false, Some(0o644)), "-rw-r--r--");
+        assert_eq!(format_permissions(false, true, Some(0o777)), "lrwxrwxrwx");
+        assert_eq!(format_permissions(false, false, None), "----------");
+    }
+
+    #[test]
+    fn format_owner_handles_missing_ids() {
+        assert_eq!(format_owner(Some(501), Some(20)), "501:20");
+        assert_eq!(format_owner(None, None), "?:?");
+        assert_eq!(format_owner(Some(0), None), "0:?");
+    }
+
+    #[test]
+    fn entry_meta_label_none_mode() {
+        let entry = DirEntry {
+            name: "x".into(),
+            path: std::path::PathBuf::from("/x"),
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            size: 100,
+            git_status: None,
+            mtime: None,
+            btime: None,
+            mode: Some(0o644),
+            uid: Some(501),
+            gid: Some(20),
+        };
+        assert_eq!(entry_meta_label(&entry, LineMode::None), None);
+        assert_eq!(entry_meta_label(&entry, LineMode::Size).as_deref(), Some("100 B"));
+        assert_eq!(
+            entry_meta_label(&entry, LineMode::Permissions).as_deref(),
+            Some("-rw-r--r--")
+        );
+        assert_eq!(entry_meta_label(&entry, LineMode::Owner).as_deref(), Some("501:20"));
     }
 }
