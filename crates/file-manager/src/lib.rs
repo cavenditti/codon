@@ -1,6 +1,7 @@
 pub(crate) mod bookmarks;
 pub(crate) mod file_manager;
 pub(crate) mod goto_completer;
+pub(crate) mod prefs;
 mod view;
 
 pub use file_manager::{

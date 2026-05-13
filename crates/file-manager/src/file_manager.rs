@@ -94,6 +94,11 @@ pub(crate) struct DirEntry {
     pub(crate) is_symlink: bool,
     pub(crate) size: u64,
     pub(crate) git_status: Option<FileStatus>,
+    pub(crate) mtime: Option<std::time::SystemTime>,
+    pub(crate) btime: Option<std::time::SystemTime>,
+    pub(crate) mode: Option<u32>,
+    pub(crate) uid: Option<u32>,
+    pub(crate) gid: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -171,6 +176,11 @@ pub struct FileManager {
     pub(crate) forward_stack: VecDeque<PathBuf>,
     pub(crate) pending_chord: Option<char>,
     pub(crate) visual_anchor: Option<usize>,
+    pub(crate) sort: crate::prefs::SortMode,
+    pub(crate) reverse: bool,
+    pub(crate) line_mode: crate::prefs::LineMode,
+    pub(crate) show_gitignored: bool,
+    pub(crate) preview_fraction: f32,
 }
 
 #[derive(Clone)]
@@ -231,6 +241,8 @@ impl FileManager {
         })
         .detach();
 
+        let prefs = cx.try_global::<crate::prefs::FmPrefs>().cloned().unwrap_or_default();
+
         let mut this = Self {
             focus_handle,
             workspace,
@@ -255,9 +267,22 @@ impl FileManager {
             forward_stack: VecDeque::new(),
             pending_chord: None,
             visual_anchor: None,
+            sort: prefs.sort,
+            reverse: prefs.reverse,
+            line_mode: prefs.line_mode,
+            show_gitignored: prefs.show_gitignored,
+            preview_fraction: crate::prefs::clamp_fraction(prefs.preview_fraction),
         };
         this.reload_entries_sync();
         this
+    }
+
+    pub(crate) fn read_dir_options(&self) -> ReadDirOptions {
+        ReadDirOptions {
+            show_hidden: self.show_hidden,
+            sort: self.sort,
+            reverse: self.reverse,
+        }
     }
 
     pub(crate) fn push_history_back(&mut self, dir: PathBuf) {
@@ -311,11 +336,12 @@ impl FileManager {
     }
 
     fn reload_entries_sync(&mut self) {
-        self.entries = read_dir_sync(&self.current_dir, self.show_hidden);
+        let opts = self.read_dir_options();
+        self.entries = read_dir_sync(&self.current_dir, opts);
         self.parent_entries = self
             .current_dir
             .parent()
-            .map(|p| read_dir_sync(p, self.show_hidden))
+            .map(|p| read_dir_sync(p, opts))
             .unwrap_or_default();
         self.selected_index = cmp::min(
             self.selected_index,
@@ -399,6 +425,28 @@ impl FileManager {
         for entry in &mut self.parent_entries {
             entry.git_status = lookup(&entry.path);
         }
+        if !self.show_gitignored {
+            let was_filtering = self.entries_unfiltered.is_some();
+            let selected_name = self
+                .entries
+                .get(self.selected_index)
+                .map(|e| e.name.clone());
+            self.entries.retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+            self.parent_entries
+                .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+            if !was_filtering {
+                if let Some(name) = selected_name
+                    && let Some(idx) = self.entries.iter().position(|e| e.name == name)
+                {
+                    self.selected_index = idx;
+                } else {
+                    self.selected_index = cmp::min(
+                        self.selected_index,
+                        self.entries.len().saturating_sub(1),
+                    );
+                }
+            }
+        }
     }
 
     pub(crate) fn update_preview_sync(&mut self) {
@@ -408,7 +456,7 @@ impl FileManager {
         };
 
         if entry.is_dir {
-            let children = read_dir_sync(&entry.path, self.show_hidden);
+            let children = read_dir_sync(&entry.path, self.read_dir_options());
             self.preview = Preview::Directory(children);
             return;
         }
@@ -1364,6 +1412,18 @@ impl FileManager {
                     cx.stop_propagation();
                     return;
                 }
+                ',' if key != "escape" => {
+                    self.handle_sort_chord(key, shift, ctrl, window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                'z' if !shift && !ctrl && key == "g" => {
+                    self.toggle_gitignored(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
                 _ => {}
             }
         }
@@ -1423,6 +1483,23 @@ impl FileManager {
                 cx.notify();
                 true
             }
+            "," if !shift && !ctrl => {
+                self.pending_chord = Some(',');
+                cx.notify();
+                true
+            }
+            "z" if !shift && !ctrl => {
+                self.pending_chord = Some('z');
+                cx.notify();
+                true
+            }
+            // `M` (shift-m) cycles the per-entry metadata column.
+            "m" if shift && !ctrl => { self.cycle_line_mode(cx); true }
+            // `<` / `>` resize the preview column.
+            "," if shift && !ctrl => { self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
+            "." if shift && !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
+            "<" if !ctrl => { self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
+            ">" if !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
             // Selection
             "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
             // `V` (shift-v) starts visual-line selection. The anchor is
@@ -1453,7 +1530,7 @@ impl FileManager {
             "r" if !shift => { self.rename_entry(window, cx); true }
             "r" if shift => { self.start_bulk_rename(window, cx); true }
             // Toggles
-            "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
+            "." if !shift && !ctrl => { self.toggle_hidden(&ToggleHidden, window, cx); true }
             // Fuzzy filter
             "/" => { self.start_filter(window, cx); true }
             "escape" if self.visual_anchor.is_some() => {
@@ -1542,6 +1619,64 @@ impl FileManager {
             store.set(letter, dir);
         });
         self.surface_error(format!("Bookmarked '{letter}' → {displayed}"), cx);
+    }
+
+    fn handle_sort_chord(
+        &mut self,
+        key: &str,
+        shift: bool,
+        _ctrl: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::prefs::SortMode;
+        let mode = match (key, shift) {
+            ("n", false) => Some(SortMode::Name),
+            ("s", false) => Some(SortMode::Size),
+            ("m", false) => Some(SortMode::Mtime),
+            ("b", false) => Some(SortMode::Btime),
+            ("e", false) => Some(SortMode::Extension),
+            ("r", false) => Some(SortMode::Random),
+            ("n", true) => Some(SortMode::Natural),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            self.apply_sort(mode, cx);
+            self.reload_entries(window, cx);
+            return;
+        }
+        if key == "," && !shift {
+            self.reverse = !self.reverse;
+            let value = self.reverse;
+            cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_reverse(value));
+            self.reload_entries(window, cx);
+        }
+    }
+
+    fn apply_sort(&mut self, mode: crate::prefs::SortMode, cx: &mut Context<Self>) {
+        self.sort = mode;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_sort(mode));
+    }
+
+    fn cycle_line_mode(&mut self, cx: &mut Context<Self>) {
+        self.line_mode = self.line_mode.next();
+        let mode = self.line_mode;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_line_mode(mode));
+        cx.notify();
+    }
+
+    fn toggle_gitignored(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_gitignored = !self.show_gitignored;
+        let value = self.show_gitignored;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_show_gitignored(value));
+        self.reload_entries(window, cx);
+    }
+
+    fn nudge_preview_fraction(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.preview_fraction = crate::prefs::clamp_fraction(self.preview_fraction + delta);
+        let value = self.preview_fraction;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_preview_fraction(value));
+        cx.notify();
     }
 
     fn jump_bookmark(&mut self, letter: char, window: &mut Window, cx: &mut Context<Self>) {
@@ -1773,7 +1908,28 @@ fn default_bulk_rename_pattern(first: &Path) -> String {
 }
 
 
-pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
+/// Options governing how a directory listing is built. `show_hidden`
+/// keeps the dotfile filter; `sort` + `reverse` set the comparator;
+/// `show_gitignored` is consulted by the FM (after git status is
+/// populated) — `read_dir_sync` itself does not see git status.
+#[derive(Clone, Copy)]
+pub(crate) struct ReadDirOptions {
+    pub show_hidden: bool,
+    pub sort: crate::prefs::SortMode,
+    pub reverse: bool,
+}
+
+impl Default for ReadDirOptions {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            sort: crate::prefs::SortMode::Name,
+            reverse: false,
+        }
+    }
+}
+
+pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -1783,11 +1939,14 @@ pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             let is_hidden = name.starts_with('.');
-            if !show_hidden && is_hidden {
+            if !options.show_hidden && is_hidden {
                 return None;
             }
             let metadata = e.metadata().ok()?;
             let file_type = e.file_type().ok()?;
+            let mtime = metadata.modified().ok();
+            let btime = metadata.created().ok().or(mtime);
+            let (mode, uid, gid) = unix_metadata(&metadata);
             Some(DirEntry {
                 name,
                 path: e.path(),
@@ -1796,17 +1955,140 @@ pub(crate) fn read_dir_sync(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
                 is_symlink: file_type.is_symlink(),
                 size: metadata.len(),
                 git_status: None,
+                mtime,
+                btime,
+                mode,
+                uid,
+                gid,
             })
         })
         .collect();
 
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-
+    sort_entries(&mut entries, options.sort, options.reverse);
     entries
+}
+
+#[cfg(unix)]
+fn unix_metadata(metadata: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
+    use std::os::unix::fs::MetadataExt;
+    (Some(metadata.mode()), Some(metadata.uid()), Some(metadata.gid()))
+}
+
+#[cfg(not(unix))]
+fn unix_metadata(_metadata: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
+    (None, None, None)
+}
+
+pub(crate) fn sort_entries(
+    entries: &mut [DirEntry],
+    mode: crate::prefs::SortMode,
+    reverse: bool,
+) {
+    use crate::prefs::SortMode;
+    if matches!(mode, SortMode::Random) {
+        // Shuffle the within-group order but keep dirs-before-files.
+        use rand::seq::SliceRandom;
+        let mut rng = rand::rng();
+        let split = entries.iter().position(|e| !e.is_dir).unwrap_or(entries.len());
+        let (dirs, files) = entries.split_at_mut(split);
+        dirs.shuffle(&mut rng);
+        files.shuffle(&mut rng);
+        if reverse {
+            dirs.reverse();
+            files.reverse();
+        }
+        return;
+    }
+
+    entries.sort_by(|a, b| {
+        let group = b.is_dir.cmp(&a.is_dir);
+        if group != cmp::Ordering::Equal {
+            return group;
+        }
+        let within = compare_in_group(a, b, mode);
+        if reverse {
+            within.reverse()
+        } else {
+            within
+        }
+    });
+}
+
+fn compare_in_group(a: &DirEntry, b: &DirEntry, mode: crate::prefs::SortMode) -> cmp::Ordering {
+    use crate::prefs::SortMode;
+    let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+    match mode {
+        SortMode::Name => by_name(),
+        SortMode::Size => a.size.cmp(&b.size).then_with(by_name),
+        SortMode::Mtime => a.mtime.cmp(&b.mtime).then_with(by_name),
+        SortMode::Btime => a.btime.cmp(&b.btime).then_with(by_name),
+        SortMode::Extension => {
+            let ea = extension_key(&a.name);
+            let eb = extension_key(&b.name);
+            ea.cmp(&eb).then_with(by_name)
+        }
+        SortMode::Natural => natural_compare(&a.name, &b.name),
+        SortMode::Random => cmp::Ordering::Equal,
+    }
+}
+
+fn extension_key(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// Numeric-aware string comparison: contiguous ASCII-digit runs compare
+/// by integer value; everything else is case-insensitive byte-wise.
+/// Keeps `file2 < file10` while `apple` still beats `banana`.
+pub(crate) fn natural_compare(a: &str, b: &str) -> cmp::Ordering {
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        match (ai.peek(), bi.peek()) {
+            (None, None) => return cmp::Ordering::Equal,
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (Some(ca), Some(cb)) => {
+                if ca.is_ascii_digit() && cb.is_ascii_digit() {
+                    let na: String = take_while(&mut ai, |c| c.is_ascii_digit());
+                    let nb: String = take_while(&mut bi, |c| c.is_ascii_digit());
+                    let va: u128 = na.parse().unwrap_or(0);
+                    let vb: u128 = nb.parse().unwrap_or(0);
+                    match va.cmp(&vb) {
+                        cmp::Ordering::Equal => continue,
+                        other => return other,
+                    }
+                } else {
+                    let la = ca.to_ascii_lowercase();
+                    let lb = cb.to_ascii_lowercase();
+                    match la.cmp(&lb) {
+                        cmp::Ordering::Equal => {
+                            ai.next();
+                            bi.next();
+                        }
+                        other => return other,
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn take_while<I: Iterator<Item = char>, F: Fn(char) -> bool>(
+    iter: &mut std::iter::Peekable<I>,
+    pred: F,
+) -> String {
+    let mut out = String::new();
+    while let Some(&c) = iter.peek() {
+        if !pred(c) {
+            break;
+        }
+        out.push(c);
+        iter.next();
+    }
+    out
 }
 
 /// Maximum number of bytes shown in the hex/ASCII dump for the binary
@@ -2125,6 +2407,7 @@ where
 
 pub fn init(cx: &mut App) {
     crate::bookmarks::init(cx);
+    crate::prefs::init(cx);
     crate::goto_completer::register();
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
@@ -2280,7 +2563,7 @@ mod tests {
             ("subdir", true),
             (".dotdir", true),
         ]);
-        let entries = read_dir_sync(dir.path(), false);
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["subdir", "visible.txt"]);
     }
@@ -2293,7 +2576,13 @@ mod tests {
             ("subdir", true),
             (".dotdir", true),
         ]);
-        let entries = read_dir_sync(dir.path(), true);
+        let entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                show_hidden: true,
+                ..ReadDirOptions::default()
+            },
+        );
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         // Directories first, then files; each group case-insensitive ascending.
         assert_eq!(names, vec![".dotdir", "subdir", ".hidden.txt", "visible.txt"]);
@@ -2309,7 +2598,7 @@ mod tests {
             ("bdir", true),
             ("afile.txt", false),
         ]);
-        let entries = read_dir_sync(dir.path(), false);
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["adir", "bdir", "afile.txt", "zfile.txt"]);
     }
@@ -2321,14 +2610,17 @@ mod tests {
             ("apple.txt", false),
             ("Banana.txt", false),
         ]);
-        let entries = read_dir_sync(dir.path(), false);
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["apple.txt", "Banana.txt", "Zebra.txt"]);
     }
 
     #[test]
     fn read_dir_sync_unreadable_path_returns_empty() {
-        let entries = read_dir_sync(Path::new("/nonexistent/path/that/does/not/exist"), false);
+        let entries = read_dir_sync(
+            Path::new("/nonexistent/path/that/does/not/exist"),
+            ReadDirOptions::default(),
+        );
         assert!(entries.is_empty());
     }
 
@@ -2790,5 +3082,67 @@ mod tests {
         let (d, l) = split_dir_leaf("a/b/c");
         assert_eq!(d, "a/b/");
         assert_eq!(l, "c");
+    }
+
+    #[test]
+    fn natural_compare_orders_numbers_numerically() {
+        assert_eq!(natural_compare("file2", "file10"), std::cmp::Ordering::Less);
+        assert_eq!(natural_compare("file10", "file2"), std::cmp::Ordering::Greater);
+        assert_eq!(natural_compare("file1", "file1"), std::cmp::Ordering::Equal);
+        assert_eq!(natural_compare("abc", "abd"), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn sort_entries_size_ascending_keeps_dirs_first() {
+        let dir = make_tree(&[
+            ("zzz", true),
+            ("big.txt", false),
+            ("small.txt", false),
+        ]);
+        std::fs::write(dir.path().join("big.txt"), vec![0u8; 1024]).expect("write big");
+        std::fs::write(dir.path().join("small.txt"), vec![0u8; 8]).expect("write small");
+        let entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                sort: crate::prefs::SortMode::Size,
+                ..ReadDirOptions::default()
+            },
+        );
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["zzz", "small.txt", "big.txt"]);
+    }
+
+    #[test]
+    fn sort_entries_reverse_flips_within_group() {
+        let dir = make_tree(&[("a", true), ("b", true), ("x.txt", false), ("y.txt", false)]);
+        let entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                sort: crate::prefs::SortMode::Name,
+                reverse: true,
+                ..ReadDirOptions::default()
+            },
+        );
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["b", "a", "y.txt", "x.txt"]);
+    }
+
+    #[test]
+    fn sort_entries_extension_groups_by_suffix() {
+        let dir = make_tree(&[
+            ("note.md", false),
+            ("main.rs", false),
+            ("lib.rs", false),
+            ("readme.txt", false),
+        ]);
+        let entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                sort: crate::prefs::SortMode::Extension,
+                ..ReadDirOptions::default()
+            },
+        );
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["note.md", "lib.rs", "main.rs", "readme.txt"]);
     }
 }
