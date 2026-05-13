@@ -526,6 +526,43 @@ impl FileManager {
         cx.notify();
     }
 
+    /// `ctrl-a`: mark every entry in the current visible listing.
+    /// `self.entries` is already post-filter / post-show_hidden, so the
+    /// "visible window" is exactly that vector.
+    pub(crate) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.marked = (0..self.entries.len()).collect();
+        cx.notify();
+    }
+
+    /// `ctrl-r`: flip each visible index's membership in `marked` (the
+    /// set-symmetric-difference against the visible window). Entries
+    /// outside the visible window — which today is empty by construction,
+    /// since marks can only be created from rendered rows — keep their
+    /// existing state, so the operation remains correct if that invariant
+    /// is ever relaxed.
+    pub(crate) fn invert_marks_visible(&mut self, cx: &mut Context<Self>) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let visible = 0..self.entries.len();
+        let mut next: BTreeSet<usize> = self
+            .marked
+            .iter()
+            .copied()
+            .filter(|i| !visible.contains(i))
+            .collect();
+        for i in visible {
+            if !self.marked.contains(&i) {
+                next.insert(i);
+            }
+        }
+        self.marked = next;
+        cx.notify();
+    }
+
     /// `y` in Normal mode: store the current entry — or the whole marked
     /// set if any — in the file-manager-local "yank" clipboard. `p` then
     /// copies; `P` copies with overwrite confirmation. The OS clipboard is
@@ -1186,6 +1223,9 @@ impl FileManager {
             // File operations
             "y" if !shift => { self.yank_to_clipboard(window, cx); true }
             "y" if shift => { self.copy_path_to_os_clipboard(window, cx); true }
+            // ctrl-a selects every visible entry; the unmodified `a`
+            // arms below open the create-file / mkdir prompts.
+            "a" if ctrl => { self.select_all_visible(cx); true }
             "a" if !shift => { self.create_file(window, cx); true }
             "a" if shift => { self.create_directory(window, cx); true }
             // Single-tap `d` marks for cut (paired with `p`/`P`). `D`
@@ -1194,6 +1234,10 @@ impl FileManager {
             "d" if shift && !ctrl => { self.delete_entry(window, cx); true }
             "p" if !shift => { self.paste_clipboard(window, cx); true }
             "p" if shift => { self.paste_clipboard_overwrite(window, cx); true }
+            // ctrl-r inverts marks against the visible window; the
+            // unmodified / shifted arms below remain single rename and
+            // bulk-rename, respectively.
+            "r" if ctrl => { self.invert_marks_visible(cx); true }
             "r" if !shift => { self.rename_entry(window, cx); true }
             "r" if shift => { self.start_bulk_rename(window, cx); true }
             // Toggles
