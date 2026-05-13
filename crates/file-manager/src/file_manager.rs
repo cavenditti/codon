@@ -425,26 +425,37 @@ impl FileManager {
         for entry in &mut self.parent_entries {
             entry.git_status = lookup(&entry.path);
         }
-        if !self.show_gitignored {
-            let was_filtering = self.entries_unfiltered.is_some();
-            let selected_name = self
-                .entries
-                .get(self.selected_index)
-                .map(|e| e.name.clone());
-            self.entries.retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
-            self.parent_entries
-                .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
-            if !was_filtering {
-                if let Some(name) = selected_name
-                    && let Some(idx) = self.entries.iter().position(|e| e.name == name)
-                {
-                    self.selected_index = idx;
-                } else {
-                    self.selected_index = cmp::min(
-                        self.selected_index,
-                        self.entries.len().saturating_sub(1),
-                    );
-                }
+        self.apply_gitignore_filter();
+    }
+
+    /// `zg` toggle: when `show_gitignored` is false, drop entries whose
+    /// `git_status == Ignored` from both the current and parent columns.
+    /// Orthogonal to the `.` (hidden-files) toggle — a `.gitignore`'d
+    /// hidden file shows only when both toggles allow it. Selection is
+    /// re-anchored to the same name if it survives the filter.
+    fn apply_gitignore_filter(&mut self) {
+        if self.show_gitignored {
+            return;
+        }
+        let was_filtering = self.entries_unfiltered.is_some();
+        let selected_name = self
+            .entries
+            .get(self.selected_index)
+            .map(|e| e.name.clone());
+        self.entries
+            .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+        self.parent_entries
+            .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+        if !was_filtering {
+            if let Some(name) = selected_name
+                && let Some(idx) = self.entries.iter().position(|e| e.name == name)
+            {
+                self.selected_index = idx;
+            } else {
+                self.selected_index = cmp::min(
+                    self.selected_index,
+                    self.entries.len().saturating_sub(1),
+                );
             }
         }
     }
