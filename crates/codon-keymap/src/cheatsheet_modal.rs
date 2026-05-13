@@ -1,10 +1,20 @@
-//! Full-screen modal listing every keybinding currently reachable from the
-//! workspace context. Bound to `cmd-k F1` by default.
+//! Full-screen modal listing every keybinding codon ships or the user
+//! configures. Bound to `cmd-k F1` by default.
 //!
 //! Only bindings declared in codon's curated set are shown — that's
 //! everything in the embedded `DEFAULT_KEYMAP` plus everything the user
 //! added to `~/.config/codon/codon.toml`. Vendor/zed's ~1000+ upstream
 //! defaults are filtered out: they're noise to a codon user.
+//!
+//! UX:
+//!
+//! - `Tab` / `Shift-Tab` cycle between the two sets of bindings —
+//!   "This pane" (context-local) and "Global" (everything else).
+//! - `/` enters filter mode; typing characters narrows the visible set
+//!   by chord or action name. `Esc` cancels the filter without
+//!   dismissing the modal.
+//! - `j` / `k` (and arrows) move the cursor; `Enter` dispatches the
+//!   cursored action; `Esc` dismisses.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -30,17 +40,49 @@ actions!(
     ]
 );
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheatTab {
+    ThisPane,
+    Global,
+}
+
+impl CheatTab {
+    fn label(self) -> &'static str {
+        match self {
+            CheatTab::ThisPane => "This pane",
+            CheatTab::Global => "Global",
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            CheatTab::ThisPane => CheatTab::Global,
+            CheatTab::Global => CheatTab::ThisPane,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheatMode {
+    Browse,
+    Filter,
+}
+
 pub struct KeybindingsCheatsheetModal {
     focus_handle: FocusHandle,
-    /// All rows flattened into one ordered list: section headers
-    /// interleaved with their pair rows. `gpui::list` virtualizes against
-    /// this slice — only rows intersecting the modal's visible region get
-    /// laid out and painted, which keeps the layout tree small enough that
-    /// scrolling and Esc feel instant.
+    /// Captured at open time so the "This pane" tab can name the pane
+    /// kind (e.g. "This pane · Terminal").
+    leaf_context_label: Option<SharedString>,
+    local_bindings: Vec<BindingRow>,
+    global_bindings: Vec<BindingRow>,
+    tab: CheatTab,
+    mode: CheatMode,
+    filter: String,
+    /// Visible rows after tab + filter — interleaved pair rows / empty
+    /// hints. `gpui::list` virtualizes against this slice.
     rows: Rc<[RowKind]>,
     list_state: ListState,
     /// Cursor index into `rows`. `j` / `k` bump it; the cursored row gets
-    /// a subtle highlight so the user can see where they are.
+    /// a subtle highlight.
     cursor: usize,
     /// Set to true on dismiss so any in-flight paint frames during the
     /// modal fade-out render an empty body — defends against the modal
@@ -61,13 +103,11 @@ struct BindingRow {
 
 #[derive(Clone)]
 enum RowKind {
-    /// Group header — bold label + count badge.
-    Header { label: SharedString, count: usize },
-    /// One-line muted hint, used in place of pair rows when "This pane"
-    /// has no bindings.
+    /// One-line muted hint, used when the active tab + filter combo has
+    /// no matching bindings.
     EmptyHint(SharedString),
     /// One pair of side-by-side bindings. `right` is `None` for the last
-    /// row in an odd-count section; the renderer fills the missing column
+    /// row in an odd-count list; the renderer fills the missing column
     /// with a spacer to keep column widths stable.
     Pair {
         left: BindingRow,
@@ -76,11 +116,14 @@ enum RowKind {
     },
 }
 
-/// Visual row heights, used only to choose a reasonable list overdraw and
-/// to compute page-size jumps for ctrl-d / ctrl-u. The list itself
-/// measures rows from their rendered elements.
 const ROW_HEIGHT_PX: f32 = 28.0;
-const PAGE_ROWS: usize = 10;
+const PAGE_ROWS: usize = 12;
+/// Modal height fraction of the viewport. The user explicitly asked for
+/// a taller cheatsheet — most viewports give ~720+ px of body at 0.92.
+const MODAL_H_FRAC: f32 = 0.92;
+const MODAL_W_FRAC: f32 = 0.85;
+const MODAL_MAX_W: f32 = 1080.0;
+const MODAL_MIN_H: f32 = 520.0;
 
 impl KeybindingsCheatsheetModal {
     pub fn new(
@@ -97,24 +140,103 @@ impl KeybindingsCheatsheetModal {
         let (local_bindings, global_bindings) =
             collect_bindings(&pane_context_stack, &curated_actions, raw_bindings, cx);
 
-        let rows = build_rows(
-            leaf_context_label.clone(),
-            &local_bindings,
-            &global_bindings,
-        );
-        let rows: Rc<[RowKind]> = Rc::from(rows);
+        // Open on whichever tab actually has bindings to show — if the
+        // current pane has no context-local bindings, jump straight to
+        // Global instead of greeting the user with an empty page.
+        let tab = if local_bindings.is_empty() {
+            CheatTab::Global
+        } else {
+            CheatTab::ThisPane
+        };
 
-        // Overdraw ~3 screens worth of rows so scrolling never reveals
-        // a blank gap before measurement catches up.
         let overdraw = px(ROW_HEIGHT_PX * (PAGE_ROWS as f32) * 3.0);
-        let list_state = ListState::new(rows.len(), ListAlignment::Top, overdraw);
-
-        Self {
+        let mut this = Self {
             focus_handle,
-            rows,
-            list_state,
+            leaf_context_label,
+            local_bindings,
+            global_bindings,
+            tab,
+            mode: CheatMode::Browse,
+            filter: String::new(),
+            rows: Rc::from(Vec::<RowKind>::new()),
+            list_state: ListState::new(0, ListAlignment::Top, overdraw),
             cursor: 0,
             dismissed: false,
+        };
+        this.rebuild_rows();
+        this
+    }
+
+    fn rebuild_rows(&mut self) {
+        let source: &[BindingRow] = match self.tab {
+            CheatTab::ThisPane => &self.local_bindings,
+            CheatTab::Global => &self.global_bindings,
+        };
+        let filtered: Vec<BindingRow> = if self.filter.is_empty() {
+            source.to_vec()
+        } else {
+            let needle = self.filter.to_ascii_lowercase();
+            source
+                .iter()
+                .filter(|r| {
+                    r.action_name.to_ascii_lowercase().contains(&needle)
+                        || r.keystrokes_text.to_ascii_lowercase().contains(&needle)
+                        || r.raw_action_name.to_ascii_lowercase().contains(&needle)
+                })
+                .cloned()
+                .collect()
+        };
+
+        let mut rows: Vec<RowKind> = Vec::new();
+        if filtered.is_empty() {
+            let hint = if !self.filter.is_empty() {
+                SharedString::from(format!("No bindings match `{}`", self.filter))
+            } else if matches!(self.tab, CheatTab::ThisPane) {
+                SharedString::from("No bindings specific to this pane")
+            } else {
+                SharedString::from("No bindings configured")
+            };
+            rows.push(RowKind::EmptyHint(hint));
+        } else {
+            append_pairs(&mut rows, &filtered);
+        }
+
+        self.rows = Rc::from(rows);
+        self.list_state.reset(self.rows.len());
+        self.cursor = first_pair_index(&self.rows).unwrap_or(0);
+    }
+
+    fn cycle_tab(&mut self, forward: bool) {
+        // With only two tabs forward and backward are the same; kept as
+        // an argument so adding a third set later is purely additive.
+        let _ = forward;
+        self.tab = self.tab.next();
+        self.rebuild_rows();
+    }
+
+    fn enter_filter(&mut self) {
+        self.mode = CheatMode::Filter;
+    }
+
+    fn exit_filter(&mut self, clear: bool) {
+        self.mode = CheatMode::Browse;
+        if clear && !self.filter.is_empty() {
+            self.filter.clear();
+            self.rebuild_rows();
+        }
+    }
+
+    fn push_filter_char(&mut self, ch: &str) {
+        if ch.chars().any(|c| c.is_control()) {
+            return;
+        }
+        self.filter.push_str(ch);
+        self.rebuild_rows();
+    }
+
+    fn pop_filter_char(&mut self) {
+        if self.filter.pop().is_some() {
+            self.rebuild_rows();
         }
     }
 
@@ -130,8 +252,27 @@ impl KeybindingsCheatsheetModal {
         let key = event.keystroke.key.as_str();
         let shift = event.keystroke.modifiers.shift;
         let ctrl = event.keystroke.modifiers.control;
-        let last = self.rows.len().saturating_sub(1);
+        let alt = event.keystroke.modifiers.alt;
+        let cmd = event.keystroke.modifiers.platform;
 
+        match self.mode {
+            CheatMode::Browse => self.handle_browse_key(event, key, shift, ctrl, window, cx),
+            CheatMode::Filter => {
+                self.handle_filter_key(event, key, shift, ctrl, alt, cmd, cx);
+            }
+        }
+    }
+
+    fn handle_browse_key(
+        &mut self,
+        _event: &KeyDownEvent,
+        key: &str,
+        shift: bool,
+        ctrl: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let last = self.rows.len().saturating_sub(1);
         let mut handled = true;
         match key {
             "escape" => {
@@ -139,12 +280,14 @@ impl KeybindingsCheatsheetModal {
                 cx.emit(DismissEvent);
                 return;
             }
-            "j" | "down" => self.move_cursor(1, false),
-            "k" | "up" => self.move_cursor(-1, false),
-            "pagedown" => self.move_cursor(PAGE_ROWS as isize, true),
-            "pageup" => self.move_cursor(-(PAGE_ROWS as isize), true),
-            "d" if ctrl => self.move_cursor((PAGE_ROWS / 2) as isize, true),
-            "u" if ctrl => self.move_cursor(-((PAGE_ROWS / 2) as isize), true),
+            "tab" => self.cycle_tab(!shift),
+            "/" => self.enter_filter(),
+            "j" | "down" => self.move_cursor(1),
+            "k" | "up" => self.move_cursor(-1),
+            "pagedown" => self.move_cursor(PAGE_ROWS as isize),
+            "pageup" => self.move_cursor(-(PAGE_ROWS as isize)),
+            "d" if ctrl => self.move_cursor((PAGE_ROWS / 2) as isize),
+            "u" if ctrl => self.move_cursor(-((PAGE_ROWS / 2) as isize)),
             "home" => self.set_cursor(0),
             "g" if !shift => self.set_cursor(0),
             "g" if shift => self.set_cursor(last),
@@ -160,36 +303,73 @@ impl KeybindingsCheatsheetModal {
         }
     }
 
+    fn handle_filter_key(
+        &mut self,
+        event: &KeyDownEvent,
+        key: &str,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+        cmd: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut handled = true;
+        match key {
+            "escape" => self.exit_filter(true),
+            "enter" => self.exit_filter(false),
+            "tab" => {
+                // Switching tabs while filtering carries the filter
+                // across so the user can see how it matches in both sets.
+                self.cycle_tab(!shift);
+            }
+            "backspace" => self.pop_filter_char(),
+            "down" => self.move_cursor(1),
+            "up" => self.move_cursor(-1),
+            _ => {
+                handled = false;
+                if cmd || ctrl || alt {
+                    // Don't try to fold modifier chords into the filter
+                    // — let them fall through (currently no-op).
+                } else if let Some(ch) = event.keystroke.key_char.as_deref() {
+                    if !ch.is_empty() {
+                        self.push_filter_char(ch);
+                        handled = true;
+                    }
+                } else if key == "space" {
+                    self.push_filter_char(" ");
+                    handled = true;
+                } else if !shift && key.chars().count() == 1 {
+                    self.push_filter_char(key);
+                    handled = true;
+                }
+            }
+        }
+        if handled {
+            cx.notify();
+        }
+    }
+
     /// Step the cursor by `delta` rows, skipping over non-binding rows
     /// (headers / hints) so j/k always lands on something dispatchable.
-    fn move_cursor(&mut self, delta: isize, snap_after: bool) {
+    fn move_cursor(&mut self, delta: isize) {
         if self.rows.is_empty() {
             return;
         }
         let last = self.rows.len() as isize - 1;
         let mut next = self.cursor as isize + delta;
         next = next.clamp(0, last);
-        // If we landed on a header / hint, slide in the direction of
-        // travel until we hit a Pair (or run off the end).
         let step: isize = if delta >= 0 { 1 } else { -1 };
-        while next >= 0 && next <= last {
+        while (0..=last).contains(&next) {
             if matches!(self.rows[next as usize], RowKind::Pair { .. }) {
                 break;
             }
             next += step;
         }
         if !(0..=last).contains(&next) {
-            // No pair in that direction — undo.
             return;
         }
         self.cursor = next as usize;
-        // Page jumps reveal directly; single-step jumps just ensure
-        // the cursor stays visible.
-        if snap_after {
-            self.list_state.scroll_to_reveal_item(self.cursor);
-        } else {
-            self.list_state.scroll_to_reveal_item(self.cursor);
-        }
+        self.list_state.scroll_to_reveal_item(self.cursor);
     }
 
     fn set_cursor(&mut self, target: usize) {
@@ -198,24 +378,7 @@ impl KeybindingsCheatsheetModal {
         }
         let last = self.rows.len().saturating_sub(1);
         let target = target.min(last);
-        // Snap to the nearest Pair in either direction so the highlight
-        // never lands on a header.
-        let mut chosen = None;
-        for offset in 0..=last {
-            for sign in [1isize, -1] {
-                let ix = target as isize + sign * offset as isize;
-                if ix < 0 || ix as usize > last {
-                    continue;
-                }
-                if matches!(self.rows[ix as usize], RowKind::Pair { .. }) {
-                    chosen = Some(ix as usize);
-                    break;
-                }
-            }
-            if chosen.is_some() {
-                break;
-            }
-        }
+        let chosen = nearest_pair(&self.rows, target);
         if let Some(ix) = chosen {
             self.cursor = ix;
             self.list_state.scroll_to_reveal_item(self.cursor);
@@ -232,13 +395,31 @@ impl KeybindingsCheatsheetModal {
         let action_name = left.raw_action_name.to_string();
         self.dismissed = true;
         cx.emit(DismissEvent);
-        // Best-effort dispatch by name. Failures (unknown action, missing
-        // data) just dismiss silently — the user can still type the
-        // binding directly.
         if let Ok(action) = cx.build_action(&action_name, None) {
             window.dispatch_action(action, cx);
         }
     }
+}
+
+fn first_pair_index(rows: &[RowKind]) -> Option<usize> {
+    rows.iter()
+        .position(|r| matches!(r, RowKind::Pair { .. }))
+}
+
+fn nearest_pair(rows: &[RowKind], target: usize) -> Option<usize> {
+    let last = rows.len().saturating_sub(1);
+    for offset in 0..=last {
+        for sign in [1isize, -1] {
+            let ix = target as isize + sign * offset as isize;
+            if ix < 0 || ix as usize > last {
+                continue;
+            }
+            if matches!(rows[ix as usize], RowKind::Pair { .. }) {
+                return Some(ix as usize);
+            }
+        }
+    }
+    None
 }
 
 fn curated_action_set() -> HashSet<String> {
@@ -247,40 +428,6 @@ fn curated_action_set() -> HashSet<String> {
         .chain(crate::keymap::codon_user_bindings())
         .map(|(_, action, _)| action)
         .collect()
-}
-
-fn build_rows(
-    leaf_context_label: Option<SharedString>,
-    local: &[BindingRow],
-    global: &[BindingRow],
-) -> Vec<RowKind> {
-    let mut rows: Vec<RowKind> = Vec::new();
-
-    let local_label = leaf_context_label
-        .clone()
-        .map(|leaf| SharedString::from(format!("This pane · {leaf}")))
-        .unwrap_or_else(|| SharedString::from("This pane"));
-    rows.push(RowKind::Header {
-        label: local_label,
-        count: local.len(),
-    });
-    if local.is_empty() {
-        rows.push(RowKind::EmptyHint(SharedString::from(
-            "No pane-specific bindings",
-        )));
-    } else {
-        append_pairs(&mut rows, local);
-    }
-
-    if !global.is_empty() {
-        rows.push(RowKind::Header {
-            label: SharedString::from("Global"),
-            count: global.len(),
-        });
-        append_pairs(&mut rows, global);
-    }
-
-    rows
 }
 
 /// Lay out `items` top-down-then-right into a column of paired rows.
@@ -304,7 +451,7 @@ fn append_pairs(out: &mut Vec<RowKind>, items: &[BindingRow]) {
     }
 }
 
-fn render_binding_cell(row: &BindingRow, is_cursor: bool) -> AnyElement {
+fn render_binding_cell(row: &BindingRow) -> AnyElement {
     let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
         .size(ui::rems_from_px(13.));
     h_flex()
@@ -320,11 +467,7 @@ fn render_binding_cell(row: &BindingRow, is_cursor: bool) -> AnyElement {
         )
         .child(
             Label::new(row.action_name.clone())
-                .color(if is_cursor {
-                    Color::Default
-                } else {
-                    Color::Default
-                })
+                .color(Color::Default)
                 .size(LabelSize::Default)
                 .single_line()
                 .truncate(),
@@ -357,7 +500,7 @@ fn render_pair(
         .min_w(px(0.))
         .when_some(bg, |el, c| el.bg(c))
         .when(is_cursor, |el| el.border_l_2().border_color(accent))
-        .child(render_binding_cell(left, is_cursor));
+        .child(render_binding_cell(left));
     let right_cell: AnyElement = match right {
         Some(binding) => h_flex()
             .items_center()
@@ -367,7 +510,7 @@ fn render_pair(
             .flex_1()
             .min_w(px(0.))
             .when_some(bg, |el, c| el.bg(c))
-            .child(render_binding_cell(binding, false))
+            .child(render_binding_cell(binding))
             .into_any_element(),
         None => div().flex_1().min_w(px(0.)).into_any_element(),
     };
@@ -380,44 +523,71 @@ fn render_pair(
         .into_any_element()
 }
 
-fn render_header(
-    label: SharedString,
-    count: usize,
-    accent: Hsla,
-    divider: Hsla,
-) -> AnyElement {
-    let header_row = h_flex()
-        .items_center()
-        .gap_2()
-        .pt_3()
-        .pb_1()
-        .child(div().w(px(3.)).h(px(14.)).rounded_full().bg(accent))
-        .child(
-            Label::new(label)
-                .color(Color::Default)
-                .size(LabelSize::Default)
-                .weight(FontWeight::SEMIBOLD),
-        )
-        .child(
-            Label::new(format!("{count}"))
-                .color(Color::Muted)
-                .size(LabelSize::Small),
-        );
-    v_flex()
-        .w_full()
-        .child(header_row)
-        .child(div().h(px(1.)).w_full().bg(divider))
-        .into_any_element()
-}
-
 fn render_empty_hint(text: SharedString) -> AnyElement {
     v_flex()
-        .py_1()
+        .py_8()
         .child(
             Label::new(text)
                 .color(Color::Muted)
-                .size(LabelSize::Small),
+                .size(LabelSize::Default),
         )
+        .into_any_element()
+}
+
+/// Render the two-tab pill bar with a count badge per tab.
+fn render_tabs(
+    active: CheatTab,
+    leaf_label: Option<&SharedString>,
+    local_count: usize,
+    global_count: usize,
+    accent: Hsla,
+    pill_bg: Hsla,
+) -> AnyElement {
+    let this_pane_label = match leaf_label {
+        Some(leaf) => SharedString::from(format!("This pane · {leaf}")),
+        None => SharedString::from(CheatTab::ThisPane.label()),
+    };
+
+    let tab = |label: SharedString, count: usize, is_active: bool| {
+        let pill = h_flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .when(is_active, |el| el.bg(pill_bg))
+            .child(
+                Label::new(label)
+                    .color(if is_active { Color::Default } else { Color::Muted })
+                    .size(LabelSize::Default)
+                    .weight(if is_active {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    }),
+            )
+            .child(
+                Label::new(format!("{count}"))
+                    .color(if is_active { Color::Accent } else { Color::Muted })
+                    .size(LabelSize::Small),
+            )
+            .when(is_active, |el| el.border_b_2().border_color(accent));
+        pill.into_any_element()
+    };
+
+    h_flex()
+        .gap_1()
+        .items_center()
+        .child(tab(
+            this_pane_label,
+            local_count,
+            matches!(active, CheatTab::ThisPane),
+        ))
+        .child(tab(
+            SharedString::from(CheatTab::Global.label()),
+            global_count,
+            matches!(active, CheatTab::Global),
+        ))
         .into_any_element()
 }
 
@@ -445,8 +615,6 @@ fn collect_bindings(
     let mut seen: HashSet<(SharedString, String)> = HashSet::with_capacity(raw.len());
     for binding in raw.iter() {
         let raw_name = binding.action().name();
-        // Only show bindings codon itself owns — the curated set built
-        // from `DEFAULT_KEYMAP` + `~/.config/codon/codon.toml`.
         if !curated_actions.contains(raw_name) {
             continue;
         }
@@ -472,11 +640,7 @@ fn collect_bindings(
         };
         // A binding is *pane-local* iff its predicate is satisfied by the
         // full stack but NOT by the stack with the leaf removed — i.e.
-        // the leaf context is load-bearing. Plain "matches at leaf depth"
-        // isn't enough because predicates like `!Editor`, `Pane &&
-        // something`, or anything that's true at multiple levels also
-        // satisfies `depth_of == stack.len()` and would flood the
-        // "this pane" section with broadly-applicable bindings.
+        // the leaf context is load-bearing.
         let is_local = match binding.predicate() {
             Some(predicate) => {
                 if pane_context_stack.is_empty() {
@@ -521,6 +685,7 @@ impl Render for KeybindingsCheatsheetModal {
         let panel_bg = theme.colors().elevated_surface_background;
         let row_bg = theme.colors().surface_background;
         let cursor_bg = theme.colors().element_selected;
+        let pill_bg = theme.colors().element_background;
         let accent = theme.colors().text_accent;
         let border = theme.colors().border;
         let divider = theme.colors().border_variant;
@@ -530,7 +695,7 @@ impl Render for KeybindingsCheatsheetModal {
         key_context.add("menu");
 
         // Short-circuit paint during fade-out so the modal layer's
-        // animation frames don't pay any layout cost.
+        // animation frames pay no layout cost.
         if self.dismissed {
             return div()
                 .key_context(key_context)
@@ -538,42 +703,44 @@ impl Render for KeybindingsCheatsheetModal {
                 .size_full();
         }
 
-        let total_count = self
+        let visible_count: usize = self
             .rows
             .iter()
-            .filter(|r| {
-                matches!(
-                    r,
-                    RowKind::Pair {
-                        right: Some(_),
-                        ..
-                    } | RowKind::Pair { right: None, .. }
-                )
-            })
             .map(|r| match r {
                 RowKind::Pair { right: Some(_), .. } => 2,
                 RowKind::Pair { right: None, .. } => 1,
                 _ => 0,
             })
-            .sum::<usize>();
+            .sum();
+        let total_in_tab = match self.tab {
+            CheatTab::ThisPane => self.local_bindings.len(),
+            CheatTab::Global => self.global_bindings.len(),
+        };
+        let count_text = if self.filter.is_empty() {
+            format!("{visible_count} bindings")
+        } else {
+            format!("{visible_count} of {total_in_tab} match")
+        };
 
-        let header = h_flex()
+        let help_text = match self.mode {
+            CheatMode::Browse => "Tab switch · / filter · j/k move · Enter run · Esc dismiss",
+            CheatMode::Filter => "type to filter · ↑/↓ move · Enter confirm · Esc clear filter",
+        };
+
+        let title_block = v_flex()
+            .gap_0p5()
+            .child(Headline::new("Keybindings").size(HeadlineSize::Medium))
+            .child(
+                Label::new(count_text)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            );
+
+        let header_top = h_flex()
             .items_center()
             .justify_between()
             .pb_3()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Headline::new("Keybindings").size(HeadlineSize::Medium))
-                    .child(
-                        Label::new(format!(
-                            "{} curated · j/k move · Enter run · Esc dismiss",
-                            total_count
-                        ))
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                    ),
-            )
+            .child(title_block)
             .child(
                 h_flex()
                     .gap_2()
@@ -582,15 +749,30 @@ impl Render for KeybindingsCheatsheetModal {
                     .child(ui::Icon::new(IconName::Command).color(Color::Muted)),
             );
 
+        let tab_bar = h_flex()
+            .items_center()
+            .justify_between()
+            .pb_2()
+            .child(render_tabs(
+                self.tab,
+                self.leaf_context_label.as_ref(),
+                self.local_bindings.len(),
+                self.global_bindings.len(),
+                accent,
+                pill_bg,
+            ))
+            .child(
+                Label::new(help_text)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            );
+
         let rows = self.rows.clone();
         let cursor = self.cursor;
         let list_state = self.list_state.clone();
         let body = list(
             list_state,
             move |ix, _window, _cx| match rows.get(ix) {
-                Some(RowKind::Header { label, count }) => {
-                    render_header(label.clone(), *count, accent, divider)
-                }
                 Some(RowKind::EmptyHint(text)) => render_empty_hint(text.clone()),
                 Some(RowKind::Pair {
                     left,
@@ -610,8 +792,43 @@ impl Render for KeybindingsCheatsheetModal {
         )
         .flex_grow();
 
-        let max_w = px((f32::from(viewport.width) * 0.85).min(960.));
-        let max_h = px(f32::from(viewport.height) * 0.85);
+        let filter_bar = if matches!(self.mode, CheatMode::Filter) || !self.filter.is_empty() {
+            let prompt = h_flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1p5()
+                .rounded_md()
+                .bg(theme.colors().editor_background)
+                .border_1()
+                .border_color(if matches!(self.mode, CheatMode::Filter) {
+                    accent
+                } else {
+                    divider
+                })
+                .child(
+                    Label::new(SharedString::from("/"))
+                        .color(Color::Muted)
+                        .size(LabelSize::Default),
+                )
+                .child(
+                    Label::new(SharedString::from(self.filter.clone()))
+                        .color(Color::Default)
+                        .size(LabelSize::Default),
+                )
+                .when(matches!(self.mode, CheatMode::Filter), |el| {
+                    // Visual cursor: a thin accent bar after the typed
+                    // text. Static (no blink) — the modal already conveys
+                    // enough state.
+                    el.child(div().w(px(2.)).h(px(14.)).bg(accent).rounded_full())
+                });
+            Some(prompt)
+        } else {
+            None
+        };
+
+        let max_w = px((f32::from(viewport.width) * MODAL_W_FRAC).min(MODAL_MAX_W));
+        let max_h = px(f32::from(viewport.height) * MODAL_H_FRAC);
 
         div()
             .key_context(key_context)
@@ -629,7 +846,7 @@ impl Render for KeybindingsCheatsheetModal {
                     .max_w(max_w)
                     .max_h(max_h)
                     .w_full()
-                    .min_h(px(360.))
+                    .min_h(px(MODAL_MIN_H))
                     .rounded_lg()
                     .bg(panel_bg)
                     .border_1()
@@ -637,8 +854,11 @@ impl Render for KeybindingsCheatsheetModal {
                     .shadow_lg()
                     .px_6()
                     .py_5()
-                    .child(header)
-                    .child(body),
+                    .child(header_top)
+                    .child(tab_bar)
+                    .child(div().h(px(1.)).w_full().bg(divider).mb_2())
+                    .child(body)
+                    .when_some(filter_bar, |el, bar| el.child(div().mt_2().child(bar))),
             )
     }
 }
