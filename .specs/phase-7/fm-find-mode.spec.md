@@ -7,7 +7,7 @@ summary: >
   `/` enters find-forward, `?` find-backward; `n` / `N` walk matches
   after commit. Substring case-insensitive match against entry names.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-find-search#c-find-mode
 ---

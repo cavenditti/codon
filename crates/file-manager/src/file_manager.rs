@@ -181,6 +181,10 @@ pub struct FileManager {
     pub(crate) line_mode: crate::prefs::LineMode,
     pub(crate) show_gitignored: bool,
     pub(crate) preview_fraction: f32,
+    /// Last committed find query (from `/` or `?`). `n` and `N` walk
+    /// forward / backward through matches of this pattern. None until
+    /// the user commits a find via Enter.
+    pub(crate) last_find_pattern: Option<String>,
 }
 
 #[derive(Clone)]
@@ -204,16 +208,12 @@ pub(crate) enum PendingInput {
     /// `:cd <path>` prompt — Tab extends with longest-common-prefix of
     /// filesystem matches; Enter resolves and navigates.
     GotoPath { query: String },
-    /// `cm` chmod prompt: octal (`755`, `0o755`) or symbolic
-    /// (`u+x`, `a=r,g-w`) mode string. `targets` is the snapshot of
-    /// affected paths captured when the chord resolved — either the
-    /// marked set or, if no marks, the focused entry. Each entry's
-    /// current mode is paired alongside so symbolic clauses (which
-    /// build on the existing mode) survive a directory change.
     Chmod {
         input: String,
         targets: Vec<(PathBuf, Option<u32>)>,
     },
+    FindForward { query: String, origin_index: usize },
+    FindBackward { query: String, origin_index: usize },
 }
 
 /// One unit of work for a paste operation: where the bytes come from and
@@ -282,6 +282,7 @@ impl FileManager {
             line_mode: prefs.line_mode,
             show_gitignored: prefs.show_gitignored,
             preview_fraction: crate::prefs::clamp_fraction(prefs.preview_fraction),
+            last_find_pattern: None,
         };
         this.reload_entries_sync();
         this
@@ -881,6 +882,125 @@ impl FileManager {
         cx.notify();
     }
 
+    /// `/` enters find-forward. On each keystroke (handled in
+    /// `handle_insert_key`), the cursor jumps to the next entry whose
+    /// name contains the query substring (case-insensitive). Enter
+    /// commits the query as `last_find_pattern` so `n` / `N` can repeat.
+    fn start_find_forward(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::FindForward {
+            query: String::new(),
+            origin_index: self.selected_index,
+        });
+        cx.notify();
+    }
+
+    /// `?` enters find-backward. Same UX as forward but the per-keystroke
+    /// jump walks backward through `entries`.
+    fn start_find_backward(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = PaneMode::Insert;
+        self.pending_input = Some(PendingInput::FindBackward {
+            query: String::new(),
+            origin_index: self.selected_index,
+        });
+        cx.notify();
+    }
+
+    /// Search forward from `start` (exclusive) and wrap to the beginning
+    /// if no match found before end-of-list. Returns `None` only when no
+    /// entry contains `needle`.
+    fn find_forward_from(&self, start: usize, needle: &str) -> Option<usize> {
+        if self.entries.is_empty() || needle.is_empty() {
+            return None;
+        }
+        let needle = needle.to_lowercase();
+        let len = self.entries.len();
+        for offset in 1..=len {
+            let idx = (start + offset) % len;
+            if self.entries[idx].name.to_lowercase().contains(&needle) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Search backward from `start` (exclusive) and wrap to the end if
+    /// no match found before index 0.
+    fn find_backward_from(&self, start: usize, needle: &str) -> Option<usize> {
+        if self.entries.is_empty() || needle.is_empty() {
+            return None;
+        }
+        let needle = needle.to_lowercase();
+        let len = self.entries.len();
+        for offset in 1..=len {
+            let idx = (start + len - (offset % len)) % len;
+            if self.entries[idx].name.to_lowercase().contains(&needle) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Per-keystroke incremental match for the find prompt. Starts from
+    /// `origin_index - 1` (forward) or `+1` (backward) so the first
+    /// character anchors against the cursor's pre-find position and lands
+    /// on the nearest match in the chosen direction.
+    fn apply_find_preview(&mut self, query: &str, origin_index: usize, forward: bool) {
+        if query.is_empty() {
+            self.selected_index = cmp::min(origin_index, self.entries.len().saturating_sub(1));
+            self.ensure_visible();
+            self.update_preview_sync();
+            return;
+        }
+        let len = self.entries.len();
+        if len == 0 {
+            return;
+        }
+        let anchor = if forward {
+            (origin_index + len - 1) % len
+        } else {
+            (origin_index + 1) % len
+        };
+        let found = if forward {
+            self.find_forward_from(anchor, query)
+        } else {
+            self.find_backward_from(anchor, query)
+        };
+        if let Some(idx) = found {
+            self.selected_index = idx;
+            self.ensure_visible();
+            self.update_preview_sync();
+        }
+    }
+
+    /// `n` (Normal): walk forward through matches of the last committed
+    /// find pattern. No-op if no pattern is committed.
+    fn find_next(&mut self, cx: &mut Context<Self>) {
+        let Some(needle) = self.last_find_pattern.clone() else {
+            return;
+        };
+        if let Some(idx) = self.find_forward_from(self.selected_index, &needle) {
+            self.selected_index = idx;
+            self.ensure_visible();
+            self.update_preview_sync();
+            cx.notify();
+        }
+    }
+
+    /// `N` (Normal): walk backward through matches of the last committed
+    /// find pattern. No-op if no pattern is committed.
+    fn find_prev(&mut self, cx: &mut Context<Self>) {
+        let Some(needle) = self.last_find_pattern.clone() else {
+            return;
+        };
+        if let Some(idx) = self.find_backward_from(self.selected_index, &needle) {
+            self.selected_index = idx;
+            self.ensure_visible();
+            self.update_preview_sync();
+            cx.notify();
+        }
+    }
+
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         // Re-entering filter mode while a filter is already committed
         // keeps the existing query so the user can edit it.
@@ -1333,15 +1453,30 @@ impl FileManager {
         match key {
             "escape" => {
                 let was_filter = matches!(pending, PendingInput::Filter);
+                // Esc on a find prompt restores the cursor — spec says
+                // "Esc cancels; nothing changes."
+                let find_origin = match pending {
+                    PendingInput::FindForward { origin_index, .. }
+                    | PendingInput::FindBackward { origin_index, .. } => Some(*origin_index),
+                    _ => None,
+                };
                 self.pending_input = None;
                 self.mode = PaneMode::Normal;
                 if was_filter {
                     self.clear_filter();
                 }
+                if let Some(origin) = find_origin {
+                    self.selected_index = cmp::min(
+                        origin,
+                        self.entries.len().saturating_sub(1),
+                    );
+                    self.ensure_visible();
+                    self.update_preview_sync();
+                }
                 cx.notify();
             }
             "backspace" => {
-                match pending {
+                let find_step: Option<(String, usize, bool)> = match pending {
                     PendingInput::CreateFile(s)
                     | PendingInput::CreateDirectory(s)
                     | PendingInput::Rename { new_name: s, .. }
@@ -1349,16 +1484,30 @@ impl FileManager {
                     | PendingInput::GotoPath { query: s }
                     | PendingInput::Chmod { input: s, .. } => {
                         s.pop();
+                        None
                     }
                     PendingInput::Filter => {
                         self.filter_query.pop();
                         self.apply_filter();
+                        None
+                    }
+                    PendingInput::FindForward { query, origin_index } => {
+                        query.pop();
+                        Some((query.clone(), *origin_index, true))
+                    }
+                    PendingInput::FindBackward { query, origin_index } => {
+                        query.pop();
+                        Some((query.clone(), *origin_index, false))
                     }
                     PendingInput::ConfirmOverwrite { .. }
                     | PendingInput::ConfirmDeleteMarked { .. } => {
                         // Nothing to edit on the prompt; expected response is
                         // y/n or Esc.
+                        None
                     }
+                };
+                if let Some((q, origin, forward)) = find_step {
+                    self.apply_find_preview(&q, origin, forward);
                 }
                 cx.notify();
             }
@@ -1468,6 +1617,14 @@ impl FileManager {
                         cx.notify();
                         self.execute_bulk_chmod(input, targets, window, cx);
                     }
+                    PendingInput::FindForward { query, .. }
+                    | PendingInput::FindBackward { query, .. } => {
+                        if !query.is_empty() {
+                            self.last_find_pattern = Some(query);
+                        }
+                        self.mode = PaneMode::Normal;
+                        cx.notify();
+                    }
                     _ => {
                         self.mode = PaneMode::Normal;
                         self.reload_entries(window, cx);
@@ -1503,7 +1660,7 @@ impl FileManager {
                             _ => {}
                         }
                     } else if ch.len() == 1 {
-                        match pending {
+                        let find_step: Option<(String, usize, bool)> = match pending {
                             PendingInput::CreateFile(s)
                             | PendingInput::CreateDirectory(s)
                             | PendingInput::Rename { new_name: s, .. }
@@ -1511,15 +1668,29 @@ impl FileManager {
                             | PendingInput::GotoPath { query: s }
                             | PendingInput::Chmod { input: s, .. } => {
                                 s.push_str(ch);
+                                None
                             }
                             PendingInput::Filter => {
                                 self.filter_query.push_str(ch);
                                 self.apply_filter();
+                                None
+                            }
+                            PendingInput::FindForward { query, origin_index } => {
+                                query.push_str(ch);
+                                Some((query.clone(), *origin_index, true))
+                            }
+                            PendingInput::FindBackward { query, origin_index } => {
+                                query.push_str(ch);
+                                Some((query.clone(), *origin_index, false))
                             }
                             PendingInput::ConfirmOverwrite { .. }
                             | PendingInput::ConfirmDeleteMarked { .. } => {
                                 // Handled in the branch above.
+                                None
                             }
+                        };
+                        if let Some((q, origin, forward)) = find_step {
+                            self.apply_find_preview(&q, origin, forward);
                         }
                         cx.notify();
                     }
@@ -1711,6 +1882,13 @@ impl FileManager {
             "." if !shift && !ctrl => { self.toggle_hidden(&ToggleHidden, window, cx); true }
             // Fuzzy filter (phase-7: moved from `/` to `f`; `/` is now find-forward).
             "f" if !shift && !ctrl => { self.start_filter(window, cx); true }
+            // Find: yazi-style incremental jump. `/` searches forward, `?`
+            // backward; on commit the query is parked in
+            // `last_find_pattern` so `n` / `N` repeat the walk.
+            "/" if !ctrl => { self.start_find_forward(window, cx); true }
+            "?" if !ctrl => { self.start_find_backward(window, cx); true }
+            "n" if !shift && !ctrl => { self.find_next(cx); true }
+            "n" if shift && !ctrl => { self.find_prev(cx); true }
             "escape" if self.visual_anchor.is_some() => {
                 self.commit_visual_range(cx);
                 true

@@ -224,6 +224,8 @@ impl FileManager {
                     format!("{input}   ({count} entries — octal or symbolic)").into(),
                 )
             }
+            PendingInput::FindForward { query, .. } => ("find: ", query.as_str().into()),
+            PendingInput::FindBackward { query, .. } => ("find?: ", query.as_str().into()),
         };
 
         let theme = cx.theme();
