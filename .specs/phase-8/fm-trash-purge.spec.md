@@ -7,7 +7,7 @@ summary: >
   `X` permanently deletes — from inside the trash modal (purge) or on
   a live file (skip-trash delete) with single-prompt confirm.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-trash#c-trash-purge
 ---
