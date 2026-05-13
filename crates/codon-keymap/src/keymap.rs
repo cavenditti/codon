@@ -241,6 +241,48 @@ pub fn load_codon_keymap(cx: &mut App) {
     }
 }
 
+/// One entry in the curated codon-keymap surface: a chord string
+/// (`"cmd-k s o"`), an action name (`"codon_session::SessionOverview"`),
+/// and an optional context predicate the binding fires under.
+///
+/// Exported so the cheatsheet can filter the global GPUI binding registry
+/// down to "only the bindings codon ships by default plus whatever the
+/// user added in `~/.config/codon/codon.toml`" — vendor/zed's ~1000+
+/// upstream defaults are noise to the codon user.
+pub type CuratedBinding = (String, String, Option<String>);
+
+/// Curated codon defaults — every `[bindings.*]` entry in the embedded
+/// `DEFAULT_KEYMAP`. Returns an empty vec if the embedded TOML fails to
+/// parse (which would be a build-time bug; we still don't panic).
+pub fn codon_default_bindings() -> Vec<CuratedBinding> {
+    parse_keymap(DEFAULT_KEYMAP).unwrap_or_default()
+}
+
+/// Curated user overrides — every `[bindings.*]` entry in the user's
+/// `~/.config/codon/codon.toml` (with legacy `keymap.toml` as a fallback).
+/// Returns an empty vec if no user file exists or the file is unparsable.
+/// Stable across cheatsheet invocations as long as the file doesn't
+/// change between opens; we re-read on each call so a fresh edit is
+/// reflected without a process restart.
+pub fn codon_user_bindings() -> Vec<CuratedBinding> {
+    let Some(codon_dir) = codon_config::codon_config_dir() else {
+        return Vec::new();
+    };
+    let unified = codon_dir.join("codon.toml");
+    let legacy = codon_dir.join("keymap.toml");
+    let path = if unified.exists() {
+        unified
+    } else if legacy.exists() {
+        legacy
+    } else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    parse_keymap(&content).unwrap_or_default()
+}
+
 fn parse_keymap(content: &str) -> Option<Vec<(String, String, Option<String>)>> {
     let keymap: CodonKeymap = toml::from_str(content).ok()?;
     let mut result = Vec::new();
