@@ -157,6 +157,11 @@ const DEFAULT_KEYMAP: &str = r#"
 
 [bindings.file_manager.normal]
 ":" = "codon_command_palette::Toggle"
+# `O` (shift-o) opens the choose-opener picker over the entry under the
+# cursor — see `crates/file-manager/src/opener_picker.rs`. Raw key
+# handling already triggers the picker; this binding keeps `O` visible
+# in the cheatsheet and lets users rebind it from `codon.toml`.
+"shift-o" = "file_manager::ChooseOpener"
 
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
@@ -432,6 +437,7 @@ fn resolve_binding(
 
         // File manager
         "file_manager::Open" => bind!(file_manager::Open),
+        "file_manager::ChooseOpener" => bind!(file_manager::ChooseOpener),
 
         // Codon session
         "codon_session::SessionNew" => bind!(codon_session::SessionNew),

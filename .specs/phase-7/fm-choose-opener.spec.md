@@ -8,7 +8,7 @@ summary: >
   "Codon (default)" entry. Marked-set semantics: each opener runs
   once per marked entry.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-openers#c-choose-opener
 ---

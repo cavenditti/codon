@@ -254,6 +254,40 @@ fn start_watcher(fs: Arc<dyn Fs>, cx: &mut App) {
     .detach();
 }
 
+/// One row in the choose-opener picker. The synthetic `Default` variant
+/// represents "Codon (default)" — the existing `workspace.open_abs_path`
+/// fallback, which the picker always appends to the matching set so the
+/// user never lands in a dead-end with zero rows.
+#[derive(Clone, Debug)]
+pub enum OpenerChoice {
+    Opener(Opener),
+    Default,
+}
+
+impl OpenerChoice {
+    pub fn label(&self) -> String {
+        match self {
+            OpenerChoice::Opener(o) => o.label(),
+            OpenerChoice::Default => "Codon (default)".to_string(),
+        }
+    }
+}
+
+/// Build the picker rows for `path` from the active `OpenerStore`. Always
+/// trails with `OpenerChoice::Default` so the picker is non-empty even
+/// when no opener declared a matching predicate.
+pub fn choices_for(path: &Path, cx: &App) -> Vec<OpenerChoice> {
+    let mut choices: Vec<OpenerChoice> = cx
+        .try_global::<OpenerStore>()
+        .map(|s| s.matches_for(path))
+        .unwrap_or_default()
+        .into_iter()
+        .map(OpenerChoice::Opener)
+        .collect();
+    choices.push(OpenerChoice::Default);
+    choices
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

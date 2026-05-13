@@ -7,7 +7,7 @@ summary: >
   `~/.config/codon/openers.toml` — declarative opener config loaded at
   startup and on FS-watcher notifications.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/fm-openers#c-opener-config
 ---

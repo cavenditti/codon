@@ -431,6 +431,7 @@ impl Render for FileManager {
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
+            .on_action(cx.listener(Self::handle_choose_opener))
             .on_key_down(cx.listener(Self::handle_key_down))
             .when(filter_committed, |this| {
                 this.child(

@@ -1084,6 +1084,20 @@ impl FileManager {
         }
     }
 
+    /// Action-bus entry point for `file_manager::ChooseOpener` — the
+    /// keymap-bound twin of the `O` keypress arm in
+    /// `handle_normal_keystroke`. Lets a user rebind the verb from
+    /// `~/.config/codon/codon.toml` without losing the default `O` key.
+    pub(crate) fn handle_choose_opener(
+        &mut self,
+        _: &ChooseOpener,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_opener(window, cx);
+        cx.stop_propagation();
+    }
+
     pub(crate) fn handle_cancel(
         &mut self,
         _: &menu::Cancel,
@@ -1339,6 +1353,138 @@ impl FileManager {
                 crate::search::ContentSearchModal::new(root, query, weak, window, cx)
             });
         });
+    }
+
+    /// `O` (shift-o): open the choose-opener picker for the entry under
+    /// the cursor (or the marked set's first entry). The picker always
+    /// has at least one row — the synthetic "Codon (default)" — so this
+    /// verb is never a silent no-op.
+    fn choose_opener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let targets = self.opener_targets();
+        if targets.cursor.as_os_str().is_empty() {
+            return;
+        }
+        let cursor_for_label = targets.cursor.clone();
+        let label = cursor_for_label
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| cursor_for_label.display().to_string());
+        let choices = crate::openers::choices_for(&targets.cursor, cx);
+        let weak = self.workspace.clone();
+        let fm = cx.weak_entity();
+        workspace.update(cx, |ws, cx| {
+            ws.toggle_modal(window, cx, move |window, cx| {
+                let targets = targets.clone();
+                let fm = fm.clone();
+                crate::opener_picker::OpenerPickerModal::new(
+                    choices,
+                    label,
+                    move |choice, window, cx| {
+                        if let Some(this) = fm.upgrade() {
+                            this.update(cx, |fm, cx| {
+                                fm.run_opener_choice(choice, targets.clone(), window, cx);
+                            });
+                        }
+                    },
+                    weak.clone(),
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
+    /// Snapshot of the inputs an opener invocation needs — the cursor,
+    /// the marked set, and the current directory. Captured once at the
+    /// moment the picker opens so a stale picker can't be steered into
+    /// running against a different cursor.
+    pub(crate) fn opener_targets(&self) -> crate::opener_picker::OpenerTargets {
+        let cursor = self
+            .entries
+            .get(self.selected_index)
+            .map(|e| e.path.clone())
+            .unwrap_or_else(|| self.current_dir.clone());
+        let marked: Vec<PathBuf> = self
+            .marked
+            .iter()
+            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+            .collect();
+        crate::opener_picker::OpenerTargets {
+            cursor,
+            marked,
+            cwd: self.current_dir.clone(),
+        }
+    }
+
+    /// Dispatch the picker's chosen row. `Default` falls back to the
+    /// usual `workspace.open_abs_path` path; `Opener` substitutes its
+    /// template against each target and routes through the existing
+    /// shell-exec machinery (`block` selects blocking vs async).
+    pub(crate) fn run_opener_choice(
+        &mut self,
+        choice: crate::openers::OpenerChoice,
+        targets: crate::opener_picker::OpenerTargets,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match choice {
+            crate::openers::OpenerChoice::Default => {
+                let paths = if targets.marked.is_empty() {
+                    vec![targets.cursor.clone()]
+                } else {
+                    targets.marked.clone()
+                };
+                self.open_paths_default(paths, window, cx);
+            }
+            crate::openers::OpenerChoice::Opener(opener) => {
+                let plan = targets.plan(&opener.cmd);
+                for (cursor, marks) in plan {
+                    let command = crate::shell::apply_substitutions(
+                        &opener.cmd,
+                        &cursor,
+                        &marks,
+                        &targets.cwd,
+                    );
+                    if command.trim().is_empty() {
+                        continue;
+                    }
+                    self.dispatch_shell_command(
+                        opener.cmd.clone(),
+                        command,
+                        opener.block,
+                        window,
+                        cx,
+                    );
+                }
+            }
+        }
+    }
+
+    /// `workspace.open_abs_path` fan-out — preserves today's behavior
+    /// for files Zed knows how to open natively (text, images, …).
+    /// Marked entries open in their natural workspace order; missing
+    /// items log and skip.
+    pub(crate) fn open_paths_default(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            for path in paths {
+                let task = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.open_abs_path(path, Default::default(), window, cx)
+                });
+                if let Ok(task) = task {
+                    task.await.log_err();
+                }
+            }
+        })
+        .detach();
     }
 
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2339,6 +2485,7 @@ impl FileManager {
             "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
             "t" if shift && !ctrl => { self.open_trash_modal(window, cx); true }
             "x" if shift && !ctrl => { self.start_skip_trash_delete(window, cx); true }
+            "o" if shift && !ctrl => { self.choose_opener(window, cx); true }
             "escape" if self.shell_running.is_some() => {
                 self.terminate_shell_command(cx);
                 true
