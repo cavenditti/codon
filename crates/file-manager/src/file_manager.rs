@@ -149,6 +149,16 @@ pub struct FileManager {
     /// host future bookmark chords (`m<letter>` / `'<letter>`) without
     /// further state.
     pub(crate) pending_chord: Option<char>,
+    /// FM-local visual-line selection state. `None` means today's
+    /// "single mark" behavior. `Some(anchor)` means `V` has been pressed
+    /// at row `anchor` and j/k navigation now drives the marked range
+    /// from there.
+    ///
+    /// This is intentionally NOT routed through `codon-mode::PaneMode`:
+    /// the FM stays in `PaneMode::Normal` so the global mode tracker and
+    /// keymap predicates keep working as they do today. Visual-range is
+    /// a narrow, pane-local UI mode rather than a third top-level mode.
+    pub(crate) visual_anchor: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -227,6 +237,7 @@ impl FileManager {
             error_gen: 0,
             clipboard: FmClipboard::Empty,
             pending_chord: None,
+            visual_anchor: None,
         };
         this.reload_entries_sync();
         this
@@ -378,6 +389,7 @@ impl FileManager {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
+            self.refresh_visual_marks();
             self.update_preview_sync();
             cx.notify();
         }
@@ -386,6 +398,7 @@ impl FileManager {
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
+        self.refresh_visual_marks();
         self.update_preview_sync();
         cx.notify();
     }
@@ -502,6 +515,10 @@ impl FileManager {
     }
 
     fn toggle_mark(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // A bare `v` returns the FM to single-mark muscle memory; the
+        // existing visual-range marks are preserved so the toggle still
+        // acts on the current row as expected.
+        self.visual_anchor = None;
         if self.marked.contains(&self.selected_index) {
             self.marked.remove(&self.selected_index);
         } else {
@@ -519,9 +536,10 @@ impl FileManager {
     /// the user can wipe a large mark set in two keystrokes without
     /// having to scroll back over every previously-marked row.
     pub(crate) fn clear_marks(&mut self, cx: &mut Context<Self>) {
-        if self.marked.is_empty() {
+        if self.marked.is_empty() && self.visual_anchor.is_none() {
             return;
         }
+        self.visual_anchor = None;
         self.marked.clear();
         cx.notify();
     }
@@ -533,6 +551,7 @@ impl FileManager {
         if self.entries.is_empty() {
             return;
         }
+        self.visual_anchor = None;
         self.marked = (0..self.entries.len()).collect();
         cx.notify();
     }
@@ -547,6 +566,7 @@ impl FileManager {
         if self.entries.is_empty() {
             return;
         }
+        self.visual_anchor = None;
         let visible = 0..self.entries.len();
         let mut next: BTreeSet<usize> = self
             .marked
@@ -561,6 +581,47 @@ impl FileManager {
         }
         self.marked = next;
         cx.notify();
+    }
+
+    /// `V` (shift-v): enter visual-line selection mode anchored at the
+    /// current cursor. The anchor row is marked immediately; subsequent
+    /// j / k navigation extends or shrinks the marked range from there.
+    /// Any prior mark set is replaced so the user sees only the sweep
+    /// they are actively performing.
+    pub(crate) fn start_visual_range(&mut self, cx: &mut Context<Self>) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let anchor = self.selected_index;
+        self.visual_anchor = Some(anchor);
+        self.marked.clear();
+        self.marked.insert(anchor);
+        cx.notify();
+    }
+
+    /// `Esc` / `Enter` in visual mode: exit visual-line selection but
+    /// keep the marks that were swept. The committed set is what
+    /// subsequent verbs (y / d / D / R / p) operate on.
+    pub(crate) fn commit_visual_range(&mut self, cx: &mut Context<Self>) {
+        self.visual_anchor = None;
+        cx.notify();
+    }
+
+    /// Refresh the marked span to the inclusive range
+    /// `min(anchor, cursor)..=max(anchor, cursor)`. Called from the j/k
+    /// navigation paths after `selected_index` has been updated, when —
+    /// and only when — `visual_anchor` is set.
+    pub(crate) fn refresh_visual_marks(&mut self) {
+        let Some(anchor) = self.visual_anchor else {
+            return;
+        };
+        let cursor = self.selected_index;
+        let lo = cmp::min(anchor, cursor);
+        let hi = cmp::max(anchor, cursor);
+        self.marked.clear();
+        for i in lo..=hi {
+            self.marked.insert(i);
+        }
     }
 
     /// `y` in Normal mode: store the current entry — or the whole marked
@@ -1197,11 +1258,31 @@ impl FileManager {
             return;
         }
 
+        // Visual-range housekeeping: any key outside the
+        // extend / commit / mark-verb set drops the anchor before the
+        // dispatch table sees the key. Marks themselves survive — they
+        // become the input to the next y / d / p / D / R verb.
+        if self.visual_anchor.is_some() {
+            let extends = matches!(key, "j" | "k") && !shift && !ctrl;
+            let commits = matches!(key, "escape" | "enter" | "\n");
+            if !extends && !commits {
+                self.visual_anchor = None;
+            }
+        }
+
         let handled = match key {
             // Navigation
             "j" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
             "k" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
             "l" if !shift && !ctrl => { self.enter_directory(&EnterDirectory, window, cx); true }
+            // Enter while sweeping a visual range commits the sweep
+            // instead of opening the focused entry. That mirrors helix
+            // and yazi behavior — the user just selected a range and
+            // wouldn't expect Enter to drop them into the file.
+            "enter" | "\n" if self.visual_anchor.is_some() => {
+                self.commit_visual_range(cx);
+                true
+            }
             "enter" | "\n" => { self.enter_directory(&EnterDirectory, window, cx); true }
             "h" if !shift && !ctrl => { self.parent_directory(&ParentDirectory, window, cx); true }
             "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
@@ -1220,6 +1301,13 @@ impl FileManager {
             "pageup" => { self.page_up(window, cx); true }
             // Selection
             "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
+            // `V` (shift-v) starts visual-line selection. The anchor is
+            // the cursor at entry; j/k from this point extend the
+            // marked range. Esc / Enter exit the mode but keep the
+            // marks. Other verbs (y / d / D / R / p) implicitly exit
+            // visual mode via the housekeeping block above before they
+            // consume the marked set.
+            "v" if shift && !ctrl => { self.start_visual_range(cx); true }
             // File operations
             "y" if !shift => { self.yank_to_clipboard(window, cx); true }
             "y" if shift => { self.copy_path_to_os_clipboard(window, cx); true }
@@ -1244,6 +1332,10 @@ impl FileManager {
             "." => { self.toggle_hidden(&ToggleHidden, window, cx); true }
             // Fuzzy filter
             "/" => { self.start_filter(window, cx); true }
+            "escape" if self.visual_anchor.is_some() => {
+                self.commit_visual_range(cx);
+                true
+            }
             "escape" if !self.filter_query.is_empty() || self.entries_unfiltered.is_some() => {
                 self.clear_filter();
                 cx.notify();

@@ -7,7 +7,7 @@ summary: >
   `ctrl-a` selects every currently-visible entry; `ctrl-r` inverts
   the mark set against the same visible window.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-selection#c-select-all-invert
 ---

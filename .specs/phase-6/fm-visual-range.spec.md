@@ -7,7 +7,7 @@ summary: >
   `V` enters visual-line mode — j/k extend the marked range from an
   anchor; Esc / Enter commits.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-selection#c-visual-range
 ---

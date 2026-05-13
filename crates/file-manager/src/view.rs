@@ -255,7 +255,9 @@ impl Render for FileManager {
             if let Some(meta) = focused_meta {
                 parts.push(meta);
             }
-            if marked_count > 0 {
+            if self.visual_anchor.is_some() {
+                parts.push(format!("VISUAL ({marked_count})"));
+            } else if marked_count > 0 {
                 parts.push(format!("{marked_count} marked"));
             }
             parts.join(" | ")

@@ -6,7 +6,7 @@ version: 0.0.1
 summary: >
   `uv` (un-visual, vim-style) clears the entire marked set.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-selection#c-clear-marks
 ---
