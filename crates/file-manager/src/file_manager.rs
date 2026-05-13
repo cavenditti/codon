@@ -38,6 +38,8 @@ actions!(
         Paste,
         PasteOverwrite,
         BulkRename,
+        HistoryBack,
+        HistoryForward,
     ]
 );
 
@@ -344,6 +346,8 @@ impl FileManager {
         cx: &mut Context<Self>,
     ) {
         if target_dir != self.current_dir {
+            self.push_history_back(self.current_dir.clone());
+            self.forward_stack.clear();
             self.current_dir = target_dir;
             self.selected_index = 0;
             self.reload_entries(window, cx);
@@ -501,6 +505,8 @@ impl FileManager {
         };
 
         if entry.is_dir {
+            self.push_history_back(self.current_dir.clone());
+            self.forward_stack.clear();
             self.current_dir = entry.path;
             self.selected_index = 0;
             self.reload_entries(window, cx);
@@ -524,12 +530,14 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(parent) = self.current_dir.parent() {
+        if let Some(parent) = self.current_dir.parent().map(|p| p.to_path_buf()) {
             let old_dir_name = self
                 .current_dir
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string());
-            self.current_dir = parent.to_path_buf();
+            self.push_history_back(self.current_dir.clone());
+            self.forward_stack.clear();
+            self.current_dir = parent;
             self.selected_index = 0;
             self.reload_entries(window, cx);
 
@@ -1359,6 +1367,11 @@ impl FileManager {
             }
             "pagedown" => { self.page_down(window, cx); true }
             "pageup" => { self.page_up(window, cx); true }
+            // History stack — browser-style back/forward.
+            "[" if !ctrl => { self.history_back(window, cx); true }
+            "]" if !ctrl => { self.history_forward(window, cx); true }
+            "o" if ctrl => { self.history_back(window, cx); true }
+            "i" if ctrl => { self.history_forward(window, cx); true }
             // Bookmarks: vi-style two-key chords. `m<letter>` saves
             // `current_dir`; `'<letter>` jumps. Resolved on the next
             // keystroke via `pending_chord`.
@@ -1424,6 +1437,26 @@ impl FileManager {
         if handled {
             cx.stop_propagation();
         }
+    }
+
+    fn history_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(prev) = self.back_stack.pop_back() else {
+            return;
+        };
+        self.push_history_forward(self.current_dir.clone());
+        self.current_dir = prev;
+        self.selected_index = 0;
+        self.reload_entries(window, cx);
+    }
+
+    fn history_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(next) = self.forward_stack.pop_back() else {
+            return;
+        };
+        self.push_history_back(self.current_dir.clone());
+        self.current_dir = next;
+        self.selected_index = 0;
+        self.reload_entries(window, cx);
     }
 
     fn save_bookmark(&mut self, letter: char, cx: &mut Context<Self>) {

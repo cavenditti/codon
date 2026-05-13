@@ -3,8 +3,8 @@ pub(crate) mod file_manager;
 mod view;
 
 pub use file_manager::{
-    CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, MoveMarked, Open,
-    RenameEntry, Reveal, ToggleMark, YankPath,
+    CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, HistoryBack,
+    HistoryForward, MoveMarked, Open, RenameEntry, Reveal, ToggleMark, YankPath,
 };
 
 use gpui::App;
