@@ -40,6 +40,8 @@ actions!(
         BulkRename,
         HistoryBack,
         HistoryForward,
+        /// Show the choose-opener picker for the entry under the cursor.
+        ChooseOpener,
     ]
 );
 

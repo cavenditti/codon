@@ -774,7 +774,7 @@ fn main() {
         codon_session::init(cx);
         codon_pickers::init(cx);
         vim::init(cx);
-        file_manager::init(cx);
+        file_manager::init(app_state.fs.clone(), cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         encoding_selector::init(cx);

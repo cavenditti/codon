@@ -1,0 +1,38 @@
+# File-manager opener registry.
+#
+# Drop this file at `~/.config/codon/openers.toml` (or wherever
+# `$XDG_CONFIG_HOME` points). Codon reads it at startup and re-reads it
+# on every save, so live edits take effect without restarting.
+#
+# Each `[[opener]]` row declares either a `glob` pattern (gitignore
+# syntax — brace expansion supported) OR a `mime` essence string. Rows
+# without either predicate are ignored. The same substitution tokens as
+# the `!` / `;` shell-exec verbs are available:
+#
+#   {path}    cursor entry, shell-quoted
+#   {paths}   marked set (cursor entry when nothing is marked), joined
+#             with spaces, shell-quoted per entry
+#   {name}    basename of the cursor entry
+#   {names}   basenames of the marked set
+#   {cwd}     current directory
+#   {parent}  parent of {cwd}
+#
+# `block = true` runs the opener via the terminal split + foreground
+# watcher (you see stderr; the FM grays out until exit). `block = false`
+# (the default) spawns through the FM's async route — fire-and-forget.
+
+# [[opener]]
+# glob = "*.{png,jpg,jpeg,gif,webp,heic}"
+# cmd  = "qlmanage -p {path}"
+# description = "Quick Look"
+
+# [[opener]]
+# mime = "application/pdf"
+# cmd  = "open -a Preview {path}"
+# description = "Preview.app"
+
+# [[opener]]
+# glob = "*.zip"
+# cmd  = "unzip -l {path}"
+# block = true
+# description = "List archive contents"
