@@ -1,12 +1,16 @@
 use git::status::FileStatus;
-use gpui::{App, Context, IntoElement, Render, SharedString, Window, div, prelude::*, px, uniform_list};
+use gpui::{
+    App, Context, IntoElement, ObjectFit, Render, SharedString, StyledImage, Window, div, img,
+    prelude::*, px, uniform_list,
+};
 use theme::ActiveTheme;
 use ui::{
     Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 
 use crate::file_manager::{
-    ArchiveListing, BinaryInfo, DirEntry, FileManager, PendingInput, Preview, format_hex_dump,
+    ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
+    format_hex_dump,
 };
 
 impl FileManager {
@@ -146,6 +150,7 @@ impl FileManager {
                     )
                     .into_any_element(),
                 Preview::Archive(listing) => render_archive_preview(listing).into_any_element(),
+                Preview::Image(info) => render_image_preview(info).into_any_element(),
                 Preview::Binary(info) => render_binary_preview(info, cx).into_any_element(),
                 Preview::Empty => div()
                     .child(
@@ -448,6 +453,51 @@ impl Render for FileManager {
                     ),
             )
     }
+}
+
+fn render_image_preview(info: &ImageInfo) -> impl IntoElement {
+    let dim_label = info
+        .dimensions
+        .map(|(w, h)| format!("{w}×{h}"))
+        .unwrap_or_else(|| "unknown size".to_string());
+    let header = format!(
+        "{} · {} · {} · {}",
+        info.name,
+        human_size(info.size),
+        info.mime,
+        dim_label,
+    );
+
+    let fallback_label = header.clone();
+    let image_path = info.path.clone();
+
+    v_flex()
+        .px(px(8.))
+        .py(px(2.))
+        .gap(px(4.))
+        .size_full()
+        .child(
+            Label::new(header)
+                .size(LabelSize::Small)
+                .color(Color::Default),
+        )
+        .child(
+            div().flex_1().min_h_0().child(
+                img(image_path)
+                    .object_fit(ObjectFit::Contain)
+                    .size_full()
+                    .with_fallback(move || {
+                        div()
+                            .px(px(8.))
+                            .child(
+                                Label::new(SharedString::from(fallback_label.clone()))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element()
+                    }),
+            ),
+        )
 }
 
 fn render_archive_preview(listing: &ArchiveListing) -> impl IntoElement {

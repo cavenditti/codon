@@ -78,8 +78,22 @@ pub(crate) enum Preview {
     Directory(Vec<DirEntry>),
     FileContent(String),
     Archive(ArchiveListing),
+    Image(ImageInfo),
     Binary(BinaryInfo),
     Empty,
+}
+
+/// Snapshot used to render an image in the preview pane. `dimensions`
+/// is read cheaply from the file header so the placeholder fallback can
+/// still surface useful metadata even when the decoder refuses the
+/// payload at render time.
+#[derive(Clone)]
+pub(crate) struct ImageInfo {
+    pub(crate) name: String,
+    pub(crate) path: PathBuf,
+    pub(crate) size: u64,
+    pub(crate) mime: String,
+    pub(crate) dimensions: Option<(u32, u32)>,
 }
 
 /// Header + first-bytes snapshot used to render a non-text, non-image,
@@ -320,6 +334,11 @@ impl FileManager {
         let path = entry.path.clone();
         let name = entry.name.clone();
         let size = entry.size;
+
+        if is_image_path(&path) {
+            self.preview = Preview::Image(read_image_info(&path, name, size));
+            return;
+        }
 
         if is_archive_path(&path) {
             if let Some(listing) = read_archive_listing(&path) {
@@ -1480,6 +1499,38 @@ pub(crate) fn format_hex_dump(bytes: &[u8]) -> String {
     out
 }
 
+/// File extensions the FM offers to render as images. Matches the
+/// formats Zed's vendored `gpui::img` supports out of the box.
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+];
+
+/// Returns true when `path`'s extension is in [`IMAGE_EXTENSIONS`].
+pub(crate) fn is_image_path(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let lower = ext.to_ascii_lowercase();
+    IMAGE_EXTENSIONS.iter().any(|known| *known == lower)
+}
+
+/// Snapshot metadata for the image preview. Dimensions come from
+/// `image::image_dimensions`, which only parses the header — orders of
+/// magnitude cheaper than decoding the pixel data. A failure leaves
+/// `dimensions` as `None` and the view falls back to a metadata
+/// placeholder.
+pub(crate) fn read_image_info(path: &Path, name: String, size: u64) -> ImageInfo {
+    let dimensions = image::image_dimensions(path).ok();
+    let mime = guess_mime(path);
+    ImageInfo {
+        name,
+        path: path.to_path_buf(),
+        size,
+        mime,
+        dimensions,
+    }
+}
+
 /// Upper bound on the number of archive entries surfaced in the
 /// preview. Anything beyond gets summarised as a `… N more` line.
 pub(crate) const ARCHIVE_ENTRIES_CAP: usize = 200;
@@ -1804,8 +1855,11 @@ mod tests {
     fn next_available_path_respects_used_paths() {
         let dir = TempDir::new().expect("create tempdir");
         let already = dir.path().join("foo (2).txt");
-        let p =
-            next_available_path(dir.path(), std::ffi::OsStr::new("foo.txt"), &[already.clone()]);
+        let p = next_available_path(
+            dir.path(),
+            std::ffi::OsStr::new("foo.txt"),
+            std::slice::from_ref(&already),
+        );
         // (2) is reserved by the in-flight batch even though it doesn't
         // exist on disk yet.
         assert_eq!(p.file_name().unwrap().to_string_lossy(), "foo (3).txt");
@@ -2054,5 +2108,49 @@ mod tests {
         let path = dir.path().join("a.txt");
         fs::write(&path, b"plain text").expect("write");
         assert!(read_archive_listing(&path).is_none());
+    }
+
+    #[test]
+    fn is_image_path_matches_known_extensions_case_insensitive() {
+        assert!(is_image_path(Path::new("foo.png")));
+        assert!(is_image_path(Path::new("foo.JPG")));
+        assert!(is_image_path(Path::new("foo.jpeg")));
+        assert!(is_image_path(Path::new("foo.Gif")));
+        assert!(is_image_path(Path::new("foo.webp")));
+        assert!(is_image_path(Path::new("foo.bmp")));
+        assert!(is_image_path(Path::new("foo.ico")));
+        assert!(!is_image_path(Path::new("foo.txt")));
+        assert!(!is_image_path(Path::new("foo")));
+        assert!(!is_image_path(Path::new("foo.tiff")));
+    }
+
+    #[test]
+    fn read_image_info_reads_dimensions_from_header() {
+        // Minimal 1×1 PNG (the smallest valid image) — header parsing is
+        // enough to report the dimensions without decoding pixel data.
+        let png: [u8; 67] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pixel.png");
+        fs::write(&path, png).expect("write png");
+        let info = read_image_info(&path, "pixel.png".into(), png.len() as u64);
+        assert_eq!(info.dimensions, Some((1, 1)));
+        assert_eq!(info.mime, "image/png");
+        assert_eq!(info.path, path);
+    }
+
+    #[test]
+    fn read_image_info_unreadable_header_yields_none_dimensions() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("broken.png");
+        fs::write(&path, b"not a real png").expect("write");
+        let info = read_image_info(&path, "broken.png".into(), 14);
+        assert_eq!(info.dimensions, None);
+        assert_eq!(info.mime, "image/png");
     }
 }
