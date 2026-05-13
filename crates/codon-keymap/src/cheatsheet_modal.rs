@@ -4,10 +4,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, IntoElement, KeyBinding as GpuiKeyBinding, KeyContext, KeybindingKeystroke,
-    ParentElement, Render, ScrollHandle, SharedString, Styled, Window, actions, div,
-    prelude::FluentBuilder, px,
+    AnyElement, Context, DismissEvent, ElementId, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Hsla, InteractiveElement, IntoElement, KeyBinding as GpuiKeyBinding, KeyContext,
+    KeybindingKeystroke, ParentElement, Render, ScrollHandle, SharedString, Styled, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
 use ui::{
     ActiveTheme, Color, Headline, HeadlineSize, IconName, KeyBinding, Label, LabelCommon,
@@ -75,50 +75,169 @@ impl KeybindingsCheatsheetModal {
     }
 }
 
-/// Render a slice of `BindingRow`s as two side-by-side columns, top-down
-/// then right. Row striping is per-column position so the alternating
-/// background lines up across both columns.
-fn render_rows_two_columns(items: &[BindingRow], row_bg: Hsla) -> AnyElement {
+/// A flattened row used by the per-section `uniform_list`. Rows have a
+/// constant rendered height so the list can virtualize — only items
+/// intersecting the modal's visible scroll region are laid out and
+/// painted.
+#[derive(Clone)]
+enum RowKind {
+    /// Single muted line used in place of body rows when a section is empty
+    /// (currently only the "This pane" section uses this).
+    EmptyHint(SharedString),
+    /// One paired entry. `left` is rendered in the left column, `right`
+    /// (when present) in the right column. `pair_index_in_section` is the
+    /// row's index among the section's `Pair` rows so striping stays put
+    /// across scroll positions.
+    Pair {
+        left: BindingRow,
+        right: Option<BindingRow>,
+        pair_index_in_section: usize,
+    },
+}
+
+/// Group a section's bindings into top-down-then-right pairs. The first
+/// half of the list goes in the left column, the second half in the right —
+/// the same visual order the old non-virtualized renderer produced.
+fn build_pairs(items: &[BindingRow]) -> Vec<RowKind> {
     let n = items.len();
+    if n == 0 {
+        return Vec::new();
+    }
     let split = n.div_ceil(2);
-    let mut left = v_flex().flex_1().min_w(px(0.)).gap_0p5();
-    let mut right = v_flex().flex_1().min_w(px(0.)).gap_0p5();
-    for (i, row) in items.iter().enumerate() {
-        let in_left = i < split;
-        let pos_in_col = if in_left { i } else { i - split };
-        let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
-            .size(ui::rems_from_px(13.));
-        let row_el = h_flex()
-            .items_center()
-            .gap_3()
-            .px_2()
-            .py_0p5()
-            .rounded_md()
-            .when(pos_in_col % 2 == 1, |el| el.bg(row_bg))
+    let mut rows = Vec::with_capacity(split);
+    for pair_index in 0..split {
+        let left = items[pair_index].clone();
+        let right_index = pair_index + split;
+        let right = items.get(right_index).cloned();
+        rows.push(RowKind::Pair {
+            left,
+            right,
+            pair_index_in_section: pair_index,
+        });
+    }
+    rows
+}
+
+/// Render a single binding cell (chord + action name). Used twice per
+/// `Pair` row.
+fn render_binding_cell(row: &BindingRow) -> AnyElement {
+    let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
+        .size(ui::rems_from_px(13.));
+    h_flex()
+        .items_center()
+        .gap_3()
+        .flex_1()
+        .min_w(px(0.))
+        .child(
+            div()
+                .min_w(px(140.))
+                .flex_none()
+                .child(h_flex().justify_end().child(chord)),
+        )
+        .child(
+            Label::new(row.action_name.clone())
+                .color(Color::Default)
+                .size(LabelSize::Default)
+                .single_line()
+                .truncate(),
+        )
+        .into_any_element()
+}
+
+/// Render one `RowKind` as a constant-height element. Pair rows always
+/// render two columns (with a placeholder spacer when the right slot is
+/// empty) so every row in a section has the same height, which is what
+/// `uniform_list` requires.
+fn render_row(row: &RowKind, row_bg: Hsla) -> AnyElement {
+    match row {
+        RowKind::EmptyHint(text) => v_flex()
+            .py_1()
             .child(
-                div()
-                    .min_w(px(140.))
-                    .flex_none()
-                    .child(h_flex().justify_end().child(chord)),
+                Label::new(text.clone())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
             )
-            .child(
-                Label::new(row.action_name.clone())
-                    .color(Color::Default)
-                    .size(LabelSize::Default)
-                    .single_line()
-                    .truncate(),
-            );
-        if in_left {
-            left = left.child(row_el);
-        } else {
-            right = right.child(row_el);
+            .into_any_element(),
+        RowKind::Pair {
+            left,
+            right,
+            pair_index_in_section,
+        } => {
+            let striped = pair_index_in_section % 2 == 1;
+            let left_cell = h_flex()
+                .items_center()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .flex_1()
+                .min_w(px(0.))
+                .when(striped, |el| el.bg(row_bg))
+                .child(render_binding_cell(left));
+            let right_cell: AnyElement = match right {
+                Some(binding) => h_flex()
+                    .items_center()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .when(striped, |el| el.bg(row_bg))
+                    .child(render_binding_cell(binding))
+                    .into_any_element(),
+                // Keep the row height + column widths stable even when a
+                // pair is missing its right entry (the last row in an
+                // odd-count section).
+                None => div().flex_1().min_w(px(0.)).into_any_element(),
+            };
+            h_flex()
+                .gap_6()
+                .items_start()
+                .child(left_cell)
+                .child(right_cell)
+                .into_any_element()
         }
     }
-    h_flex()
-        .gap_6()
-        .items_start()
-        .child(left)
-        .child(right)
+}
+
+/// Render a complete section: accent-bar header, divider, then the body
+/// rows. Rows are flattened into `RowKind` (header-less; the section header
+/// is its own sibling) so striping anchors on `pair_index_in_section` and
+/// stays put across scroll positions.
+fn render_section(
+    _id: impl Into<ElementId>,
+    label: SharedString,
+    count: usize,
+    rows: Vec<RowKind>,
+    accent: Hsla,
+    divider: Hsla,
+    row_bg: Hsla,
+) -> AnyElement {
+    let header_row = h_flex()
+        .items_center()
+        .gap_2()
+        .pb_1()
+        .child(div().w(px(3.)).h(px(14.)).rounded_full().bg(accent))
+        .child(
+            Label::new(label)
+                .color(Color::Default)
+                .size(LabelSize::Default)
+                .weight(FontWeight::SEMIBOLD),
+        )
+        .child(
+            Label::new(format!("{count}"))
+                .color(Color::Muted)
+                .size(LabelSize::Small),
+        );
+
+    let body = v_flex()
+        .w_full()
+        .children(rows.iter().map(|row| render_row(row, row_bg)));
+
+    v_flex()
+        .gap_1()
+        .child(header_row)
+        .child(div().h(px(1.)).w_full().bg(divider))
+        .child(body)
         .into_any_element()
 }
 
@@ -299,6 +418,7 @@ impl Render for KeybindingsCheatsheetModal {
                     .size(LabelSize::Default),
             )
         } else {
+            let accent = theme.colors().text_accent;
             let mut column = v_flex().gap_5();
 
             // "This pane" section — always rendered (with a muted hint
@@ -310,85 +430,36 @@ impl Render for KeybindingsCheatsheetModal {
                     .map(|leaf| SharedString::from(format!("This pane · {leaf}")))
                     .unwrap_or_else(|| SharedString::from("This pane"));
                 let count = self.local_bindings.len();
-                let header_row = h_flex()
-                    .items_center()
-                    .gap_2()
-                    .pb_1()
-                    .child(
-                        div()
-                            .w(px(3.))
-                            .h(px(14.))
-                            .rounded_full()
-                            .bg(theme.colors().text_accent),
-                    )
-                    .child(
-                        Label::new(label)
-                            .color(Color::Default)
-                            .size(LabelSize::Default)
-                            .weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        Label::new(format!("{count}"))
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    );
-
-                let body: AnyElement = if self.local_bindings.is_empty() {
-                    v_flex()
-                        .py_1()
-                        .child(
-                            Label::new("No pane-specific bindings")
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .into_any_element()
+                let rows: Vec<RowKind> = if self.local_bindings.is_empty() {
+                    vec![RowKind::EmptyHint(SharedString::from(
+                        "No pane-specific bindings",
+                    ))]
                 } else {
-                    render_rows_two_columns(&self.local_bindings, row_bg)
+                    build_pairs(&self.local_bindings)
                 };
-
-                column = column.child(
-                    v_flex()
-                        .gap_1()
-                        .child(header_row)
-                        .child(div().h(px(1.)).w_full().bg(border_faded))
-                        .child(body),
-                );
+                column = column.child(render_section(
+                    ElementId::from("cheatsheet-section-this-pane"),
+                    label,
+                    count,
+                    rows,
+                    accent,
+                    border_faded,
+                    row_bg,
+                ));
             }
 
-            for (ns, items) in grouped {
+            for (idx, (ns, items)) in grouped.into_iter().enumerate() {
                 let count = items.len();
-                let header_row = h_flex()
-                    .items_center()
-                    .gap_2()
-                    .pb_1()
-                    .child(
-                        div()
-                            .w(px(3.))
-                            .h(px(14.))
-                            .rounded_full()
-                            .bg(theme.colors().text_accent),
-                    )
-                    .child(
-                        Label::new(ns.clone())
-                            .color(Color::Default)
-                            .size(LabelSize::Default)
-                            .weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        Label::new(format!("{count}"))
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    );
-
-                let rows_block = render_rows_two_columns(&items, row_bg);
-
-                column = column.child(
-                    v_flex()
-                        .gap_1()
-                        .child(header_row)
-                        .child(div().h(px(1.)).w_full().bg(border_faded))
-                        .child(rows_block),
-                );
+                let rows = build_pairs(&items);
+                column = column.child(render_section(
+                    ElementId::from(("cheatsheet-section", idx)),
+                    ns,
+                    count,
+                    rows,
+                    accent,
+                    border_faded,
+                    row_bg,
+                ));
             }
             column
         };
