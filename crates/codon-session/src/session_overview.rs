@@ -15,10 +15,21 @@ use crate::{
 
 const TILE_WIDTH: f32 = 240.0;
 const TILE_HEIGHT: f32 = 110.0;
-/// Best-effort heuristic: a 1080p window holds ~7 tiles per row including
-/// gaps. Lower bound at 1 so the modulo math below stays sane on tiny
-/// windows.
-const COLUMNS_FALLBACK: usize = 7;
+const TILE_GAP: f32 = 12.0;
+const MODAL_PAD: f32 = 32.0;
+/// Viewport fraction the overview is allowed to consume.
+const MODAL_W_FRAC: f32 = 0.85;
+const MODAL_H_FRAC: f32 = 0.85;
+/// Used only as a pre-render fallback before `render()` reads the viewport.
+const COLUMNS_FALLBACK: usize = 4;
+
+/// Visible columns given a viewport width — clamped so navigation never
+/// stalls at < 2 columns and never spreads the grid uncomfortably wide.
+fn columns_for_viewport(viewport_w: f32) -> usize {
+    let usable = (viewport_w * MODAL_W_FRAC - MODAL_PAD).max(TILE_WIDTH);
+    let cols = (usable / (TILE_WIDTH + TILE_GAP)).floor() as usize;
+    cols.clamp(2, 6)
+}
 
 pub struct SessionOverviewModal {
     workspace: gpui::WeakEntity<Workspace>,
@@ -210,9 +221,17 @@ impl Focusable for SessionOverviewModal {
 }
 
 impl Render for SessionOverviewModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_id = SessionRegistry::global(cx).active_id();
         let theme = cx.theme();
+        let viewport = window.viewport_size();
+        let viewport_w = f32::from(viewport.width);
+        let viewport_h = f32::from(viewport.height);
+        // Snap the keyboard-nav column count to whatever fits the visible
+        // grid so h/j/k/l matches what the user sees.
+        self.columns = columns_for_viewport(viewport_w);
+        let max_w = gpui::px((viewport_w * MODAL_W_FRAC).min(1200.0));
+        let max_h = gpui::px(viewport_h * MODAL_H_FRAC);
 
         // Compose the grid as a row-major flex_wrap. We don't care that
         // flexbox doesn't strictly align rows — `columns` is only a hint
@@ -257,8 +276,8 @@ impl Render for SessionOverviewModal {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::handle_key_down))
             .elevation_3(cx)
-            .w(gpui::px(((TILE_WIDTH + 12.0) * COLUMNS_FALLBACK as f32) + 32.0))
-            .max_h(gpui::px(720.0))
+            .max_w(max_w)
+            .max_h(max_h)
             .p_4()
             .gap_2()
             .bg(theme.colors().elevated_surface_background)
