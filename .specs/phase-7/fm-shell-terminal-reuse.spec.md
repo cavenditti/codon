@@ -7,7 +7,7 @@ summary: >
   Pick the terminal pane for `!` / `;` — most-recently-active terminal
   if idle, otherwise spawn a new one.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-shell-exec#c-shell-terminal-reuse
 ---

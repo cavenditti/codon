@@ -7,7 +7,7 @@ summary: >
   `;` runs a shell command non-blocking. Control returns to the FM
   immediately; output lands in the same terminal pane as `!`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-shell-exec#c-shell-async
 ---

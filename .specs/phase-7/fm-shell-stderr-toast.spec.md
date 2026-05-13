@@ -7,7 +7,7 @@ summary: >
   Non-zero `!` (blocking) exit surfaces captured stderr via
   surface_error. Async `;` does not — the user moved on.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-shell-exec#c-shell-stderr-toast
 ---

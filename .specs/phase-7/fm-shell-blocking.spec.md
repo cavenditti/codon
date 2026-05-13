@@ -7,7 +7,7 @@ summary: >
   `!` prompts for a shell command; on Enter the FM grays out and the
   command runs in the chosen terminal pane until exit.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-shell-exec#c-shell-blocking
 ---

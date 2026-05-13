@@ -8,7 +8,7 @@ summary: >
   {name} / {names} / {cwd} / {parent} in command strings with proper
   shell escaping.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-shell-exec#c-shell-substitutions
 ---
