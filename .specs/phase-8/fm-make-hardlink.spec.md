@@ -7,7 +7,7 @@ summary: >
   `Ln` chord — create hardlinks. Toast when source and target are on
   different filesystems (hardlinks fail across mounts).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-symlinks#c-make-hardlink
 ---

@@ -810,6 +810,97 @@ impl FileManager {
         .detach();
     }
 
+    /// `Ln` chord verb: like `make_symlinks` but routes through
+    /// `Fs::create_hardlink`. Hardlinks fail when source and target
+    /// live on different filesystems with a cryptic `EXDEV` errno —
+    /// we pre-check `metadata.dev()` on unix so we can surface a
+    /// readable toast before attempting. On non-unix we skip the
+    /// pre-check and let the trait method bubble up whatever error
+    /// the OS returns.
+    fn make_hardlinks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sources = self.current_targets();
+        if sources.is_empty() {
+            return;
+        }
+        let destination_dir = self.current_dir.clone();
+
+        #[cfg(unix)]
+        let destination_dev: Option<u64> = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&destination_dir)
+                .ok()
+                .map(|meta| meta.dev())
+        };
+
+        let mut used: Vec<PathBuf> = Vec::with_capacity(sources.len());
+        let mut plan: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(sources.len());
+        let mut cross_fs: Vec<PathBuf> = Vec::new();
+        for source in sources {
+            let Some(file_name) = source.file_name() else {
+                continue;
+            };
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if let (Some(dst_dev), Ok(src_meta)) =
+                    (destination_dev, std::fs::metadata(&source))
+                    && src_meta.dev() != dst_dev
+                {
+                    cross_fs.push(source);
+                    continue;
+                }
+            }
+
+            let initial = destination_dir.join(file_name);
+            let destination = if initial.exists() || used.iter().any(|p| p == &initial) {
+                next_available_path(&destination_dir, file_name, &used)
+            } else {
+                initial
+            };
+            used.push(destination.clone());
+            plan.push((source, destination));
+        }
+
+        for source in &cross_fs {
+            let name = source
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| source.display().to_string());
+            self.surface_error(
+                format!("Couldn't hardlink {name}: cannot hardlink across filesystems"),
+                cx,
+            );
+        }
+
+        if plan.is_empty() {
+            return;
+        }
+
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+            for (source, destination) in &plan {
+                if let Err(e) = fs.create_hardlink(destination, source.clone()).await {
+                    failures.push((source.clone(), e));
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                for (path, e) in &failures {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.display().to_string());
+                    this.surface_error(format!("Couldn't hardlink {name}: {e}"), cx);
+                }
+                this.marked.clear();
+                this.reload_entries(window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// `uv` chord: drop every mark. Distinct from a single `v` toggle so
     /// the user can wipe a large mark set in two keystrokes without
     /// having to scroll back over every previously-marked row.
@@ -2039,6 +2130,16 @@ impl FileManager {
                 'l' => {
                     self.enter_directory(&EnterDirectory, window, cx);
                 }
+                'L' if !shift && !ctrl && key == "n" => {
+                    self.make_hardlinks(window, cx);
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                'L' if key == "escape" => {
+                    cx.stop_propagation();
+                    return;
+                }
                 _ => {}
             }
         }
@@ -2060,6 +2161,15 @@ impl FileManager {
             // fires first we commit `enter_directory` instead. See
             // `arm_l_chord` for the timer logic.
             "l" if !shift && !ctrl => { self.arm_l_chord(window, cx); true }
+            // `L` (shift-l) is the chord starter for hardlinks: `Ln`
+            // calls `make_hardlinks`. Unlike bare `l` there is no
+            // enter-directory fallback, so a plain `pending_chord`
+            // entry suffices — any non-`n` key just clears it.
+            "l" if shift && !ctrl => {
+                self.pending_chord = Some('L');
+                cx.notify();
+                true
+            }
             // Enter while sweeping a visual range commits the sweep
             // instead of opening the focused entry. That mirrors helix
             // and yazi behavior — the user just selected a range and
