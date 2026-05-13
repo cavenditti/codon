@@ -7,7 +7,7 @@ summary: >
   Register Zed's existing image_viewer::ImageView as a codon pane —
   default keymap entry, file-manager hand-off for image extensions.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/additional-panes#c-image-preview
 ---

@@ -8,7 +8,7 @@ summary: >
   agent_ui::message_editor.rs:1423 with a multi-select DirPicker
   variant.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-rewire-attach
 ---

@@ -7,7 +7,7 @@ summary: >
   Replace the OS-native git clone destination dialog at
   git_ui/clone.rs:17 with the DirPicker-backed in-app modal.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-rewire-clone
 ---

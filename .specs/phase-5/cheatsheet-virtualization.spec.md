@@ -8,7 +8,7 @@ summary: >
   painted — currently ~200 bindings × 2 columns sit in the layout tree
   whether visible or not and scrolling feels sluggish.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/modal-shell#c-cheatsheet-contextual
 ---

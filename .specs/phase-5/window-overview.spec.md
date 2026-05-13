@@ -8,7 +8,7 @@ summary: >
   as a thumbnail tile (name, dominant pane kind, layout sketch), hjkl
   navigation, Enter to switch.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/windows#c-overview
 ---

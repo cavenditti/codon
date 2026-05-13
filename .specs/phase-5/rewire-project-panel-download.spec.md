@@ -7,7 +7,7 @@ summary: >
   Replace the OS-native download-destination dialog at
   project_panel.rs:3301 with the DirPicker-backed in-app modal.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-rewire-project-panel
 ---

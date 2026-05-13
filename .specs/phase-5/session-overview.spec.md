@@ -8,7 +8,7 @@ summary: >
   with name, cwd, window count, last-attached time, keyboard nav,
   Enter to attach.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/sessions#c-overview
 ---

@@ -8,7 +8,7 @@ summary: >
   agent_ui::threads_archive_view.rs:1237 with the DirPicker-backed
   in-app modal.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/in-app-pickers#c-rewire-archive
 ---

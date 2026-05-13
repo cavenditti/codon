@@ -7,7 +7,7 @@ summary: >
   Bulk rename / delete on marked file-manager entries. Operates on
   the existing mark set established with `v`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-enhancements#c-bulk-ops
 ---

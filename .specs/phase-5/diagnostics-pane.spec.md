@@ -8,7 +8,7 @@ summary: >
   cmd-k chord, with codon-mode j/k navigation already supplied by the
   underlying Editor.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/additional-panes#c-diagnostics
 ---

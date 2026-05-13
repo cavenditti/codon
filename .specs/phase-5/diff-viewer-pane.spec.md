@@ -8,7 +8,7 @@ summary: >
   pane, openable on arbitrary inputs (file vs file, file vs HEAD,
   buffer vs disk).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/additional-panes#c-diff-viewer
 ---

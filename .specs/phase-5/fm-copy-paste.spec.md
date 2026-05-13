@@ -7,7 +7,7 @@ summary: >
   Modal y / d / p operations in file manager — yank marks for copy,
   delete-mark marks for move, paste resolves into current directory.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-enhancements#c-copy-paste
 ---
