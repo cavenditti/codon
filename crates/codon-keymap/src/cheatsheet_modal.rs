@@ -1,17 +1,23 @@
 //! Full-screen modal listing every keybinding currently reachable from the
 //! workspace context. Bound to `cmd-k F1` by default.
+//!
+//! Only bindings declared in codon's curated set are shown — that's
+//! everything in the embedded `DEFAULT_KEYMAP` plus everything the user
+//! added to `~/.config/codon/codon.toml`. Vendor/zed's ~1000+ upstream
+//! defaults are filtered out: they're noise to a codon user.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, DismissEvent, ElementId, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Hsla, InteractiveElement, IntoElement, KeyBinding as GpuiKeyBinding, KeyContext,
-    KeybindingKeystroke, ParentElement, Render, ScrollHandle, SharedString, Styled, Window,
-    actions, div, prelude::FluentBuilder, px,
+    AnyElement, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, IntoElement, KeyBinding as GpuiKeyBinding, KeyContext, KeyDownEvent,
+    KeybindingKeystroke, ListAlignment, ListState, ParentElement, Render, SharedString, Styled,
+    Window, actions, div, list, prelude::FluentBuilder, px,
 };
 use ui::{
     ActiveTheme, Color, Headline, HeadlineSize, IconName, KeyBinding, Label, LabelCommon,
-    LabelSize, StatefulInteractiveElement, WithScrollbar, h_flex, text_for_keystrokes, v_flex,
+    LabelSize, h_flex, text_for_keystrokes, v_flex,
 };
 use workspace::{ModalView, Workspace};
 
@@ -26,28 +32,55 @@ actions!(
 
 pub struct KeybindingsCheatsheetModal {
     focus_handle: FocusHandle,
-    scroll_handle: ScrollHandle,
-    /// Bindings whose predicate matches the *leaf* of the pane context
-    /// stack captured before the modal opened — "this pane" verbs.
-    local_bindings: Vec<BindingRow>,
-    /// Everything else, including bindings with no predicate (apply
-    /// everywhere) and bindings whose predicate matches at an outer
-    /// level (e.g. `Workspace`, `Pane`).
-    global_bindings: Vec<BindingRow>,
-    /// Captured at open time so the empty-state hint can name the pane
-    /// kind (e.g. "No GitStatus-specific bindings").
-    leaf_context_label: Option<SharedString>,
+    /// All rows flattened into one ordered list: section headers
+    /// interleaved with their pair rows. `gpui::list` virtualizes against
+    /// this slice — only rows intersecting the modal's visible region get
+    /// laid out and painted, which keeps the layout tree small enough that
+    /// scrolling and Esc feel instant.
+    rows: Rc<[RowKind]>,
+    list_state: ListState,
+    /// Cursor index into `rows`. `j` / `k` bump it; the cursored row gets
+    /// a subtle highlight so the user can see where they are.
+    cursor: usize,
+    /// Set to true on dismiss so any in-flight paint frames during the
+    /// modal fade-out render an empty body — defends against the modal
+    /// layer continuing to call `render` while it animates away.
+    dismissed: bool,
 }
 
 #[derive(Clone)]
 struct BindingRow {
     keystrokes: Rc<[KeybindingKeystroke]>,
-    /// Pre-rendered text used for sorting and dedup so visually-equivalent
-    /// rows collapse into one.
     keystrokes_text: SharedString,
+    /// Humanized form (e.g. "Codon Session: Session Overview") for display.
     action_name: SharedString,
-    namespace: SharedString,
+    /// Type-path form (e.g. "codon_session::SessionOverview") used for
+    /// `cx.build_action` dispatch when the user presses Enter.
+    raw_action_name: SharedString,
 }
+
+#[derive(Clone)]
+enum RowKind {
+    /// Group header — bold label + count badge.
+    Header { label: SharedString, count: usize },
+    /// One-line muted hint, used in place of pair rows when "This pane"
+    /// has no bindings.
+    EmptyHint(SharedString),
+    /// One pair of side-by-side bindings. `right` is `None` for the last
+    /// row in an odd-count section; the renderer fills the missing column
+    /// with a spacer to keep column widths stable.
+    Pair {
+        left: BindingRow,
+        right: Option<BindingRow>,
+        striped: bool,
+    },
+}
+
+/// Visual row heights, used only to choose a reasonable list overdraw and
+/// to compute page-size jumps for ctrl-d / ctrl-u. The list itself
+/// measures rows from their rendered elements.
+const ROW_HEIGHT_PX: f32 = 28.0;
+const PAGE_ROWS: usize = 10;
 
 impl KeybindingsCheatsheetModal {
     pub fn new(
@@ -59,68 +92,219 @@ impl KeybindingsCheatsheetModal {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let leaf_context_label = leaf_context_label(&pane_context_stack);
+
+        let curated_actions = curated_action_set();
         let (local_bindings, global_bindings) =
-            collect_bindings(&pane_context_stack, raw_bindings, cx);
+            collect_bindings(&pane_context_stack, &curated_actions, raw_bindings, cx);
+
+        let rows = build_rows(
+            leaf_context_label.clone(),
+            &local_bindings,
+            &global_bindings,
+        );
+        let rows: Rc<[RowKind]> = Rc::from(rows);
+
+        // Overdraw ~3 screens worth of rows so scrolling never reveals
+        // a blank gap before measurement catches up.
+        let overdraw = px(ROW_HEIGHT_PX * (PAGE_ROWS as f32) * 3.0);
+        let list_state = ListState::new(rows.len(), ListAlignment::Top, overdraw);
+
         Self {
             focus_handle,
-            scroll_handle: ScrollHandle::new(),
-            local_bindings,
-            global_bindings,
-            leaf_context_label,
+            rows,
+            list_state,
+            cursor: 0,
+            dismissed: false,
         }
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dismissed {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        let shift = event.keystroke.modifiers.shift;
+        let ctrl = event.keystroke.modifiers.control;
+        let last = self.rows.len().saturating_sub(1);
+
+        let mut handled = true;
+        match key {
+            "escape" => {
+                self.dismissed = true;
+                cx.emit(DismissEvent);
+                return;
+            }
+            "j" | "down" => self.move_cursor(1, false),
+            "k" | "up" => self.move_cursor(-1, false),
+            "pagedown" => self.move_cursor(PAGE_ROWS as isize, true),
+            "pageup" => self.move_cursor(-(PAGE_ROWS as isize), true),
+            "d" if ctrl => self.move_cursor((PAGE_ROWS / 2) as isize, true),
+            "u" if ctrl => self.move_cursor(-((PAGE_ROWS / 2) as isize), true),
+            "home" => self.set_cursor(0),
+            "g" if !shift => self.set_cursor(0),
+            "g" if shift => self.set_cursor(last),
+            "end" => self.set_cursor(last),
+            "enter" => {
+                self.dispatch_cursor(window, cx);
+                return;
+            }
+            _ => handled = false,
+        }
+        if handled {
+            cx.notify();
+        }
+    }
+
+    /// Step the cursor by `delta` rows, skipping over non-binding rows
+    /// (headers / hints) so j/k always lands on something dispatchable.
+    fn move_cursor(&mut self, delta: isize, snap_after: bool) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let last = self.rows.len() as isize - 1;
+        let mut next = self.cursor as isize + delta;
+        next = next.clamp(0, last);
+        // If we landed on a header / hint, slide in the direction of
+        // travel until we hit a Pair (or run off the end).
+        let step: isize = if delta >= 0 { 1 } else { -1 };
+        while next >= 0 && next <= last {
+            if matches!(self.rows[next as usize], RowKind::Pair { .. }) {
+                break;
+            }
+            next += step;
+        }
+        if !(0..=last).contains(&next) {
+            // No pair in that direction — undo.
+            return;
+        }
+        self.cursor = next as usize;
+        // Page jumps reveal directly; single-step jumps just ensure
+        // the cursor stays visible.
+        if snap_after {
+            self.list_state.scroll_to_reveal_item(self.cursor);
+        } else {
+            self.list_state.scroll_to_reveal_item(self.cursor);
+        }
+    }
+
+    fn set_cursor(&mut self, target: usize) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let last = self.rows.len().saturating_sub(1);
+        let target = target.min(last);
+        // Snap to the nearest Pair in either direction so the highlight
+        // never lands on a header.
+        let mut chosen = None;
+        for offset in 0..=last {
+            for sign in [1isize, -1] {
+                let ix = target as isize + sign * offset as isize;
+                if ix < 0 || ix as usize > last {
+                    continue;
+                }
+                if matches!(self.rows[ix as usize], RowKind::Pair { .. }) {
+                    chosen = Some(ix as usize);
+                    break;
+                }
+            }
+            if chosen.is_some() {
+                break;
+            }
+        }
+        if let Some(ix) = chosen {
+            self.cursor = ix;
+            self.list_state.scroll_to_reveal_item(self.cursor);
+        }
+    }
+
+    /// Dispatch the action under the cursor as if the user had pressed
+    /// the binding directly. Dismisses the modal first so the action
+    /// lands on the right pane.
+    fn dispatch_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(RowKind::Pair { left, .. }) = self.rows.get(self.cursor).cloned() else {
+            return;
+        };
+        let action_name = left.raw_action_name.to_string();
+        self.dismissed = true;
         cx.emit(DismissEvent);
+        // Best-effort dispatch by name. Failures (unknown action, missing
+        // data) just dismiss silently — the user can still type the
+        // binding directly.
+        if let Ok(action) = cx.build_action(&action_name, None) {
+            window.dispatch_action(action, cx);
+        }
     }
 }
 
-/// A flattened row used by the per-section `uniform_list`. Rows have a
-/// constant rendered height so the list can virtualize — only items
-/// intersecting the modal's visible scroll region are laid out and
-/// painted.
-#[derive(Clone)]
-enum RowKind {
-    /// Single muted line used in place of body rows when a section is empty
-    /// (currently only the "This pane" section uses this).
-    EmptyHint(SharedString),
-    /// One paired entry. `left` is rendered in the left column, `right`
-    /// (when present) in the right column. `pair_index_in_section` is the
-    /// row's index among the section's `Pair` rows so striping stays put
-    /// across scroll positions.
-    Pair {
-        left: BindingRow,
-        right: Option<BindingRow>,
-        pair_index_in_section: usize,
-    },
+fn curated_action_set() -> HashSet<String> {
+    crate::keymap::codon_default_bindings()
+        .into_iter()
+        .chain(crate::keymap::codon_user_bindings())
+        .map(|(_, action, _)| action)
+        .collect()
 }
 
-/// Group a section's bindings into top-down-then-right pairs. The first
-/// half of the list goes in the left column, the second half in the right —
-/// the same visual order the old non-virtualized renderer produced.
-fn build_pairs(items: &[BindingRow]) -> Vec<RowKind> {
+fn build_rows(
+    leaf_context_label: Option<SharedString>,
+    local: &[BindingRow],
+    global: &[BindingRow],
+) -> Vec<RowKind> {
+    let mut rows: Vec<RowKind> = Vec::new();
+
+    let local_label = leaf_context_label
+        .clone()
+        .map(|leaf| SharedString::from(format!("This pane · {leaf}")))
+        .unwrap_or_else(|| SharedString::from("This pane"));
+    rows.push(RowKind::Header {
+        label: local_label,
+        count: local.len(),
+    });
+    if local.is_empty() {
+        rows.push(RowKind::EmptyHint(SharedString::from(
+            "No pane-specific bindings",
+        )));
+    } else {
+        append_pairs(&mut rows, local);
+    }
+
+    if !global.is_empty() {
+        rows.push(RowKind::Header {
+            label: SharedString::from("Global"),
+            count: global.len(),
+        });
+        append_pairs(&mut rows, global);
+    }
+
+    rows
+}
+
+/// Lay out `items` top-down-then-right into a column of paired rows.
+/// Striping is anchored on the *pair index* (not the column slot) so
+/// backgrounds stay put across scroll positions.
+fn append_pairs(out: &mut Vec<RowKind>, items: &[BindingRow]) {
     let n = items.len();
     if n == 0 {
-        return Vec::new();
+        return;
     }
     let split = n.div_ceil(2);
-    let mut rows = Vec::with_capacity(split);
     for pair_index in 0..split {
         let left = items[pair_index].clone();
         let right_index = pair_index + split;
         let right = items.get(right_index).cloned();
-        rows.push(RowKind::Pair {
+        out.push(RowKind::Pair {
             left,
             right,
-            pair_index_in_section: pair_index,
+            striped: pair_index % 2 == 1,
         });
     }
-    rows
 }
 
-/// Render a single binding cell (chord + action name). Used twice per
-/// `Pair` row.
-fn render_binding_cell(row: &BindingRow) -> AnyElement {
+fn render_binding_cell(row: &BindingRow, is_cursor: bool) -> AnyElement {
     let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
         .size(ui::rems_from_px(13.));
     h_flex()
@@ -136,7 +320,11 @@ fn render_binding_cell(row: &BindingRow) -> AnyElement {
         )
         .child(
             Label::new(row.action_name.clone())
-                .color(Color::Default)
+                .color(if is_cursor {
+                    Color::Default
+                } else {
+                    Color::Default
+                })
                 .size(LabelSize::Default)
                 .single_line()
                 .truncate(),
@@ -144,77 +332,64 @@ fn render_binding_cell(row: &BindingRow) -> AnyElement {
         .into_any_element()
 }
 
-/// Render one `RowKind` as a constant-height element. Pair rows always
-/// render two columns (with a placeholder spacer when the right slot is
-/// empty) so every row in a section has the same height, which is what
-/// `uniform_list` requires.
-fn render_row(row: &RowKind, row_bg: Hsla) -> AnyElement {
-    match row {
-        RowKind::EmptyHint(text) => v_flex()
-            .py_1()
-            .child(
-                Label::new(text.clone())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-            )
+fn render_pair(
+    left: &BindingRow,
+    right: Option<&BindingRow>,
+    striped: bool,
+    is_cursor: bool,
+    row_bg: Hsla,
+    cursor_bg: Hsla,
+    accent: Hsla,
+) -> AnyElement {
+    let bg = if is_cursor {
+        Some(cursor_bg)
+    } else if striped {
+        Some(row_bg)
+    } else {
+        None
+    };
+    let left_cell = h_flex()
+        .items_center()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .flex_1()
+        .min_w(px(0.))
+        .when_some(bg, |el, c| el.bg(c))
+        .when(is_cursor, |el| el.border_l_2().border_color(accent))
+        .child(render_binding_cell(left, is_cursor));
+    let right_cell: AnyElement = match right {
+        Some(binding) => h_flex()
+            .items_center()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .flex_1()
+            .min_w(px(0.))
+            .when_some(bg, |el, c| el.bg(c))
+            .child(render_binding_cell(binding, false))
             .into_any_element(),
-        RowKind::Pair {
-            left,
-            right,
-            pair_index_in_section,
-        } => {
-            let striped = pair_index_in_section % 2 == 1;
-            let left_cell = h_flex()
-                .items_center()
-                .px_2()
-                .py_0p5()
-                .rounded_md()
-                .flex_1()
-                .min_w(px(0.))
-                .when(striped, |el| el.bg(row_bg))
-                .child(render_binding_cell(left));
-            let right_cell: AnyElement = match right {
-                Some(binding) => h_flex()
-                    .items_center()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .when(striped, |el| el.bg(row_bg))
-                    .child(render_binding_cell(binding))
-                    .into_any_element(),
-                // Keep the row height + column widths stable even when a
-                // pair is missing its right entry (the last row in an
-                // odd-count section).
-                None => div().flex_1().min_w(px(0.)).into_any_element(),
-            };
-            h_flex()
-                .gap_6()
-                .items_start()
-                .child(left_cell)
-                .child(right_cell)
-                .into_any_element()
-        }
-    }
+        None => div().flex_1().min_w(px(0.)).into_any_element(),
+    };
+    h_flex()
+        .w_full()
+        .gap_6()
+        .items_center()
+        .child(left_cell)
+        .child(right_cell)
+        .into_any_element()
 }
 
-/// Render a complete section: accent-bar header, divider, then the body
-/// rows. Rows are flattened into `RowKind` (header-less; the section header
-/// is its own sibling) so striping anchors on `pair_index_in_section` and
-/// stays put across scroll positions.
-fn render_section(
-    _id: impl Into<ElementId>,
+fn render_header(
     label: SharedString,
     count: usize,
-    rows: Vec<RowKind>,
     accent: Hsla,
     divider: Hsla,
-    row_bg: Hsla,
 ) -> AnyElement {
     let header_row = h_flex()
         .items_center()
         .gap_2()
+        .pt_3()
         .pb_1()
         .child(div().w(px(3.)).h(px(14.)).rounded_full().bg(accent))
         .child(
@@ -228,22 +403,24 @@ fn render_section(
                 .color(Color::Muted)
                 .size(LabelSize::Small),
         );
-
-    let body = v_flex()
-        .w_full()
-        .children(rows.iter().map(|row| render_row(row, row_bg)));
-
     v_flex()
-        .gap_1()
+        .w_full()
         .child(header_row)
         .child(div().h(px(1.)).w_full().bg(divider))
-        .child(body)
         .into_any_element()
 }
 
-/// Best-effort short name for the deepest `KeyContext` on the stack —
-/// used as a label for the "This pane" section. Falls back to a generic
-/// label when the leaf has no primary identifier.
+fn render_empty_hint(text: SharedString) -> AnyElement {
+    v_flex()
+        .py_1()
+        .child(
+            Label::new(text)
+                .color(Color::Muted)
+                .size(LabelSize::Small),
+        )
+        .into_any_element()
+}
+
 fn leaf_context_label(stack: &[KeyContext]) -> Option<SharedString> {
     let leaf = stack.last()?;
     leaf.primary().map(|entry| entry.key.clone())
@@ -251,24 +428,28 @@ fn leaf_context_label(stack: &[KeyContext]) -> Option<SharedString> {
 
 fn collect_bindings(
     pane_context_stack: &[KeyContext],
+    curated_actions: &HashSet<String>,
     raw: Vec<GpuiKeyBinding>,
     cx: &mut Context<KeybindingsCheatsheetModal>,
 ) -> (Vec<BindingRow>, Vec<BindingRow>) {
-    // `raw` is captured pre-modal in `show_keymap` so it includes
-    // pane-specific bindings (`Terminal && pane_mode == normal`,
-    // `GitStatus`, etc.) that the modal's own focus context would
-    // otherwise filter out by the time `possible_bindings_for_input`
-    // ran inside `new`. Ordered by precedence: deeper context first, then
-    // more-recently-registered first. The user's codon.toml is loaded
-    // *after* the embedded defaults, so a user override appears before
-    // the corresponding default in `raw`. Collapse all bindings that
-    // share a (chord, context) pair down to the first occurrence so the
-    // cheatsheet shows what would actually fire — never both.
+    // `raw` is captured pre-modal so it includes pane-specific bindings
+    // (`Terminal && pane_mode == normal`, …) that would otherwise be
+    // filtered out by the time `possible_bindings_for_input` ran inside
+    // `new`. Bindings are ordered by precedence — deeper context first,
+    // most-recently-registered first. User overrides therefore appear
+    // before the corresponding default. Collapse all bindings that share
+    // a `(chord, context)` pair to the first occurrence so the cheatsheet
+    // shows what would actually fire, never both.
     let mut local: Vec<BindingRow> = Vec::new();
     let mut global: Vec<BindingRow> = Vec::with_capacity(raw.len());
-    let mut seen: std::collections::HashSet<(SharedString, String)> =
-        std::collections::HashSet::with_capacity(raw.len());
+    let mut seen: HashSet<(SharedString, String)> = HashSet::with_capacity(raw.len());
     for binding in raw.iter() {
+        let raw_name = binding.action().name();
+        // Only show bindings codon itself owns — the curated set built
+        // from `DEFAULT_KEYMAP` + `~/.config/codon/codon.toml`.
+        if !curated_actions.contains(raw_name) {
+            continue;
+        }
         let keystrokes = binding.keystrokes();
         if keystrokes.is_empty() {
             continue;
@@ -282,21 +463,19 @@ fn collect_bindings(
         if !seen.insert((keystrokes_text.clone(), context_key)) {
             continue;
         }
-        let raw_name = binding.action().name();
         let humanized = command_palette::humanize_action_name(raw_name);
-        let namespace = humanize_namespace(raw_name);
         let row = BindingRow {
             keystrokes: Rc::from(keystrokes),
             keystrokes_text,
             action_name: SharedString::from(humanized),
-            namespace: SharedString::from(namespace),
+            raw_action_name: SharedString::from(raw_name),
         };
         // A binding is *pane-local* iff its predicate is satisfied by the
         // full stack but NOT by the stack with the leaf removed — i.e.
         // the leaf context is load-bearing. Plain "matches at leaf depth"
-        // isn't enough because predicates like `!Editor`,
-        // `Pane && something`, or anything that's true at multiple levels
-        // also satisfies `depth_of == stack.len()` and would flood the
+        // isn't enough because predicates like `!Editor`, `Pane &&
+        // something`, or anything that's true at multiple levels also
+        // satisfies `depth_of == stack.len()` and would flood the
         // "this pane" section with broadly-applicable bindings.
         let is_local = match binding.predicate() {
             Some(predicate) => {
@@ -319,47 +498,18 @@ fn collect_bindings(
             global.push(row);
         }
     }
-    let local_sort = |a: &BindingRow, b: &BindingRow| {
+    let sort = |a: &BindingRow, b: &BindingRow| {
         chord_sort_key(&a.keystrokes_text)
             .cmp(&chord_sort_key(&b.keystrokes_text))
             .then_with(|| a.action_name.cmp(&b.action_name))
     };
-    local.sort_by(local_sort);
-    global.sort_by(|a, b| {
-        namespace_priority(&a.namespace)
-            .cmp(&namespace_priority(&b.namespace))
-            .then_with(|| a.namespace.cmp(&b.namespace))
-            .then_with(|| chord_sort_key(&a.keystrokes_text).cmp(&chord_sort_key(&b.keystrokes_text)))
-            .then_with(|| a.action_name.cmp(&b.action_name))
-    });
+    local.sort_by(sort);
+    global.sort_by(sort);
     (local, global)
 }
 
-fn humanize_namespace(raw_name: &str) -> String {
-    let ns = raw_name.split_once("::").map(|(ns, _)| ns).unwrap_or("global");
-    let pretty = ns.replace('_', " ");
-    let mut chars = pretty.chars();
-    chars
-        .next()
-        .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
-        .unwrap_or(pretty)
-}
-
-/// Codon-defined namespaces float to the top.
-fn namespace_priority(namespace: &SharedString) -> u8 {
-    let lower = namespace.to_ascii_lowercase();
-    if lower.starts_with("codon") {
-        0
-    } else if lower == "global" {
-        1
-    } else {
-        2
-    }
-}
-
 /// Sort by chord length (shorter first), then by text. So `cmd-k a` sorts
-/// before `cmd-k a a`, and bindings without a chord prefix come first within
-/// a section.
+/// before `cmd-k a a`, and bindings without a chord prefix come first.
 fn chord_sort_key(text: &str) -> (usize, String) {
     (text.split_whitespace().count(), text.to_string())
 }
@@ -370,21 +520,42 @@ impl Render for KeybindingsCheatsheetModal {
         let theme = cx.theme();
         let panel_bg = theme.colors().elevated_surface_background;
         let row_bg = theme.colors().surface_background;
+        let cursor_bg = theme.colors().element_selected;
+        let accent = theme.colors().text_accent;
         let border = theme.colors().border;
-        let border_faded = theme.colors().border_variant;
-
-        let mut grouped: Vec<(SharedString, Vec<BindingRow>)> = Vec::new();
-        for row in &self.global_bindings {
-            match grouped.last_mut() {
-                Some((ns, items)) if ns == &row.namespace => items.push(row.clone()),
-                _ => grouped.push((row.namespace.clone(), vec![row.clone()])),
-            }
-        }
-        let total_count = self.local_bindings.len() + self.global_bindings.len();
+        let divider = theme.colors().border_variant;
 
         let mut key_context = KeyContext::default();
         key_context.add("KeybindingsCheatsheet");
         key_context.add("menu");
+
+        // Short-circuit paint during fade-out so the modal layer's
+        // animation frames don't pay any layout cost.
+        if self.dismissed {
+            return div()
+                .key_context(key_context)
+                .track_focus(&self.focus_handle)
+                .size_full();
+        }
+
+        let total_count = self
+            .rows
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r,
+                    RowKind::Pair {
+                        right: Some(_),
+                        ..
+                    } | RowKind::Pair { right: None, .. }
+                )
+            })
+            .map(|r| match r {
+                RowKind::Pair { right: Some(_), .. } => 2,
+                RowKind::Pair { right: None, .. } => 1,
+                _ => 0,
+            })
+            .sum::<usize>();
 
         let header = h_flex()
             .items_center()
@@ -396,7 +567,7 @@ impl Render for KeybindingsCheatsheetModal {
                     .child(Headline::new("Keybindings").size(HeadlineSize::Medium))
                     .child(
                         Label::new(format!(
-                            "{} bindings · Esc to dismiss",
+                            "{} curated · j/k move · Enter run · Esc dismiss",
                             total_count
                         ))
                         .color(Color::Muted)
@@ -411,58 +582,33 @@ impl Render for KeybindingsCheatsheetModal {
                     .child(ui::Icon::new(IconName::Command).color(Color::Muted)),
             );
 
-        let body = if grouped.is_empty() && self.local_bindings.is_empty() {
-            v_flex().py_8().child(
-                Label::new("No keybindings registered yet.")
-                    .color(Color::Muted)
-                    .size(LabelSize::Default),
-            )
-        } else {
-            let accent = theme.colors().text_accent;
-            let mut column = v_flex().gap_5();
-
-            // "This pane" section — always rendered (with a muted hint
-            // when empty) so the layout doesn't shift between panes.
-            {
-                let label = self
-                    .leaf_context_label
-                    .clone()
-                    .map(|leaf| SharedString::from(format!("This pane · {leaf}")))
-                    .unwrap_or_else(|| SharedString::from("This pane"));
-                let count = self.local_bindings.len();
-                let rows: Vec<RowKind> = if self.local_bindings.is_empty() {
-                    vec![RowKind::EmptyHint(SharedString::from(
-                        "No pane-specific bindings",
-                    ))]
-                } else {
-                    build_pairs(&self.local_bindings)
-                };
-                column = column.child(render_section(
-                    ElementId::from("cheatsheet-section-this-pane"),
-                    label,
-                    count,
-                    rows,
-                    accent,
-                    border_faded,
+        let rows = self.rows.clone();
+        let cursor = self.cursor;
+        let list_state = self.list_state.clone();
+        let body = list(
+            list_state,
+            move |ix, _window, _cx| match rows.get(ix) {
+                Some(RowKind::Header { label, count }) => {
+                    render_header(label.clone(), *count, accent, divider)
+                }
+                Some(RowKind::EmptyHint(text)) => render_empty_hint(text.clone()),
+                Some(RowKind::Pair {
+                    left,
+                    right,
+                    striped,
+                }) => render_pair(
+                    left,
+                    right.as_ref(),
+                    *striped,
+                    ix == cursor,
                     row_bg,
-                ));
-            }
-
-            for (idx, (ns, items)) in grouped.into_iter().enumerate() {
-                let count = items.len();
-                let rows = build_pairs(&items);
-                column = column.child(render_section(
-                    ElementId::from(("cheatsheet-section", idx)),
-                    ns,
-                    count,
-                    rows,
+                    cursor_bg,
                     accent,
-                    border_faded,
-                    row_bg,
-                ));
-            }
-            column
-        };
+                ),
+                None => div().into_any_element(),
+            },
+        )
+        .flex_grow();
 
         let max_w = px((f32::from(viewport.width) * 0.85).min(960.));
         let max_h = px(f32::from(viewport.height) * 0.85);
@@ -470,7 +616,7 @@ impl Render for KeybindingsCheatsheetModal {
         div()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::dismiss))
+            .on_key_down(cx.listener(Self::handle_key_down))
             .occlude()
             .size_full()
             .flex()
@@ -492,15 +638,7 @@ impl Render for KeybindingsCheatsheetModal {
                     .px_6()
                     .py_5()
                     .child(header)
-                    .child(
-                        div()
-                            .id("codon-keymap-rows")
-                            .flex_grow()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
-                            .child(body)
-                            .vertical_scrollbar_for(&self.scroll_handle, window, cx),
-                    ),
+                    .child(body),
             )
     }
 }
