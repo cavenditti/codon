@@ -8,7 +8,7 @@ summary: >
   absolute, relative, and `~`-prefixed paths with filesystem
   tab-completion.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-nav-extras#c-goto-path
 ---

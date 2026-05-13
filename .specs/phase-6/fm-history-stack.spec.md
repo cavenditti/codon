@@ -7,7 +7,7 @@ summary: >
   Directory-history stack for the file manager. `[` / `ctrl-o` step
   back; `]` / `ctrl-i` step forward.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-nav-extras#c-history-back-forward
 ---

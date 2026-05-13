@@ -7,7 +7,7 @@ summary: >
   Vi-style global bookmarks for the file manager — `m<letter>` saves,
   `'<letter>` jumps. 26 slots, persisted across launches.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-nav-extras#c-bookmarks
 ---

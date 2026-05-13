@@ -7,7 +7,7 @@ summary: >
   `codon_fm::Reveal(PathBuf)` action — navigates the file manager to
   a path's parent and selects the entry. Callable from anywhere.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-nav-extras#c-reveal-file
 ---
