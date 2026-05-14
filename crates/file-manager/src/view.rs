@@ -555,6 +555,7 @@ impl Render for FileManager {
                             .w(relative(parent_fraction(self.preview_fraction)))
                             .h_full()
                             .overflow_hidden()
+                            .bg(bg)
                             .border_r_1()
                             .border_color(border_color)
                             .child(parent_col),
@@ -564,6 +565,7 @@ impl Render for FileManager {
                             .flex_1()
                             .h_full()
                             .min_h_0()
+                            .bg(bg)
                             .border_r_1()
                             .border_color(border_color)
                             .child(current_col),
@@ -573,6 +575,7 @@ impl Render for FileManager {
                             .w(relative(self.preview_fraction))
                             .h_full()
                             .overflow_hidden()
+                            .bg(bg)
                             .child(preview_col),
                     ),
             )
