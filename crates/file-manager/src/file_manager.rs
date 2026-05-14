@@ -3777,7 +3777,7 @@ pub(crate) fn format_hex_dump(bytes: &[u8]) -> String {
 /// File extensions the FM offers to render as images. Matches the
 /// formats Zed's vendored `gpui::img` supports out of the box.
 pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg",
 ];
 
 /// Returns true when `path`'s extension is in [`IMAGE_EXTENSIONS`].
@@ -4573,6 +4573,8 @@ mod tests {
         assert!(is_image_path(Path::new("foo.webp")));
         assert!(is_image_path(Path::new("foo.bmp")));
         assert!(is_image_path(Path::new("foo.ico")));
+        assert!(is_image_path(Path::new("foo.svg")));
+        assert!(is_image_path(Path::new("foo.SVG")));
         assert!(!is_image_path(Path::new("foo.txt")));
         assert!(!is_image_path(Path::new("foo")));
         assert!(!is_image_path(Path::new("foo.tiff")));
