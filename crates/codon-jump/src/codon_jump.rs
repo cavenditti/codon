@@ -576,6 +576,24 @@ impl JumpOverlay {
         };
         let mut candidates = JumpRegistry::collect_all(cx, &ctx);
 
+        // Belt-and-suspenders viewport clip. Even with per-provider
+        // freshness gating, a misbehaving provider could still yield
+        // bounds outside the visible window — drop them up front so
+        // we never paint chips off-screen or pile them up on top of
+        // unrelated UI.
+        let viewport = window.viewport_size();
+        let viewport_bounds = Bounds {
+            origin: Point::default(),
+            size: viewport,
+        };
+        candidates.retain(|c| {
+            let b = c.bounds;
+            b.origin.x < viewport_bounds.size.width
+                && b.origin.y < viewport_bounds.size.height
+                && b.origin.x + b.size.width > Pixels::ZERO
+                && b.origin.y + b.size.height > Pixels::ZERO
+        });
+
         // Greedy nearest-first: stable sort by squared Euclidean
         // distance from the anchor (fall back to bounds origin order
         // if no anchor is available).
