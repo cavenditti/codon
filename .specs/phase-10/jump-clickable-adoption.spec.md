@@ -8,7 +8,7 @@ summary: >
   toggles, status bar items, panel headers (git, agent, project),
   notifications — with `.jump_target(...)`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-clickable-adoption
 aspects: [tabs, status-bar, dock-toggles, panel-headers, notifications]
