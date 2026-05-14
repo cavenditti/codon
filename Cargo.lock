@@ -5887,6 +5887,7 @@ dependencies = [
  "buffer_diff",
  "client",
  "clock",
+ "codon-jump",
  "collections",
  "convert_case 0.8.0",
  "criterion",

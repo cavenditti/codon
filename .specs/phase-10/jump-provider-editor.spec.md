@@ -8,7 +8,7 @@ summary: >
   helix-jump scan) and URLs (via `editor::find_url`) as
   JumpCandidate entries with cursor-set / copy actions.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-pane-editor
 aspects: [editor-word-provider, editor-url-provider]
