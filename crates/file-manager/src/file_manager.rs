@@ -115,6 +115,9 @@ pub(crate) struct DirEntry {
     pub(crate) mode: Option<u32>,
     pub(crate) uid: Option<u32>,
     pub(crate) gid: Option<u32>,
+    /// Number of immediate children when `is_dir`; `None` for files or
+    /// when the directory could not be opened (permission denied, etc).
+    pub(crate) child_count: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -3548,10 +3551,17 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
             let mtime = metadata.modified().ok();
             let btime = metadata.created().ok().or(mtime);
             let (mode, uid, gid) = unix_metadata(&metadata);
+            let is_dir = metadata.is_dir();
+            let path = e.path();
+            let child_count = if is_dir {
+                std::fs::read_dir(&path).map(|rd| rd.count()).ok()
+            } else {
+                None
+            };
             Some(DirEntry {
                 name,
-                path: e.path(),
-                is_dir: metadata.is_dir(),
+                path,
+                is_dir,
                 is_hidden,
                 is_symlink: file_type.is_symlink(),
                 size: metadata.len(),
@@ -3561,6 +3571,7 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
                 mode,
                 uid,
                 gid,
+                child_count,
             })
         })
         .collect();
