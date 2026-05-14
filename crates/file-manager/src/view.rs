@@ -1,7 +1,7 @@
 use git::status::FileStatus;
 use gpui::{
-    App, Context, FontWeight, IntoElement, ObjectFit, Render, SharedString, StyledImage, Window,
-    div, img, prelude::*, px, relative, uniform_list,
+    AnyElement, App, Context, FontWeight, IntoElement, ObjectFit, Render, SharedString,
+    StyledImage, Window, div, img, prelude::*, px, relative, uniform_list,
 };
 use theme::ActiveTheme;
 use ui::{
@@ -12,7 +12,7 @@ use workspace::codon_jump_clickable::JumpClickableExt;
 
 use crate::file_manager::{
     ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
-    format_hex_dump,
+    TextPreview, format_hex_dump,
 };
 use crate::prefs::LineMode;
 use crate::theme::FmThemeStore;
@@ -146,47 +146,54 @@ impl FileManager {
             )
     }
 
-    fn render_preview(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_preview(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme();
         let bg = theme.colors().surface_background;
         let line_mode = self.line_mode;
+
+        // Clone the preview snapshot so the subsequent `&mut self` call
+        // for the text branch (`preview_editor_for`) doesn't overlap with
+        // the immutable borrow that a `match &self.preview` would hold.
+        // The variants are cheap to clone — `Text` carries at most
+        // `TEXT_PREVIEW_MAX_BYTES`, `Directory` carries a `Vec<DirEntry>`
+        // that's also the source for the rendered children.
+        let snapshot = self.preview.clone();
+
+        let body: AnyElement = match snapshot {
+            Preview::Directory(entries) => div()
+                .children(
+                    entries
+                        .iter()
+                        .enumerate()
+                        .map(|(i, entry)| self.render_entry(entry, i, None, true, line_mode, cx)),
+                )
+                .into_any_element(),
+            Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
+            Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
+            Preview::Image(info) => render_image_preview(&info).into_any_element(),
+            Preview::Binary(info) => render_binary_preview(&info, cx).into_any_element(),
+            Preview::Empty => div()
+                .child(
+                    div().px(px(8.)).child(
+                        Label::new("[empty]")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+                )
+                .into_any_element(),
+        };
 
         v_flex()
             .flex_1()
             .overflow_hidden()
             .bg(bg)
             .py(px(2.))
-            .child(match &self.preview {
-                Preview::Directory(entries) => div()
-                    .children(
-                        entries
-                            .iter()
-                            .enumerate()
-                            .map(|(i, entry)| self.render_entry(entry, i, None, true, line_mode, cx)),
-                    )
-                    .into_any_element(),
-                Preview::FileContent(content) => div()
-                    .child(
-                        div().px(px(8.)).py(px(2.)).child(
-                            Label::new(content.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .into_any_element(),
-                Preview::Archive(listing) => render_archive_preview(listing).into_any_element(),
-                Preview::Image(info) => render_image_preview(info).into_any_element(),
-                Preview::Binary(info) => render_binary_preview(info, cx).into_any_element(),
-                Preview::Empty => div()
-                    .child(
-                        div().px(px(8.)).child(
-                            Label::new("[empty]")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .into_any_element(),
-            })
+            .child(body)
+            .into_any_element()
     }
 
     fn render_input_bar(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -263,10 +270,17 @@ impl FileManager {
 }
 
 impl Render for FileManager {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let parent_col = self.render_column_static(&self.parent_entries, true, cx);
-        let preview_col = self.render_preview(cx);
-        let input_bar = self.render_input_bar(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // `into_any_element()` is applied eagerly because Rust 2024's
+        // capture rules treat `impl IntoElement` returned by `&self` /
+        // `&mut self` methods as borrowing `*self` for the element's
+        // entire lifetime, which would otherwise conflict with the
+        // `&mut self` borrow needed by `render_preview`.
+        let parent_col = self
+            .render_column_static(&self.parent_entries, true, cx)
+            .into_any_element();
+        let preview_col = self.render_preview(window, cx);
+        let input_bar = self.render_input_bar(cx).into_any_element();
 
         let theme = cx.theme();
         let border_color = theme.colors().border;
@@ -632,6 +646,16 @@ impl Render for FileManager {
     }
 }
 
+fn render_text_preview(
+    fm: &mut FileManager,
+    text: &TextPreview,
+    window: &mut Window,
+    cx: &mut Context<FileManager>,
+) -> impl IntoElement {
+    let editor = fm.preview_editor_for(text, window, cx);
+    div().size_full().px(px(8.)).py(px(2.)).child(editor)
+}
+
 fn render_image_preview(info: &ImageInfo) -> impl IntoElement {
     let dim_label = info
         .dimensions
@@ -698,6 +722,7 @@ fn render_archive_preview(listing: &ArchiveListing) -> impl IntoElement {
 
 fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
     let header = format!("{} · {} · {}", info.name, human_size(info.size), info.mime);
+    let type_label = mime_type_label(&info.mime);
     let dump = format_hex_dump(&info.head);
     let dump_lines: Vec<String> = dump.lines().map(|l| l.to_string()).collect();
 
@@ -710,12 +735,51 @@ fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
                 .size(LabelSize::Small)
                 .color(Color::Default),
         )
+        .child(
+            Label::new(SharedString::from(type_label))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
         .child(v_flex().children(dump_lines.into_iter().map(|line| {
             Label::new(SharedString::from(line))
                 .size(LabelSize::Small)
                 .color(Color::Muted)
                 .buffer_font(cx)
         })))
+}
+
+/// Human-readable type label for the binary fallback header. Derived
+/// from the mime guess so adding a new extension to `mime_guess`
+/// upstream just works. The mapping is intentionally coarse — ranger /
+/// yazi show roughly this much without invoking external probes, and
+/// pulling in `symphonia` / `pdfium` just for a preview line is more
+/// weight than the feature warrants.
+fn mime_type_label(mime: &str) -> String {
+    let (top, sub) = mime.split_once('/').unwrap_or((mime, ""));
+    let kind = match top {
+        "audio" => "Audio file",
+        "video" => "Video file",
+        "image" => "Image file",
+        "font" => "Font file",
+        "text" => "Text file",
+        "model" => "3D model",
+        "application" => match sub {
+            "pdf" => return "PDF document".to_string(),
+            "json" | "xml" | "yaml" | "x-yaml" | "toml" => "Structured data",
+            "zip" | "x-tar" | "x-7z-compressed" | "x-rar-compressed"
+            | "gzip" | "x-bzip2" | "x-xz" | "x-zstd" => "Archive",
+            "x-sharedlib" | "x-executable" | "x-mach-binary" | "vnd.microsoft.portable-executable"
+            | "wasm" => "Executable / binary",
+            "x-font-ttf" | "x-font-otf" | "x-font-woff" => "Font file",
+            _ => "Binary data",
+        },
+        _ => "Binary data",
+    };
+    if sub.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{kind} ({sub})")
+    }
 }
 
 /// Parent-column fraction as a function of the preview-column fraction.

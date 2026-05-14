@@ -6,6 +6,7 @@ use gpui::{
     FocusHandle, Focusable, KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task,
     UniformListScrollHandle, WeakEntity, Window,
 };
+use language::{Buffer, LanguageRegistry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
@@ -120,11 +121,31 @@ pub(crate) struct DirEntry {
 #[derive(Clone)]
 pub(crate) enum Preview {
     Directory(Vec<DirEntry>),
-    FileContent(String),
+    Text(TextPreview),
     Archive(ArchiveListing),
     Image(ImageInfo),
     Binary(BinaryInfo),
     Empty,
+}
+
+/// Source bytes for a text preview. The heavy `editor::Editor` entity
+/// that actually renders the content is built lazily by `view.rs` and
+/// cached on the `FileManager` keyed by `path`, so rapid `j`/`k`
+/// scrolling reuses the same editor instead of allocating per
+/// keystroke.
+#[derive(Clone)]
+pub(crate) struct TextPreview {
+    pub(crate) path: PathBuf,
+    pub(crate) content: String,
+}
+
+/// Cached read-only `editor::Editor` for the currently previewed text
+/// file. Held outside the `Preview` enum so swapping preview variants
+/// (text → directory → text) doesn't churn the entity unless the
+/// previewed path actually changes.
+pub(crate) struct PreviewEditorCache {
+    pub(crate) path: PathBuf,
+    pub(crate) editor: Entity<editor::Editor>,
 }
 
 /// Snapshot used to render an image in the preview pane. `dimensions`
@@ -205,6 +226,15 @@ pub struct FileManager {
     pub(crate) preview_fraction: f32,
     pub(crate) last_find_pattern: Option<String>,
     pub(crate) shell_running: Option<ShellRunState>,
+    /// Workspace-wide language registry. Resolved once at construction
+    /// time so the preview builder doesn't have to climb back up to the
+    /// workspace for every selection change. `None` only in test setups
+    /// where the FM is spun up without a workspace entity.
+    pub(crate) language_registry: Option<Arc<LanguageRegistry>>,
+    /// Read-only editor used to render the currently previewed text
+    /// file. Reused across selection changes within the same file;
+    /// rebuilt when the selected path changes.
+    pub(crate) preview_editor: Option<PreviewEditorCache>,
 }
 
 #[derive(Clone)]
@@ -291,6 +321,10 @@ impl FileManager {
 
         let prefs = cx.try_global::<crate::prefs::FmPrefs>().cloned().unwrap_or_default();
 
+        let language_registry = workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().languages.clone());
+
         let mut this = Self {
             focus_handle,
             workspace,
@@ -323,6 +357,8 @@ impl FileManager {
             preview_fraction: crate::prefs::clamp_fraction(prefs.preview_fraction),
             last_find_pattern: None,
             shell_running: None,
+            language_registry,
+            preview_editor: None,
         };
         this.reload_entries_sync();
         // Register the jump provider with codon-jump's global registry
@@ -619,6 +655,72 @@ impl FileManager {
         }
     }
 
+    /// Return (creating if necessary) the read-only editor entity used
+    /// to render the currently previewed text file. Cached on
+    /// `self.preview_editor` keyed by path so rapid scrolling reuses
+    /// the same editor when the selected file hasn't changed.
+    pub(crate) fn preview_editor_for(
+        &mut self,
+        text: &TextPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(cache) = self.preview_editor.as_ref()
+            && cache.path == text.path
+        {
+            return cache.editor.clone();
+        }
+
+        let content = text.content.clone();
+        let path = text.path.clone();
+        let registry = self.language_registry.clone();
+
+        let buffer = cx.new(|cx| {
+            let buffer = Buffer::local(content, cx);
+            if let Some(registry) = registry.clone() {
+                buffer.set_language_registry(registry);
+            }
+            buffer
+        });
+
+        if let Some(registry) = registry {
+            let buffer_handle = buffer.clone();
+            cx.spawn(async move |_, cx| {
+                // `path` is moved into the closure so the borrow taken by
+                // `load_language_for_file_path` lives no longer than the
+                // future itself (its return type carries the borrow's
+                // lifetime). Constructing the future outside the spawn
+                // would tie the borrow to the caller's stack frame, which
+                // doesn't outlive the spawned task.
+                let language = registry
+                    .load_language_for_file_path(&path)
+                    .await
+                    .log_err()?;
+                buffer_handle.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(language), cx);
+                });
+                Some(())
+            })
+            .detach();
+        }
+
+        let editor = cx.new(|cx| {
+            let mut editor = editor::Editor::for_buffer(buffer, None, window, cx);
+            editor.set_read_only(true);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_scrollbars(false, cx);
+            editor
+        });
+
+        self.preview_editor = Some(PreviewEditorCache {
+            path: text.path.clone(),
+            editor: editor.clone(),
+        });
+
+        editor
+    }
+
     pub(crate) fn update_preview_sync(&mut self) {
         let Some(entry) = self.entries.get(self.selected_index) else {
             self.preview = Preview::Empty;
@@ -650,12 +752,11 @@ impl FileManager {
             // header / hex dump instead of a silent blank pane.
         }
 
-        match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                let truncated: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
-                self.preview = Preview::FileContent(truncated);
+        match read_text_preview(&path, size) {
+            Some(text) => {
+                self.preview = Preview::Text(text);
             }
-            Err(_) => {
+            None => {
                 self.preview = Preview::Binary(read_binary_info(&path, name, size));
             }
         }
@@ -3695,6 +3796,28 @@ fn take_while<I: Iterator<Item = char>, F: Fn(char) -> bool>(
 /// Maximum number of bytes shown in the hex/ASCII dump for the binary
 /// preview fallback. Sized to fit 16 lines of 16 bytes each.
 pub(crate) const BINARY_HEAD_BYTES: usize = 256;
+
+/// Upper bound on bytes read into the text preview. Above this the
+/// file is treated as binary — the editor would handle a multi-megabyte
+/// buffer fine, but reading the whole thing synchronously on every
+/// `j`/`k` would not. Tuned so a typical source file (incl. minified
+/// JS / generated code) fits comfortably.
+pub(crate) const TEXT_PREVIEW_MAX_BYTES: u64 = 512 * 1024;
+
+/// Attempt to read `path` as UTF-8 text for the preview pane. Returns
+/// `None` when the file is too large, unreadable, or non-UTF-8 — the
+/// caller falls back to the binary metadata renderer in that case.
+pub(crate) fn read_text_preview(path: &Path, size: u64) -> Option<TextPreview> {
+    if size > TEXT_PREVIEW_MAX_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let content = String::from_utf8(bytes).ok()?;
+    Some(TextPreview {
+        path: path.to_path_buf(),
+        content,
+    })
+}
 
 /// Build the metadata + first-bytes snapshot for the binary preview. The
 /// read failure path (permissions, vanishing entry) returns an empty
