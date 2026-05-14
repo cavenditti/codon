@@ -144,9 +144,11 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k d g" = "diagnostics::Deploy"
 
 # Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
-# covers every visible word / URL / clickable; the URL-only variant is
-# `cmd-k u`.
+# covers every visible word / URL / clickable; the URL-only variant
+# `cmd-k u` filters to URL candidates and copies the matched one to
+# the system clipboard with a toast.
 "cmd-k j" = "codon_jump::JumpToTarget"
+"cmd-k u" = "codon_jump::JumpToUrl"
 
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -441,6 +443,7 @@ fn resolve_binding(
 
         // Codon jump-hint overlay (Vimium-style, window-wide).
         "codon_jump::JumpToTarget" => bind!(codon_jump::JumpToTarget),
+        "codon_jump::JumpToUrl" => bind!(codon_jump::JumpToUrl),
 
         // Workspace
         "workspace::NewTerminal" => bind!(workspace::NewTerminal { local: false }),

@@ -22,10 +22,10 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, BorrowAppContext, Bounds, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Global, InteractiveElement, IntoElement, KeyContext, KeyDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Window, actions, deferred, div,
-    prelude::FluentBuilder, px,
+    AnyElement, App, AppContext as _, BorrowAppContext, Bounds, ClipboardItem, Context,
+    DismissEvent, EventEmitter, FocusHandle, Focusable, Global, InteractiveElement, IntoElement,
+    KeyContext, KeyDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled,
+    Subscription, WeakEntity, Window, actions, deferred, div, prelude::FluentBuilder, px,
 };
 
 pub use workspace::codon_jump_clickable::{
@@ -33,7 +33,10 @@ pub use workspace::codon_jump_clickable::{
     take_clickables,
 };
 use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
-use workspace::{ModalView, Workspace};
+use workspace::{
+    ModalView, Workspace,
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
+};
 
 actions!(
     codon_jump,
@@ -41,6 +44,11 @@ actions!(
         /// Open the jump-hint overlay over the active workspace covering
         /// every kind of candidate (words, URLs, clickables).
         JumpToTarget,
+        /// Open the jump-hint overlay filtered to URL candidates. The
+        /// matched URL is copied to the system clipboard and a
+        /// `MessageNotification` toast confirms — the candidate's own
+        /// action closure is *not* invoked.
+        JumpToUrl,
     ]
 );
 
@@ -269,6 +277,11 @@ pub struct JumpOverlay {
     state: KeystrokeState,
     /// Set on dismiss so any frame still in flight paints empty.
     dismissed: bool,
+    /// Weak handle to the host workspace — needed by the Url-mode
+    /// dispatcher to surface `MessageNotification` toasts. Holding a
+    /// strong `Entity<Workspace>` would create a cycle (the overlay
+    /// lives *inside* the workspace's modal stack).
+    workspace: WeakEntity<Workspace>,
     #[allow(dead_code)]
     workspace_subscription: Option<Subscription>,
 }
@@ -309,6 +322,7 @@ impl JumpOverlay {
             .map(|(label, candidate)| LabeledCandidate { label, candidate })
             .collect();
 
+        let workspace_handle = cx.entity().downgrade();
         workspace_entity.toggle_modal(window, cx, |_window, cx| {
             // TODO(jump-config-toml): dismiss on workspace scroll.
             // The current Workspace::Event enum has no scroll event;
@@ -322,6 +336,7 @@ impl JumpOverlay {
                 labeled,
                 state: KeystrokeState::WaitFirst,
                 dismissed: false,
+                workspace: workspace_handle,
                 workspace_subscription,
             }
         });
@@ -433,7 +448,43 @@ impl JumpOverlay {
         // (mirrors the cheatsheet's dispatch_cursor pattern).
         self.dismissed = true;
         cx.emit(DismissEvent);
-        (removed.candidate.action)(window, cx);
+        match self.mode {
+            JumpMode::Target => (removed.candidate.action)(window, cx),
+            JumpMode::Url => self.dispatch_url_copy(removed.candidate, window, cx),
+        }
+    }
+
+    /// Url-mode dispatcher: overrides the candidate's declared action
+    /// with a clipboard write and a deduplicated toast. The candidate's
+    /// own closure is intentionally discarded — for the Url chord the
+    /// behaviour is uniform regardless of source pane.
+    fn dispatch_url_copy(
+        &self,
+        candidate: JumpCandidate,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let JumpKind::Url(url) = candidate.kind else {
+            // The Url filter in `collect_all` should have prevented
+            // this; bail silently if a provider somehow contributed a
+            // non-URL candidate to a Url-mode collection.
+            log::warn!("codon-jump: Url mode fired on non-URL candidate");
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            // `Named` so a rapid second copy replaces the existing
+            // toast rather than stacking — matches the `fm-task-*`
+            // pattern in file-manager/src/tasks.rs.
+            let id = NotificationId::Named("jump-url-copied".into());
+            let message = format!("Copied {url}");
+            workspace.show_notification(id, cx, |cx| {
+                cx.new(|cx| MessageNotification::new(message.clone(), cx))
+            });
+        });
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -692,6 +743,7 @@ pub fn init(cx: &mut App) {
 /// `codon_session::actions::register_for_workspace`.
 pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_jump_to_target);
+    workspace.register_action(handle_jump_to_url);
 }
 
 fn handle_jump_to_target(
@@ -701,6 +753,15 @@ fn handle_jump_to_target(
     cx: &mut Context<Workspace>,
 ) {
     JumpOverlay::open(JumpMode::Target, workspace, window, cx);
+}
+
+fn handle_jump_to_url(
+    workspace: &mut Workspace,
+    _: &JumpToUrl,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    JumpOverlay::open(JumpMode::Url, workspace, window, cx);
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ summary: >
   Filters candidates to URL-only and copies the selected URL to
   the system clipboard with a `MessageNotification` toast.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-jump-urls
 aspects: [url-action, clipboard-write, toast]
