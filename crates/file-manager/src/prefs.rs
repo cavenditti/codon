@@ -33,8 +33,8 @@ pub enum SortMode {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineMode {
-    #[default]
     None,
+    #[default]
     Size,
     Mtime,
     Permissions,
@@ -213,7 +213,7 @@ mod tests {
         let p = FmPrefs::default();
         assert_eq!(p.sort, SortMode::Name);
         assert!(!p.reverse);
-        assert_eq!(p.line_mode, LineMode::None);
+        assert_eq!(p.line_mode, LineMode::Size);
         assert!(p.show_gitignored);
         assert!((p.preview_fraction - PREVIEW_FRACTION_DEFAULT).abs() < f32::EPSILON);
     }

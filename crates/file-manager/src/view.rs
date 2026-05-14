@@ -775,7 +775,13 @@ pub(crate) fn entry_meta_label(entry: &DirEntry, mode: LineMode) -> Option<Strin
         LineMode::None => None,
         LineMode::Size => {
             if entry.is_dir {
-                None
+                entry.child_count.map(|n| {
+                    if n == 1 {
+                        "1 item".to_string()
+                    } else {
+                        format!("{n} items")
+                    }
+                })
             } else {
                 Some(human_size(entry.size))
             }
@@ -1255,6 +1261,7 @@ mod tests {
             mode: None,
             uid: None,
             gid: None,
+            child_count: None,
         }
     }
 
@@ -1282,6 +1289,7 @@ mod tests {
             mode: Some(0o644),
             uid: Some(501),
             gid: Some(20),
+            child_count: None,
         };
         assert_eq!(entry_meta_label(&entry, LineMode::None), None);
         assert_eq!(entry_meta_label(&entry, LineMode::Size).as_deref(), Some("100 B"));
@@ -1290,5 +1298,31 @@ mod tests {
             Some("-rw-r--r--")
         );
         assert_eq!(entry_meta_label(&entry, LineMode::Owner).as_deref(), Some("501:20"));
+    }
+
+    #[test]
+    fn entry_meta_label_size_mode_directory_shows_child_count() {
+        let mut dir = DirEntry {
+            name: "d".into(),
+            path: std::path::PathBuf::from("/d"),
+            is_dir: true,
+            is_hidden: false,
+            is_symlink: false,
+            size: 0,
+            git_status: None,
+            mtime: None,
+            btime: None,
+            mode: Some(0o755),
+            uid: None,
+            gid: None,
+            child_count: Some(3),
+        };
+        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("3 items"));
+        dir.child_count = Some(1);
+        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("1 item"));
+        dir.child_count = Some(0);
+        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("0 items"));
+        dir.child_count = None;
+        assert_eq!(entry_meta_label(&dir, LineMode::Size), None);
     }
 }
