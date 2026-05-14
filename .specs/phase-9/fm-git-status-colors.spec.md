@@ -8,7 +8,7 @@ summary: >
   deleted red, untracked cyan, conflicted magenta — applied to both
   the leading status glyph and the filename text.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-git-status-colors
 ---

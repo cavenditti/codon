@@ -8,7 +8,7 @@ summary: >
   addition to the existing background tint, so marked rows stay
   visible when the cursor moves away.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-marked-row-stripe
 ---

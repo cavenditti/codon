@@ -7,7 +7,7 @@ summary: >
   Bump cursor-row background to `ghost_element_active` and bold the
   filename. Row must remain readable when marked + cursor coincide.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-cursor-row-contrast
 ---

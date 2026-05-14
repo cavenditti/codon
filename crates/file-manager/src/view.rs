@@ -313,6 +313,35 @@ impl Render for FileManager {
             .as_ref()
             .map(|r| r.command.clone());
 
+        // Header-chip inputs — sourced from existing panel state. Match
+        // counts are computed here once so the chip doesn't pay for an
+        // O(n) scan on every cell render.
+        let find_pending = self
+            .pending_input
+            .as_ref()
+            .and_then(|p| match p {
+                PendingInput::FindForward { query, .. }
+                | PendingInput::FindBackward { query, .. } => Some(query.clone()),
+                _ => None,
+            });
+        let find_active_pattern = find_pending.clone().or_else(|| self.last_find_pattern.clone());
+        let find_match_count = find_active_pattern
+            .as_ref()
+            .map(|needle| count_find_matches(&self.entries, needle))
+            .unwrap_or(0);
+        let header_chips = HeaderChipState {
+            sort: self.sort,
+            reverse: self.reverse,
+            filter_query: if filter_active {
+                Some(self.filter_query.clone())
+            } else {
+                None
+            },
+            find_query: find_active_pattern,
+            find_match_count,
+            show_hidden: self.show_hidden,
+        };
+
         let entries = self.entries.clone();
         let marked = self.marked.clone();
         let this = cx.entity().downgrade();
@@ -477,6 +506,7 @@ impl Render for FileManager {
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
             .on_key_down(cx.listener(Self::handle_key_down))
+            .child(render_header_chips(&header_chips, cx))
             .when(filter_committed, |this| {
                 this.child(
                     h_flex()
@@ -814,6 +844,135 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// Snapshot of the header-chip inputs. Built once per render in
+/// `FileManager::render` and handed to `render_header_chips` so the
+/// helper stays free of `&FileManager` plumbing.
+struct HeaderChipState {
+    sort: crate::prefs::SortMode,
+    reverse: bool,
+    filter_query: Option<String>,
+    find_query: Option<String>,
+    find_match_count: usize,
+    show_hidden: bool,
+}
+
+/// Count case-insensitive substring matches of `needle` against every
+/// entry name. Used to populate the find chip's `(N)` suffix — runs
+/// once per render so it's cheap relative to laying out the panel.
+fn count_find_matches(entries: &[DirEntry], needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let lowered = needle.to_lowercase();
+    entries
+        .iter()
+        .filter(|e| e.name.to_lowercase().contains(&lowered))
+        .count()
+}
+
+/// Short label for a sort mode + direction arrow, matching the
+/// keymap-default verb names so the chip reads as a direct echo of the
+/// `,m`/`,s`/etc bindings.
+fn sort_chip_label(mode: crate::prefs::SortMode, reverse: bool) -> String {
+    use crate::prefs::SortMode;
+    let base = match mode {
+        SortMode::Name => "name",
+        SortMode::Size => "size",
+        SortMode::Mtime => "mtime",
+        SortMode::Btime => "btime",
+        SortMode::Extension => "ext",
+        SortMode::Random => "rand",
+        SortMode::Natural => "nat",
+    };
+    // Arrow direction reads as "what would `,r` show" — ascending is
+    // `↓` (top-of-list smaller / earlier), reversed flips to `↑`.
+    let arrow = if reverse { "↑" } else { "↓" };
+    match mode {
+        SortMode::Random => base.to_string(),
+        _ => format!("{base} {arrow}"),
+    }
+}
+
+/// Truncate `s` to `max` chars, appending an ellipsis when clipped, so
+/// long filter/find patterns can't stretch the chip past its budget.
+fn truncate_label(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// Header-chip row: one chip per active modifier, right-aligned. Sort
+/// is always present (dim when at the default `name ↓` setting);
+/// filter/find/hidden chips appear only when their state is non-default.
+fn render_header_chips(state: &HeaderChipState, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let status = theme.status();
+    let border_color = theme.colors().border;
+
+    let sort_is_default =
+        matches!(state.sort, crate::prefs::SortMode::Name) && !state.reverse;
+    let sort_label = sort_chip_label(state.sort, state.reverse);
+    let sort_chip = chip(
+        sort_label,
+        if sort_is_default {
+            theme.colors().element_background
+        } else {
+            theme.colors().element_selected
+        },
+        if sort_is_default {
+            Color::Muted
+        } else {
+            Color::Accent
+        },
+    );
+
+    let mut chips: Vec<gpui::AnyElement> = vec![sort_chip.into_any_element()];
+
+    if let Some(pattern) = state.filter_query.as_ref() {
+        let label = format!("filter:{}", truncate_label(pattern, 20));
+        chips.push(
+            chip(label, status.warning_background, Color::Warning).into_any_element(),
+        );
+    }
+
+    if let Some(pattern) = state.find_query.as_ref() {
+        let label = format!(
+            "find:{} ({})",
+            truncate_label(pattern, 20),
+            state.find_match_count
+        );
+        chips.push(chip(label, status.info_background, Color::Info).into_any_element());
+    }
+
+    if state.show_hidden {
+        chips.push(chip(".".to_string(), theme.colors().element_background, Color::Muted)
+            .into_any_element());
+    }
+
+    h_flex()
+        .px(px(8.))
+        .py(px(2.))
+        .gap(px(4.))
+        .border_b_1()
+        .border_color(border_color)
+        .bg(theme.colors().editor_background)
+        .justify_end()
+        .children(chips)
+}
+
+/// One chip element: rounded, padded, single-line label. Used by every
+/// header-chip variant — only the bg + fg colors vary.
+fn chip(label: impl Into<SharedString>, bg: gpui::Hsla, fg: Color) -> impl IntoElement {
+    div()
+        .px(px(6.))
+        .rounded_sm()
+        .bg(bg)
+        .child(Label::new(label.into()).size(LabelSize::Small).color(fg))
+}
+
 /// Resolve the filename color for `entry` from the active theme overlay.
 /// Falls back to the conservative built-in palette (directory accent /
 /// hidden / default) when `FmThemeStore` is absent — that path is only
@@ -1042,6 +1201,56 @@ mod tests {
         let parent = parent_fraction(preview);
         let middle = 1.0 - preview - parent;
         assert!(middle > 0.10);
+    }
+
+    #[test]
+    fn sort_chip_label_includes_arrow_unless_random() {
+        use crate::prefs::SortMode;
+        assert_eq!(sort_chip_label(SortMode::Name, false), "name ↓");
+        assert_eq!(sort_chip_label(SortMode::Name, true), "name ↑");
+        assert_eq!(sort_chip_label(SortMode::Mtime, false), "mtime ↓");
+        assert_eq!(sort_chip_label(SortMode::Extension, true), "ext ↑");
+        // Random sort is direction-agnostic — no arrow.
+        assert_eq!(sort_chip_label(SortMode::Random, false), "rand");
+        assert_eq!(sort_chip_label(SortMode::Random, true), "rand");
+    }
+
+    #[test]
+    fn truncate_label_passthrough_short_input() {
+        assert_eq!(truncate_label("abc", 20), "abc");
+    }
+
+    #[test]
+    fn truncate_label_ellipsizes_long_input() {
+        let truncated = truncate_label("abcdefghij", 5);
+        assert_eq!(truncated.chars().count(), 5);
+        assert!(truncated.ends_with('…'));
+    }
+
+    fn entry(name: &str) -> DirEntry {
+        DirEntry {
+            name: name.to_string(),
+            path: std::path::PathBuf::from(name),
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            size: 0,
+            git_status: None,
+            mtime: None,
+            btime: None,
+            mode: None,
+            uid: None,
+            gid: None,
+        }
+    }
+
+    #[test]
+    fn count_find_matches_is_case_insensitive_substring() {
+        let entries = vec![entry("Foo.rs"), entry("bar.rs"), entry("FooBar.md")];
+        assert_eq!(count_find_matches(&entries, "foo"), 2);
+        assert_eq!(count_find_matches(&entries, "BAR"), 2);
+        assert_eq!(count_find_matches(&entries, "missing"), 0);
+        assert_eq!(count_find_matches(&entries, ""), 0);
     }
 
     #[test]

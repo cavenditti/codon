@@ -8,7 +8,7 @@ summary: >
   and overridable by `~/.config/codon/file-manager-theme.toml`'s
   `[filetype]` table. FS-watch hot reload.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-filetype-colors
 ---

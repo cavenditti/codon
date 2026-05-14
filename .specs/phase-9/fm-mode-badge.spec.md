@@ -8,7 +8,7 @@ summary: >
   the current `CodonModeTracker` state — Normal green, Insert blue,
   Visual orange. Updates live as focus shifts.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-mode-badge
 ---

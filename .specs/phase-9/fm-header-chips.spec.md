@@ -8,7 +8,7 @@ summary: >
   mode + direction, filter, find, hidden-visible. Chips disappear
   when their state is default.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/file-manager-theme#c-header-chips
 ---
