@@ -3462,6 +3462,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "log",
+ "platform_title_bar",
  "serde",
  "serde_json",
  "settings",

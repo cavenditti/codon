@@ -106,7 +106,28 @@ pub fn apply_from_str(content: &str, cx: &mut App) -> Result<()> {
         });
     }
 
+    apply_window_chrome(&toml_doc, cx);
+
     Ok(())
+}
+
+/// Translate the `[window]` sub-tree of codon.toml to the
+/// `platform_title_bar::WindowChromeConfig` global. Both fields default
+/// to false (vanilla Zed behavior) so an absent `[window]` table or
+/// missing keys leave the title bar fully draggable.
+fn apply_window_chrome(toml_doc: &toml::Value, cx: &mut App) {
+    let table = toml_doc.get("window").and_then(|v| v.as_table());
+    let read_bool = |key: &str| -> bool {
+        table
+            .and_then(|t| t.get(key))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    let config = platform_title_bar::WindowChromeConfig {
+        disable_drag: read_bool("disable_drag"),
+        disable_double_click_zoom: read_bool("disable_double_click_zoom"),
+    };
+    cx.set_global(config);
 }
 
 /// The raw `[bindings]` sub-tree as a `toml::Value`. Codon-keymap consumes

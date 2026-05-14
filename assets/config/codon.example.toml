@@ -55,6 +55,19 @@ format_on_save = "on"
 # [settings.languages."c++"]
 # formatter = { external = { command = "clang-format" } }
 
+# ═══ Window chrome ═══════════════════════════════════════════════════
+# Codon-only knobs that don't map to Zed settings; read at startup and
+# applied to the title-bar renderer.
+[window]
+# Stop mouse-dragging the titlebar from moving the window. Useful when
+# the traffic-light buttons are hidden and you only want keyboard-driven
+# placement via codon-session bindings — accidental drags become no-ops.
+# disable_drag = true
+#
+# Stop double-click on the titlebar from maximizing/zooming. Pair with
+# `disable_drag` for a fully inert titlebar strip.
+# disable_double_click_zoom = true
+
 # ═══ Keybindings — global ════════════════════════════════════════════
 [bindings.global]
 # Pane focus (vim/helix muscle memory)
