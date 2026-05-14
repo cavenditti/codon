@@ -445,6 +445,7 @@ impl FileManager {
             .scroll_to_item(self.selected_index, ScrollStrategy::Nearest);
         self.update_preview_sync();
         cx.notify();
+        self.notify_workspace_scrolled(cx);
     }
 
     /// Index of the topmost row currently inside the viewport. Reads
@@ -667,6 +668,12 @@ impl FileManager {
             .scroll_to_item(self.selected_index, ScrollStrategy::Center);
     }
 
+    fn notify_workspace_scrolled(&self, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| workspace.notify_scrolled(cx));
+        }
+    }
+
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
@@ -674,6 +681,7 @@ impl FileManager {
             self.refresh_visual_marks();
             self.update_preview_sync();
             cx.notify();
+            self.notify_workspace_scrolled(cx);
         }
     }
 
@@ -683,6 +691,7 @@ impl FileManager {
         self.refresh_visual_marks();
         self.update_preview_sync();
         cx.notify();
+        self.notify_workspace_scrolled(cx);
     }
 
     fn half_page_down(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -692,6 +701,7 @@ impl FileManager {
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.update_preview_sync();
             cx.notify();
+            self.notify_workspace_scrolled(cx);
         }
     }
 
@@ -701,6 +711,7 @@ impl FileManager {
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.update_preview_sync();
         cx.notify();
+        self.notify_workspace_scrolled(cx);
     }
 
     fn page_down(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -712,6 +723,7 @@ impl FileManager {
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.update_preview_sync();
             cx.notify();
+            self.notify_workspace_scrolled(cx);
         }
     }
 
@@ -720,6 +732,7 @@ impl FileManager {
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.update_preview_sync();
         cx.notify();
+        self.notify_workspace_scrolled(cx);
     }
 
     /// Enter the focused entry — for directories that means descending

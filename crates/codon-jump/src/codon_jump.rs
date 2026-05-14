@@ -633,13 +633,10 @@ impl JumpOverlay {
         let workspace_entity_strong = cx.entity();
         let dismiss_on_scroll = config.dismiss_on_scroll;
         workspace_entity.toggle_modal(window, cx, |_window, cx| {
-            // `Workspace::Event::Scrolled` is the dismissal signal, but
-            // the vendored Zed side doesn't yet forward pane-scroll
-            // events into `notify_scrolled` — without that plumbing the
-            // subscription compiles and runs but only fires when something
-            // explicitly calls `Workspace::notify_scrolled`. Wiring the
-            // per-pane sources is the follow-up that completes the
-            // `dismiss_on_scroll` story.
+            // `Workspace::Event::Scrolled` is the dismissal signal —
+            // editor, terminal_view, and file-manager forward their
+            // scroll events into `Workspace::notify_scrolled`, so this
+            // subscription fires as soon as any host pane scrolls.
             let workspace_subscription = if dismiss_on_scroll {
                 Some(cx.subscribe(
                     &workspace_entity_strong,

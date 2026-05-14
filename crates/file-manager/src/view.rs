@@ -9,6 +9,7 @@ use ui::{
 };
 
 use codon_mode::{CodonModeTracker, PaneMode};
+use workspace::codon_jump_clickable::JumpClickableExt;
 
 use crate::file_manager::{
     ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
@@ -481,7 +482,20 @@ impl Render for FileManager {
                                         )
                                     }),
                             )
-                            .on_click(move |_event, window, cx| {
+                            .on_click({
+                                let this = this.clone();
+                                let focus = focus.clone();
+                                move |_event, window, cx| {
+                                    focus.focus(window, cx);
+                                    this.update(cx, |fm, cx| {
+                                        fm.selected_index = i;
+                                        fm.update_preview_sync();
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .jump_target(move |window, cx| {
                                 focus.focus(window, cx);
                                 this.update(cx, |fm, cx| {
                                     fm.selected_index = i;
