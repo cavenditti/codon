@@ -8,7 +8,7 @@ summary: >
   `.jump_target(on_click)` and gets registered as a paint-time
   candidate the overlay can hint.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-clickable-wrapper
 aspects: [wrapper-element, paint-time-registry]

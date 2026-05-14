@@ -19,12 +19,14 @@
 //! outside the configured alphabet — including arrows, modifiers,
 //! punctuation — dismisses it without firing.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, BorrowAppContext, Bounds, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Global, InteractiveElement, IntoElement, KeyContext, KeyDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Window, deferred, div,
+    AnyElement, App, BorrowAppContext, Bounds, Context, DismissEvent, Element, ElementId,
+    EventEmitter, FocusHandle, Focusable, Global, GlobalElementId, InspectorElementId,
+    InteractiveElement, IntoElement, KeyContext, KeyDownEvent, LayoutId, ParentElement, Pixels,
+    Point, Render, SharedString, Styled, Subscription, Window, deferred, div,
     prelude::FluentBuilder, px,
 };
 use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
@@ -667,6 +669,155 @@ pub fn init(cx: &mut App) {
     cx.set_global(JumpRegistry::new());
 }
 
+// Paint-time registry of clickable elements that opted into the jump
+// overlay via [`JumpClickableExt::jump_target`].
+//
+// Stored as a `thread_local!` `RefCell` because every push happens on
+// the UI thread inside an element's `paint` and we need cheap
+// indexable access without taking a window-global write lock. The
+// overlay drains this on open by calling [`take_clickables`].
+thread_local! {
+    static CLICKABLE_REGISTRY: RefCell<Vec<ClickableEntry>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) struct ClickableEntry {
+    pub bounds: Bounds<Pixels>,
+    pub on_click: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync + 'static>,
+}
+
+/// Drain every clickable entry registered on the current frame. The
+/// codon-jump overlay calls this once on activation; subsequent paint
+/// passes refill the registry.
+pub fn take_clickables() -> Vec<(Bounds<Pixels>, Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>)> {
+    CLICKABLE_REGISTRY.with(|cell| {
+        cell.borrow_mut()
+            .drain(..)
+            .map(|entry| (entry.bounds, entry.on_click))
+            .collect()
+    })
+}
+
+/// Test-only helper: total clickables currently registered without
+/// draining.
+#[doc(hidden)]
+pub fn clickable_registry_len() -> usize {
+    CLICKABLE_REGISTRY.with(|cell| cell.borrow().len())
+}
+
+/// Test-only helper: clear the registry between tests.
+#[doc(hidden)]
+pub fn clear_clickable_registry() {
+    CLICKABLE_REGISTRY.with(|cell| cell.borrow_mut().clear());
+}
+
+/// Fluent extension that lets any element opt into the jump-clickable
+/// overlay:
+///
+/// ```ignore
+/// h_flex()
+///     .child("Tabs")
+///     .on_click(cx.listener(|this, _, w, cx| this.activate(w, cx)))
+///     .jump_target(cx.listener(|this, _, w, cx| this.activate(w, cx)));
+/// ```
+///
+/// The `on_click` closure passed to `jump_target` should mirror what
+/// the element's own `on_click` already does — the overlay invokes it
+/// directly when the user selects this candidate's two-key label.
+pub trait JumpClickableExt: Element + Sized {
+    fn jump_target<F>(self, on_click: F) -> JumpClickable<Self>
+    where
+        F: Fn(&mut Window, &mut App) + Send + Sync + 'static,
+    {
+        JumpClickable {
+            inner: self,
+            on_click: Arc::new(on_click),
+        }
+    }
+}
+
+impl<E: Element> JumpClickableExt for E {}
+
+/// Element wrapper that registers its paint-time bounds into the
+/// thread-local [`CLICKABLE_REGISTRY`]. Composes transparently over
+/// any `Element` — request_layout / prepaint / paint forward to the
+/// inner element, then a single `Vec::push` runs after the inner
+/// paint to register the candidate.
+pub struct JumpClickable<E> {
+    inner: E,
+    on_click: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync + 'static>,
+}
+
+impl<E: Element> Element for JumpClickable<E> {
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        self.inner.id()
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.inner.source_location()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.inner.request_layout(id, inspector_id, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> E::PrepaintState {
+        self.inner
+            .prepaint(id, inspector_id, bounds, state, window, cx)
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.inner.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
+        CLICKABLE_REGISTRY.with(|cell| {
+            cell.borrow_mut().push(ClickableEntry {
+                bounds,
+                on_click: self.on_click.clone(),
+            });
+        });
+    }
+}
+
+impl<E: Element> IntoElement for JumpClickable<E> {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,6 +1091,45 @@ mod tests {
             JumpKind::Url(url) => assert_eq!(url, "https://example.com"),
             other => panic!("expected url, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn clickable_registry_drains_to_empty() {
+        clear_clickable_registry();
+        assert_eq!(clickable_registry_len(), 0);
+        // Direct push to exercise the take path without needing a window.
+        CLICKABLE_REGISTRY.with(|cell| {
+            cell.borrow_mut().push(ClickableEntry {
+                bounds: Bounds {
+                    origin: Point {
+                        x: px(0.0),
+                        y: px(0.0),
+                    },
+                    size: gpui::Size {
+                        width: px(10.0),
+                        height: px(10.0),
+                    },
+                },
+                on_click: Arc::new(|_, _| {}),
+            });
+            cell.borrow_mut().push(ClickableEntry {
+                bounds: Bounds {
+                    origin: Point {
+                        x: px(100.0),
+                        y: px(0.0),
+                    },
+                    size: gpui::Size {
+                        width: px(10.0),
+                        height: px(10.0),
+                    },
+                },
+                on_click: Arc::new(|_, _| {}),
+            });
+        });
+        assert_eq!(clickable_registry_len(), 2);
+        let drained = take_clickables();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(clickable_registry_len(), 0);
     }
 
     #[test]
