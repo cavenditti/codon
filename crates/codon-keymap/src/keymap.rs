@@ -82,10 +82,15 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k k" = "workspace::ActivatePaneUp"
 "cmd-k l" = "workspace::ActivatePaneRight"
 
-# Pane splitting
-"cmd-k |" = "pane::SplitRight"
-"cmd-k -" = "pane::SplitDown"
-"cmd-k \\" = "pane::SplitRight"
+# Pane splitting — contextual on the active pane's current path.
+# `\` and `-` open a terminal; `|` and `_` open a file manager. The
+# new pane is seeded to the active terminal's shell cwd, the active
+# file manager's `current_dir`, or the project's first worktree if
+# the active item exposes no path.
+"cmd-k \\" = "codon_session::SplitTerminalRight"
+"cmd-k |"  = "codon_session::SplitFileManagerRight"
+"cmd-k -"  = "codon_session::SplitTerminalDown"
+"cmd-k _"  = "codon_session::SplitFileManagerDown"
 
 # Pane management
 "cmd-k t" = "workspace::NewTerminal"
@@ -488,6 +493,18 @@ fn resolve_binding(
         "codon_session::GotoOrOpenTerminal" => bind!(codon_session::GotoOrOpenTerminal),
         "codon_session::GotoOrOpenFileManager" => bind!(codon_session::GotoOrOpenFileManager),
         "codon_session::GotoOrOpenEditor" => bind!(codon_session::GotoOrOpenEditor),
+        "codon_session::SplitTerminalRight" => {
+            bind!(codon_session::contextual_split::SplitTerminalRight)
+        }
+        "codon_session::SplitTerminalDown" => {
+            bind!(codon_session::contextual_split::SplitTerminalDown)
+        }
+        "codon_session::SplitFileManagerRight" => {
+            bind!(codon_session::contextual_split::SplitFileManagerRight)
+        }
+        "codon_session::SplitFileManagerDown" => {
+            bind!(codon_session::contextual_split::SplitFileManagerDown)
+        }
         "zed::Quit" => bind!(zed_actions::Quit),
 
         // Codon agent

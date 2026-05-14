@@ -100,6 +100,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_hold_quit);
     crate::goto_or_open::register_for_workspace(workspace);
     crate::diff_open::register_for_workspace(workspace);
+    crate::contextual_split::register_for_workspace(workspace);
 }
 
 fn handle_session_new(
