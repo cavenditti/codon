@@ -72,7 +72,11 @@ impl FileManager {
         };
 
         let symlink_indicator = entry.is_symlink;
-        let (git_glyph, git_color) = git_status_decoration(entry.git_status);
+        let (git_glyph, git_color, git_filename_color) = git_status_palette(entry.git_status);
+        // Git status wins over filetype for the filename tint when the
+        // entry is dirty/untracked/etc; on clean entries the filetype
+        // overlay (or muted-for-dimmed) carries the color.
+        let text_color = git_filename_color.unwrap_or(text_color);
 
         let meta = entry_meta_label(entry, line_mode);
 
@@ -361,7 +365,16 @@ impl Render for FileManager {
                         let marked_bg = theme.colors().ghost_element_hover;
                         let this = this.clone();
                         let focus = focus.clone();
-                        let (git_glyph, git_color) = git_status_decoration(entry.git_status);
+                        let (git_glyph, git_color, git_filename_color) =
+                            git_status_palette(entry.git_status);
+                        // Marked rows keep their accent tint; git
+                        // status overrides the filetype color on dirty
+                        // entries; otherwise filetype color carries.
+                        let text_color = if is_marked {
+                            text_color
+                        } else {
+                            git_filename_color.unwrap_or(text_color)
+                        };
                         let meta = entry_meta_label(entry, line_mode);
 
                         div()
@@ -757,27 +770,53 @@ fn filetype_color(entry: &DirEntry, cx: &App) -> Color {
     }
 }
 
-fn git_status_decoration(status: Option<FileStatus>) -> (&'static str, Color) {
+/// Status palette for one entry: leading glyph + glyph color +
+/// filename tint. Filename tint is `None` when git status is clean (or
+/// ignored, which dims but doesn't tint) so the caller can fall back to
+/// the filetype color rather than recolor over it. Worktree changes
+/// outrank index changes — that's what the user is actively editing.
+fn git_status_palette(status: Option<FileStatus>) -> (&'static str, Color, Option<Color>) {
     match status {
-        None => (" ", Color::Muted),
-        Some(FileStatus::Ignored) => (" ", Color::Muted),
-        Some(FileStatus::Untracked) => ("?", Color::Hint),
-        Some(FileStatus::Unmerged(_)) => ("U", Color::Conflict),
+        None => (" ", Color::Muted, None),
+        // Ignored entries get no glyph but a dim filename so they read
+        // as "tracked-as-not-interesting".
+        Some(FileStatus::Ignored) => (" ", Color::Muted, Some(Color::Disabled)),
+        // Untracked: low-contrast glyph (user hasn't told git about it
+        // yet) but a clear `info` filename so the row pops in `git
+        // status` parlance.
+        Some(FileStatus::Untracked) => ("?", Color::Muted, Some(Color::Info)),
+        // Merge conflicts use the brightest tint in the palette to
+        // demand attention.
+        Some(FileStatus::Unmerged(_)) => ("!", Color::Conflict, Some(Color::Conflict)),
         Some(FileStatus::Tracked(tracked)) => {
             use git::status::StatusCode::*;
             // Worktree (unstaged) wins when both sides have a change —
             // it's what the user is actively editing.
-            let code = match tracked.worktree_status {
-                Unmodified => tracked.index_status,
-                other => other,
+            let (code, from_worktree) = match tracked.worktree_status {
+                Unmodified => (tracked.index_status, false),
+                other => (other, true),
             };
             match code {
-                Modified | TypeChanged => ("M", Color::Modified),
-                Added => ("A", Color::Created),
-                Deleted => ("D", Color::Deleted),
-                Renamed => ("R", Color::Modified),
-                Copied => ("C", Color::Created),
-                Unmodified => (" ", Color::Muted),
+                Modified | TypeChanged => {
+                    // Staged-only (no worktree change) shows the staged-
+                    // bold flavor by promoting modified to created-like
+                    // bold green — but the renderer doesn't have a bold
+                    // variant for arbitrary colors, so the glyph picks
+                    // up `Created` when the change is index-only, and
+                    // `Modified` (yellow) when worktree-dirty. Filename
+                    // tracks the glyph for clarity.
+                    let color = if from_worktree {
+                        Color::Modified
+                    } else {
+                        Color::Created
+                    };
+                    ("M", color, Some(color))
+                }
+                Added => ("A", Color::Created, Some(Color::Created)),
+                Deleted => ("D", Color::Deleted, Some(Color::Deleted)),
+                Renamed => ("R", Color::Hint, Some(Color::Hint)),
+                Copied => ("C", Color::Created, Some(Color::Created)),
+                Unmodified => (" ", Color::Muted, None),
             }
         }
     }
@@ -817,29 +856,35 @@ mod tests {
     }
 
     #[test]
-    fn git_status_decoration_none_and_ignored_are_blank_muted() {
-        assert_eq!(git_status_decoration(None), (" ", Color::Muted));
-        assert_eq!(
-            git_status_decoration(Some(FileStatus::Ignored)),
-            (" ", Color::Muted),
-        );
+    fn git_status_palette_none_has_blank_glyph_and_no_filename_tint() {
+        assert_eq!(git_status_palette(None), (" ", Color::Muted, None));
     }
 
     #[test]
-    fn git_status_decoration_untracked_is_question() {
-        assert_eq!(
-            git_status_decoration(Some(FileStatus::Untracked)),
-            ("?", Color::Hint),
-        );
+    fn git_status_palette_ignored_dims_filename() {
+        let (glyph, glyph_color, filename) = git_status_palette(Some(FileStatus::Ignored));
+        assert_eq!(glyph, " ");
+        assert_eq!(glyph_color, Color::Muted);
+        assert_eq!(filename, Some(Color::Disabled));
     }
 
     #[test]
-    fn git_status_decoration_unmerged_is_conflict_glyph() {
+    fn git_status_palette_untracked_is_info_filename() {
+        let (glyph, _, filename) = git_status_palette(Some(FileStatus::Untracked));
+        assert_eq!(glyph, "?");
+        assert_eq!(filename, Some(Color::Info));
+    }
+
+    #[test]
+    fn git_status_palette_unmerged_is_conflict_bang() {
         let status = FileStatus::Unmerged(UnmergedStatus {
             first_head: UnmergedStatusCode::Added,
             second_head: UnmergedStatusCode::Added,
         });
-        assert_eq!(git_status_decoration(Some(status)), ("U", Color::Conflict));
+        let (glyph, glyph_color, filename) = git_status_palette(Some(status));
+        assert_eq!(glyph, "!");
+        assert_eq!(glyph_color, Color::Conflict);
+        assert_eq!(filename, Some(Color::Conflict));
     }
 
     fn tracked(worktree: StatusCode, index: StatusCode) -> FileStatus {
@@ -850,25 +895,37 @@ mod tests {
     }
 
     #[test]
-    fn git_status_decoration_tracked_worktree_wins_over_index() {
-        // Worktree modified, index added — worktree wins (the user is
-        // actively editing).
-        assert_eq!(
-            git_status_decoration(Some(tracked(StatusCode::Modified, StatusCode::Added))),
-            ("M", Color::Modified),
-        );
+    fn git_status_palette_tracked_worktree_wins_over_index() {
+        // Worktree modified, index added — worktree wins (user is
+        // actively editing). Filename + glyph both Modified yellow.
+        let (glyph, glyph_color, filename) =
+            git_status_palette(Some(tracked(StatusCode::Modified, StatusCode::Added)));
+        assert_eq!(glyph, "M");
+        assert_eq!(glyph_color, Color::Modified);
+        assert_eq!(filename, Some(Color::Modified));
     }
 
     #[test]
-    fn git_status_decoration_tracked_falls_back_to_index_when_worktree_unmodified() {
-        assert_eq!(
-            git_status_decoration(Some(tracked(StatusCode::Unmodified, StatusCode::Added))),
-            ("A", Color::Created),
-        );
+    fn git_status_palette_tracked_falls_back_to_index_when_worktree_unmodified() {
+        let (glyph, glyph_color, filename) =
+            git_status_palette(Some(tracked(StatusCode::Unmodified, StatusCode::Added)));
+        assert_eq!(glyph, "A");
+        assert_eq!(glyph_color, Color::Created);
+        assert_eq!(filename, Some(Color::Created));
     }
 
     #[test]
-    fn git_status_decoration_tracked_all_codes() {
+    fn git_status_palette_tracked_staged_modified_is_created_green() {
+        // Index-only Modified is "staged" — promotes the tint to
+        // Created (green) so staged-vs-dirty reads at a glance.
+        let (glyph, glyph_color, _) =
+            git_status_palette(Some(tracked(StatusCode::Unmodified, StatusCode::Modified)));
+        assert_eq!(glyph, "M");
+        assert_eq!(glyph_color, Color::Created);
+    }
+
+    #[test]
+    fn git_status_palette_tracked_all_codes() {
         let cases = [
             (StatusCode::Modified, "M"),
             (StatusCode::TypeChanged, "M"),
@@ -878,7 +935,7 @@ mod tests {
             (StatusCode::Copied, "C"),
         ];
         for (code, glyph) in cases {
-            let (g, _) = git_status_decoration(Some(tracked(code, StatusCode::Unmodified)));
+            let (g, _, _) = git_status_palette(Some(tracked(code, StatusCode::Unmodified)));
             assert_eq!(g, glyph, "code {code:?} should map to {glyph}");
         }
     }
