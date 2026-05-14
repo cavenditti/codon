@@ -549,6 +549,30 @@ impl Render for FileManager {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByName, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Name, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortBySize, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Size, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByMtime, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Mtime, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByBtime, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Btime, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByExtension, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Extension, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByNatural, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Natural, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::SortByRandom, window, cx| {
+                this.set_sort_mode(crate::prefs::SortMode::Random, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::file_manager::ToggleSortReverse, window, cx| {
+                this.toggle_sort_reverse(window, cx);
+            }))
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(render_top_bar(&top_bar, cx))

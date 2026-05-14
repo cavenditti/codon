@@ -43,6 +43,22 @@ actions!(
         HistoryForward,
         /// Show the choose-opener picker for the entry under the cursor.
         ChooseOpener,
+        /// Sort entries alphabetically by name (case-insensitive).
+        SortByName,
+        /// Sort entries by size (smallest first).
+        SortBySize,
+        /// Sort entries by modification time (oldest first).
+        SortByMtime,
+        /// Sort entries by creation / birth time (oldest first).
+        SortByBtime,
+        /// Sort entries by file extension.
+        SortByExtension,
+        /// Sort entries using natural order so `file2` precedes `file10`.
+        SortByNatural,
+        /// Shuffle entries randomly within the dirs / files groups.
+        SortByRandom,
+        /// Flip the current sort direction (ascending ↔ descending).
+        ToggleSortReverse,
     ]
 );
 
@@ -3228,21 +3244,37 @@ impl FileManager {
             _ => None,
         };
         if let Some(mode) = mode {
-            self.apply_sort(mode, cx);
-            self.reload_entries(window, cx);
+            self.set_sort_mode(mode, window, cx);
             return;
         }
         if key == "," && !shift {
-            self.reverse = !self.reverse;
-            let value = self.reverse;
-            cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_reverse(value));
-            self.reload_entries(window, cx);
+            self.toggle_sort_reverse(window, cx);
         }
     }
 
     fn apply_sort(&mut self, mode: crate::prefs::SortMode, cx: &mut Context<Self>) {
         self.sort = mode;
         cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_sort(mode));
+    }
+
+    /// Shared entry point for the palette-discoverable `Sort By …`
+    /// actions and the `,`-prefixed chord handler: persist the mode and
+    /// re-read the directory so the new ordering takes effect.
+    pub(crate) fn set_sort_mode(
+        &mut self,
+        mode: crate::prefs::SortMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_sort(mode, cx);
+        self.reload_entries(window, cx);
+    }
+
+    pub(crate) fn toggle_sort_reverse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reverse = !self.reverse;
+        let value = self.reverse;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_reverse(value));
+        self.reload_entries(window, cx);
     }
 
     fn cycle_line_mode(&mut self, cx: &mut Context<Self>) {
