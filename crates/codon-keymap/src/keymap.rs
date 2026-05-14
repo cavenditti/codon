@@ -165,6 +165,13 @@ const DEFAULT_KEYMAP: &str = r#"
 
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
+# Helix jump-to-word: visible-region overlay labels, two keystrokes
+# jump the cursor. Implementation lives in vendored Zed
+# (`vim::HelixJumpToWord`); the upstream `vim.json` already binds
+# `g w`, but we list it here so it shows up in the codon cheatsheet
+# and can be rebound from `~/.config/codon/codon.toml`. In Visual
+# mode the same action extends the selection — no separate binding.
+"g w" = "vim::HelixJumpToWord"
 
 # Git panel — Helix-style verbs for the existing Zed git dock. The
 # panel publishes pane_mode == normal when the changes list is
@@ -421,6 +428,10 @@ fn resolve_binding(
         "vim::ResizePaneRight" => bind!(vim::ResizePaneRight),
         "vim::ResizePaneUp" => bind!(vim::ResizePaneUp),
         "vim::ResizePaneDown" => bind!(vim::ResizePaneDown),
+
+        // Helix jump-to-word — overlay-label two-letter jump. In
+        // Visual mode the same action extends the selection.
+        "vim::HelixJumpToWord" => bind!(vim::HelixJumpToWord),
 
         // Workspace
         "workspace::NewTerminal" => bind!(workspace::NewTerminal { local: false }),
