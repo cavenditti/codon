@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, Task, Window};
+use gpui::{App, Context, Entity, EntityId, Task, Window};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use terminal::Terminal;
@@ -154,7 +154,17 @@ pub enum TerminalTarget {
 /// + an idle filter — the codon goto-or-open verb already uses the
 /// same MRU lookup for navigation, so we want the same affordance for
 /// shell exec.
-pub fn pick_terminal_for_shell(workspace: &Workspace, cx: &App) -> TerminalTarget {
+///
+/// `skip` lets the caller exclude its own entity — `act_as::<TerminalView>`
+/// internally borrows each item for a type check, and we'd panic with
+/// "cannot read while already being updated" if the iteration reached
+/// the FM itself (which is always pinned as a workspace item while the
+/// shell-exec keybind runs from inside its own `update`).
+pub fn pick_terminal_for_shell(
+    workspace: &Workspace,
+    cx: &App,
+    skip: Option<EntityId>,
+) -> TerminalTarget {
     let mut recent: Option<Entity<TerminalView>> = None;
     let mut recent_timestamp: usize = 0;
 
@@ -165,6 +175,9 @@ pub fn pick_terminal_for_shell(workspace: &Workspace, cx: &App) -> TerminalTarge
             .map(|item| (item.item_id(), item.clone()))
             .collect::<Vec<_>>()
         {
+            if Some(item_id) == skip {
+                continue;
+            }
             let Some(view) = item.act_as::<TerminalView>(cx) else {
                 continue;
             };

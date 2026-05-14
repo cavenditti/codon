@@ -2967,9 +2967,10 @@ impl FileManager {
         };
         let cwd = self.current_dir.clone();
 
+        let self_id = cx.entity_id();
         let target = {
             let ws = workspace.read(cx);
-            crate::shell::pick_terminal_for_shell(ws, cx)
+            crate::shell::pick_terminal_for_shell(ws, cx, Some(self_id))
         };
 
         match target {
