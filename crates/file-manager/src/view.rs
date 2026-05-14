@@ -13,6 +13,7 @@ use crate::file_manager::{
     format_hex_dump,
 };
 use crate::prefs::LineMode;
+use crate::theme::FmThemeStore;
 use std::time::SystemTime;
 
 impl FileManager {
@@ -35,14 +36,13 @@ impl FileManager {
         let theme = cx.theme();
         let selected_bg = theme.colors().ghost_element_selected;
 
-        let text_color = if entry.is_hidden {
-            Color::Hidden
-        } else if dimmed {
+        // Dimmed columns (parent + preview-of-directory) always render
+        // muted regardless of filetype; otherwise consult the theme
+        // overlay so the color reflects extension/directory/dotfile.
+        let text_color = if dimmed {
             Color::Muted
-        } else if entry.is_dir {
-            Color::Accent
         } else {
-            Color::Default
+            filetype_color(entry, cx)
         };
 
         let icon_element = if entry.is_dir {
@@ -324,14 +324,14 @@ impl Render for FileManager {
                         let is_selected = i == selected_index;
                         let is_marked = marked.contains(&i);
 
+                        // Marked rows keep the accent tint so the
+                        // "marked" cue is clearly the priority signal;
+                        // otherwise the filetype overlay drives the
+                        // filename color.
                         let text_color = if is_marked {
                             Color::Accent
-                        } else if entry.is_hidden {
-                            Color::Hidden
-                        } else if entry.is_dir {
-                            Color::Accent
                         } else {
-                            Color::Default
+                            filetype_color(entry, cx)
                         };
 
                         let icon_element = if entry.is_dir {
@@ -737,6 +737,23 @@ fn human_size(bytes: u64) -> String {
         format!("{:.1} GB", bytes as f64 / GB as f64)
     } else {
         format!("{:.1} TB", bytes as f64 / TB as f64)
+    }
+}
+
+/// Resolve the filename color for `entry` from the active theme overlay.
+/// Falls back to the conservative built-in palette (directory accent /
+/// hidden / default) when `FmThemeStore` is absent — that path is only
+/// hit in tests and in the brief window before `theme::init` runs.
+fn filetype_color(entry: &DirEntry, cx: &App) -> Color {
+    if let Some(store) = cx.try_global::<FmThemeStore>() {
+        return store.color_for(entry);
+    }
+    if entry.is_dir {
+        Color::Accent
+    } else if entry.is_hidden {
+        Color::Hidden
+    } else {
+        Color::Default
     }
 }
 

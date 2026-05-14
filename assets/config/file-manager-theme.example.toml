@@ -1,0 +1,31 @@
+# File-manager filetype-color overlay.
+#
+# Drop at `~/.config/codon/file-manager-theme.toml` (or wherever
+# `$XDG_CONFIG_HOME` points). Codon reads it at startup and re-reads it
+# on every save, so live edits take effect without restarting.
+#
+# Two tables:
+#   [filetype]  extension -> color token (or ".name" -> color for exact
+#               filenames like ".env")
+#   [special]   directory / executable / dotfile / default category
+#               overrides — they win over the extension table in that
+#               order.
+#
+# Color tokens map onto `ui::Color`, which resolves against the active
+# theme so dark/light themes pick up the matching shade:
+#
+#   default, muted, accent, disabled, hidden, hint, info, success,
+#   warning, error, conflict, created, modified, deleted
+#
+# Unknown tokens are ignored (and logged once).
+
+[filetype]
+# rs    = "warning"
+# md    = "info"
+# ".env" = "muted"     # leading-dot key = exact filename match
+
+[special]
+# directory  = "accent"
+# executable = "success"
+# dotfile    = "disabled"
+# default    = "default"
