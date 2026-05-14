@@ -41,7 +41,7 @@ pub use workspace::codon_jump_clickable::{
 };
 use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
 use workspace::{
-    ModalView, Workspace,
+    Event as WorkspaceEvent, ModalView, Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
 };
 
@@ -346,7 +346,7 @@ pub enum JumpKind {
 pub struct JumpCandidate {
     pub bounds: Bounds<Pixels>,
     pub kind: JumpKind,
-    pub action: Box<dyn FnOnce(&mut Window, &mut App) + Send>,
+    pub action: Box<dyn FnOnce(&mut Window, &mut App)>,
 }
 
 impl std::fmt::Debug for JumpCandidate {
@@ -576,6 +576,25 @@ impl JumpOverlay {
         };
         let mut candidates = JumpRegistry::collect_all(cx, &ctx);
 
+        // Drain anything registered via `.jump_target(...)` into the
+        // candidate set. The clickable registry has no provider
+        // representation today — the wrapper pushes per paint and the
+        // overlay drains here at open time. Clickable targets are
+        // excluded from URL mode (a button doesn't have a URL anyone
+        // would want to copy/open).
+        if !matches!(mode, JumpMode::Url) {
+            for (bounds, on_click) in take_clickables() {
+                let on_click = on_click.clone();
+                candidates.push(JumpCandidate {
+                    bounds,
+                    kind: JumpKind::Clickable,
+                    action: Box::new(move |window, cx| {
+                        on_click(window, cx);
+                    }),
+                });
+            }
+        }
+
         // Belt-and-suspenders viewport clip. Even with per-provider
         // freshness gating, a misbehaving provider could still yield
         // bounds outside the visible window — drop them up front so
@@ -611,12 +630,29 @@ impl JumpOverlay {
             .collect();
 
         let workspace_handle = cx.entity().downgrade();
+        let workspace_entity_strong = cx.entity();
+        let dismiss_on_scroll = config.dismiss_on_scroll;
         workspace_entity.toggle_modal(window, cx, |_window, cx| {
-            // TODO(jump-config-toml): dismiss on workspace scroll.
-            // The current Workspace::Event enum has no scroll event;
-            // add one or pivot to per-pane subscriptions when this
-            // task lands.
-            let workspace_subscription = None;
+            // `Workspace::Event::Scrolled` is the dismissal signal, but
+            // the vendored Zed side doesn't yet forward pane-scroll
+            // events into `notify_scrolled` — without that plumbing the
+            // subscription compiles and runs but only fires when something
+            // explicitly calls `Workspace::notify_scrolled`. Wiring the
+            // per-pane sources is the follow-up that completes the
+            // `dismiss_on_scroll` story.
+            let workspace_subscription = if dismiss_on_scroll {
+                Some(cx.subscribe(
+                    &workspace_entity_strong,
+                    |this: &mut Self, _workspace, event: &WorkspaceEvent, cx| {
+                        if matches!(event, WorkspaceEvent::Scrolled) && !this.dismissed {
+                            this.dismissed = true;
+                            cx.emit(gpui::DismissEvent);
+                        }
+                    },
+                ))
+            } else {
+                None
+            };
             Self {
                 focus_handle: cx.focus_handle(),
                 mode,
