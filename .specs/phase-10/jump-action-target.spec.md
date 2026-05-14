@@ -8,7 +8,7 @@ summary: >
   in codon-keymap + curated cheatsheet entry. Activates the
   overlay covering Word + Url + Clickable candidates.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-jump-targets
 aspects: [action, keymap-binding, resolver-arm]

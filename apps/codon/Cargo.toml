@@ -39,6 +39,7 @@ collections.workspace = true
 codon-agent.workspace = true
 codon-command-palette.workspace = true
 codon-config.workspace = true
+codon-jump.workspace = true
 codon-keymap.workspace = true
 codon-mode.workspace = true
 codon-pickers.workspace = true

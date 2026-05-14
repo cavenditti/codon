@@ -75,9 +75,10 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-k" = "vim::ResizePaneUp"
 "cmd-k shift-l" = "vim::ResizePaneRight"
 
-# Pane navigation (cmd-k h/j/k/l) — kept for back-compat, equivalent to ctrl-*
+# Pane navigation (cmd-k h/k/l) — kept for back-compat, equivalent to ctrl-*.
+# `cmd-k j` is repurposed for the jump-hint overlay below; use `ctrl-j` for
+# pane-down navigation under the cmd-k prefix path.
 "cmd-k h" = "workspace::ActivatePaneLeft"
-"cmd-k j" = "workspace::ActivatePaneDown"
 "cmd-k k" = "workspace::ActivatePaneUp"
 "cmd-k l" = "workspace::ActivatePaneRight"
 
@@ -141,6 +142,11 @@ const DEFAULT_KEYMAP: &str = r#"
 # leaves `d` itself reserved for the diff viewer above).
 "cmd-k d d" = "codon_session::DiffOpen"
 "cmd-k d g" = "diagnostics::Deploy"
+
+# Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
+# covers every visible word / URL / clickable; the URL-only variant is
+# `cmd-k u`.
+"cmd-k j" = "codon_jump::JumpToTarget"
 
 # Help / cheatsheet
 "cmd-k f1" = "codon_keymap::ShowKeymap"
@@ -432,6 +438,9 @@ fn resolve_binding(
         // Helix jump-to-word — overlay-label two-letter jump. In
         // Visual mode the same action extends the selection.
         "vim::HelixJumpToWord" => bind!(vim::HelixJumpToWord),
+
+        // Codon jump-hint overlay (Vimium-style, window-wide).
+        "codon_jump::JumpToTarget" => bind!(codon_jump::JumpToTarget),
 
         // Workspace
         "workspace::NewTerminal" => bind!(workspace::NewTerminal { local: false }),

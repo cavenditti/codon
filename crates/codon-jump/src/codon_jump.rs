@@ -24,7 +24,7 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, App, BorrowAppContext, Bounds, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, Global, InteractiveElement, IntoElement, KeyContext, KeyDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Window, deferred, div,
+    Pixels, Point, Render, SharedString, Styled, Subscription, Window, actions, deferred, div,
     prelude::FluentBuilder, px,
 };
 
@@ -34,6 +34,15 @@ pub use workspace::codon_jump_clickable::{
 };
 use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
 use workspace::{ModalView, Workspace};
+
+actions!(
+    codon_jump,
+    [
+        /// Open the jump-hint overlay over the active workspace covering
+        /// every kind of candidate (words, URLs, clickables).
+        JumpToTarget,
+    ]
+);
 
 /// The default label alphabet — lowercase `a..z`. 26² = 676 two-char
 /// labels before falling back to 3-char.
@@ -677,6 +686,22 @@ pub fn init(cx: &mut App) {
 // them there avoids a dependency cycle between `codon-jump` (which
 // depends on `workspace::Workspace + ModalView`) and the vendored Zed
 // UI crates that adopt `.jump_target(...)`.
+
+/// Wire codon-jump's workspace-scoped action handlers. Call from the
+/// workspace initialization hook, mirroring
+/// `codon_session::actions::register_for_workspace`.
+pub fn register_for_workspace(workspace: &mut Workspace) {
+    workspace.register_action(handle_jump_to_target);
+}
+
+fn handle_jump_to_target(
+    workspace: &mut Workspace,
+    _: &JumpToTarget,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    JumpOverlay::open(JumpMode::Target, workspace, window, cx);
+}
 
 #[cfg(test)]
 mod tests {
