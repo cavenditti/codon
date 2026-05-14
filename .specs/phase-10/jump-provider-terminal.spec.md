@@ -9,7 +9,7 @@ summary: >
   as JumpCandidate entries with focus + alacritty-select / copy
   actions.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-pane-terminal
 aspects: [terminal-word-provider, terminal-url-provider]

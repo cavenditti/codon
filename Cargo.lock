@@ -18339,6 +18339,7 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "breadcrumbs",
+ "codon-jump",
  "codon-mode",
  "collections",
  "db",
