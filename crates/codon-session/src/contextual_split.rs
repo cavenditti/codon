@@ -146,6 +146,7 @@ fn split_with_file_manager(
     let new_pane = workspace.split_pane(active_pane, direction, window, cx);
 
     let fs = workspace.app_state().fs.clone();
+    let languages = Some(workspace.app_state().languages.clone());
     let weak_workspace = workspace.weak_handle();
     let project = workspace.project().clone();
 
@@ -166,7 +167,8 @@ fn split_with_file_manager(
             .detach_and_log_err(cx);
     }
 
-    let file_manager = cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
+    let file_manager =
+        cx.new(|cx| FileManager::new(dir, weak_workspace, fs, languages, window, cx));
     workspace.add_item(
         new_pane,
         Box::new(file_manager),
