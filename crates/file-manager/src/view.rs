@@ -1,7 +1,7 @@
 use git::status::FileStatus;
 use gpui::{
-    App, Context, IntoElement, ObjectFit, Render, SharedString, StyledImage, Window, div, img,
-    prelude::*, px, relative, uniform_list,
+    App, Context, FontWeight, IntoElement, ObjectFit, Render, SharedString, StyledImage, Window,
+    div, img, prelude::*, px, relative, uniform_list,
 };
 use theme::ActiveTheme;
 use ui::{
@@ -322,7 +322,11 @@ impl Render for FileManager {
         let current_col = uniform_list("file-list", entries.len(), {
             move |range, _window, cx| {
                 let theme = cx.theme();
-                let selected_bg = theme.colors().ghost_element_selected;
+                // Cursor row uses the active token (vs the dimmer
+                // `ghost_element_selected`) so the focused row pops at
+                // a glance — and stays distinguishable when it's also
+                // a marked row (the 2px accent stripe survives on top).
+                let selected_bg = theme.colors().ghost_element_active;
 
                 range
                     .map(|i| {
@@ -424,6 +428,9 @@ impl Render for FileManager {
                                             Label::new(entry.name.clone())
                                                 .size(LabelSize::Small)
                                                 .color(text_color)
+                                                .when(is_selected, |l| {
+                                                    l.weight(FontWeight::BOLD)
+                                                })
                                                 .single_line(),
                                         ),
                                     )
