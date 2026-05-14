@@ -854,6 +854,8 @@ impl Render for JumpOverlay {
             return div()
                 .key_context(key_context)
                 .track_focus(&self.focus_handle)
+                .absolute()
+                .inset_0()
                 .size_full();
         }
 
@@ -889,11 +891,21 @@ impl Render for JumpOverlay {
             None
         };
 
+        // `ModalLayer` returns our view bare when `render_bare()` is
+        // true — without the `.absolute().inset_0()` wrapper it
+        // applies to the standard modal path. Without that wrapper our
+        // root would slot into the workspace's flex layout as a sibling
+        // of the panes, with `size_full()` forcing the workspace's
+        // actual content to zero width and rendering everything black.
+        // Force absolute positioning here so the overlay floats above
+        // every pane and the workspace keeps its real layout intact.
         let mut root = div()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .occlude()
+            .absolute()
+            .inset_0()
             .size_full();
 
         for entry in &self.labeled {
