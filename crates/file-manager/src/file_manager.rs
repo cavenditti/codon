@@ -1265,16 +1265,43 @@ impl FileManager {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let in_filter_mode = matches!(self.pending_input, Some(PendingInput::Filter));
-        let has_filter = !self.filter_query.is_empty() || self.entries_unfiltered.is_some();
-        if !in_filter_mode && !has_filter {
+        // Esc always wins: dismiss any active input prompt, drop back to
+        // Normal mode, and clear a committed filter if one is showing.
+        // Mirrors `find`'s Esc — which the user calls out as the desired
+        // pattern — by being unconditional and idempotent.
+        let pending = self.pending_input.take();
+        let was_find_prompt = matches!(
+            pending,
+            Some(PendingInput::FindForward { .. } | PendingInput::FindBackward { .. })
+        );
+        let find_origin = match pending {
+            Some(PendingInput::FindForward { origin_index, .. })
+            | Some(PendingInput::FindBackward { origin_index, .. }) => Some(origin_index),
+            _ => None,
+        };
+        let had_pending = pending.is_some();
+        let had_filter = !self.filter_query.is_empty() || self.entries_unfiltered.is_some();
+        if !had_pending && !had_filter && self.pending_chord.is_none() && self.visual_anchor.is_none() {
             return;
         }
-        if in_filter_mode {
-            self.pending_input = None;
-            self.mode = PaneMode::Normal;
+        self.pending_chord = None;
+        if self.visual_anchor.is_some() && !was_find_prompt {
+            // Esc out of visual-line is a commit (mirrors helix); keep
+            // marks but drop the anchor so j/k stop extending.
+            self.visual_anchor = None;
         }
-        self.clear_filter();
+        self.mode = PaneMode::Normal;
+        if had_filter {
+            self.clear_filter();
+        }
+        if let Some(origin) = find_origin {
+            self.selected_index = cmp::min(
+                origin,
+                self.entries.len().saturating_sub(1),
+            );
+            self.ensure_visible();
+            self.update_preview_sync();
+        }
         cx.notify();
         cx.stop_propagation();
     }
