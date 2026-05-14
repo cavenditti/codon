@@ -43,11 +43,6 @@ actions!(
         HistoryForward,
         /// Show the choose-opener picker for the entry under the cursor.
         ChooseOpener,
-        /// Toggle the ranger-style info bar (perms / owner / size /
-        /// mtime + totals) above the status line.
-        ToggleRichInfo,
-        /// Toggle the contextual key-hints row under the status line.
-        ToggleHelpBar,
     ]
 );
 
@@ -243,6 +238,10 @@ pub struct FileManager {
     /// file. Reused across selection changes within the same file;
     /// rebuilt when the selected path changes.
     pub(crate) preview_editor: Option<PreviewEditorCache>,
+    /// True while Cmd is the only modifier currently held in this
+    /// window. Drives the bottom-bar Cmd-shortcut overlay; updated
+    /// via the `on_modifiers_changed` handler.
+    pub(crate) cmd_only_held: bool,
 }
 
 #[derive(Clone)]
@@ -307,6 +306,7 @@ impl FileManager {
         initial_dir: PathBuf,
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn fs::Fs>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -328,10 +328,6 @@ impl FileManager {
             .detach();
 
         let prefs = cx.try_global::<crate::prefs::FmPrefs>().cloned().unwrap_or_default();
-
-        let language_registry = workspace
-            .upgrade()
-            .map(|ws| ws.read(cx).app_state().languages.clone());
 
         let mut this = Self {
             focus_handle,
@@ -367,6 +363,7 @@ impl FileManager {
             shell_running: None,
             language_registry,
             preview_editor: None,
+            cmd_only_held: false,
         };
         this.reload_entries_sync();
         // Register the jump provider with codon-jump's global registry
@@ -713,7 +710,18 @@ impl FileManager {
         }
 
         let editor = cx.new(|cx| {
-            let mut editor = editor::Editor::for_buffer(buffer, None, window, cx);
+            let multi_buffer = cx.new(|cx| multi_buffer::MultiBuffer::singleton(buffer, cx));
+            let mut editor = editor::Editor::new(
+                editor::EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: editor::SizingBehavior::SizeByContent,
+                },
+                multi_buffer,
+                None,
+                window,
+                cx,
+            );
             editor.set_read_only(true);
             editor.set_show_gutter(false, cx);
             editor.set_show_line_numbers(false, cx);
@@ -3244,32 +3252,22 @@ impl FileManager {
         cx.notify();
     }
 
-    pub(crate) fn toggle_rich_info(
+    /// React to a modifier-only key change (no character key pressed).
+    /// Used by the bottom-bar overlay: when Cmd is the only modifier
+    /// held, the bar swaps its left segments for a general-shortcut
+    /// row; any other modifier combination drops back to info.
+    pub(crate) fn handle_modifiers_changed(
         &mut self,
-        _: &ToggleRichInfo,
+        event: &gpui::ModifiersChangedEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let value = !cx
-            .try_global::<crate::prefs::FmPrefs>()
-            .map(|p| p.show_rich_info)
-            .unwrap_or(true);
-        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_show_rich_info(value));
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_help_bar(
-        &mut self,
-        _: &ToggleHelpBar,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let value = !cx
-            .try_global::<crate::prefs::FmPrefs>()
-            .map(|p| p.show_help_bar)
-            .unwrap_or(true);
-        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_show_help_bar(value));
-        cx.notify();
+        let m = event.modifiers;
+        let cmd_only = m.platform && !m.control && !m.alt && !m.shift && !m.function;
+        if self.cmd_only_held != cmd_only {
+            self.cmd_only_held = cmd_only;
+            cx.notify();
+        }
     }
 
     fn toggle_gitignored(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3349,7 +3347,10 @@ impl Item for FileManager {
         let dir = self.current_dir.clone();
         let workspace = self.workspace.clone();
         let fs = self.fs.clone();
-        Task::ready(Some(cx.new(|cx| Self::new(dir, workspace, fs, window, cx))))
+        let languages = self.language_registry.clone();
+        Task::ready(Some(
+            cx.new(|cx| Self::new(dir, workspace, fs, languages, window, cx)),
+        ))
     }
 
     fn can_split(&self) -> bool {
@@ -4280,9 +4281,11 @@ fn handle_reveal(
     }
 
     let fs = workspace.app_state().fs.clone();
+    let languages = Some(workspace.app_state().languages.clone());
     let weak_workspace = workspace.weak_handle();
-    let file_manager =
-        cx.new(|cx| FileManager::new(target_dir.clone(), weak_workspace, fs, window, cx));
+    let file_manager = cx.new(|cx| {
+        FileManager::new(target_dir.clone(), weak_workspace, fs, languages, window, cx)
+    });
     if let Some(name) = select_name {
         file_manager.update(cx, |fm, cx| fm.select_entry_by_name(&name, cx));
     }
@@ -4322,7 +4325,9 @@ fn open_file_manager(
             .detach_and_log_err(cx);
     }
 
-    let file_manager = cx.new(|cx| FileManager::new(dir, weak_workspace, fs, window, cx));
+    let languages = Some(workspace.app_state().languages.clone());
+    let file_manager =
+        cx.new(|cx| FileManager::new(dir, weak_workspace, fs, languages, window, cx));
     workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
 }
 

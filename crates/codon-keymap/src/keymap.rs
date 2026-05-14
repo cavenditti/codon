@@ -170,11 +170,6 @@ const DEFAULT_KEYMAP: &str = r#"
 # handling already triggers the picker; this binding keeps `O` visible
 # in the cheatsheet and lets users rebind it from `codon.toml`.
 "shift-o" = "file_manager::ChooseOpener"
-# Toggle the ranger-style info bar (perms / owner / size / mtime +
-# totals) above the status line, and the contextual help row beneath
-# it. Persist via `~/.local/state/codon/file-manager-prefs.toml`.
-"cmd-i" = "file_manager::ToggleRichInfo"
-"cmd-?" = "file_manager::ToggleHelpBar"
 
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
@@ -466,8 +461,6 @@ fn resolve_binding(
         // File manager
         "file_manager::Open" => bind!(file_manager::Open),
         "file_manager::ChooseOpener" => bind!(file_manager::ChooseOpener),
-        "file_manager::ToggleRichInfo" => bind!(file_manager::ToggleRichInfo),
-        "file_manager::ToggleHelpBar" => bind!(file_manager::ToggleHelpBar),
 
         // Codon session
         "codon_session::SessionNew" => bind!(codon_session::SessionNew),

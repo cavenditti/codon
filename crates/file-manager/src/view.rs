@@ -318,7 +318,7 @@ impl Render for FileManager {
             .filter(|e| !e.is_dir)
             .map(|e| e.size)
             .sum();
-        let info_bar_state = RichInfoBarState {
+        let bottom_bar_state = BottomBarState {
             entry: focused_entry.clone(),
             child_count: focused_child_count,
             marked_count,
@@ -326,26 +326,17 @@ impl Render for FileManager {
             listing_total_size,
             listing_count: entry_count,
             visual_mode: self.visual_anchor.is_some(),
+            selected_index,
         };
-        let status_text = {
-            let position = if entry_count > 0 {
-                format!("{}/{}", selected_index + 1, entry_count)
-            } else {
-                format!("0/{entry_count}")
-            };
-            let mut parts = vec![dir_display, position];
-            if self.visual_anchor.is_some() {
-                parts.push(format!("VISUAL ({marked_count})"));
-            } else if marked_count > 0 {
-                parts.push(format!("{marked_count} marked"));
-            }
-            parts.join(" | ")
+        // Pending-input contextual hints outrank the Cmd-held overlay;
+        // when neither applies, the bar falls back to entry info.
+        let bottom_left_mode = if let Some(hints) = contextual_help_hints(self) {
+            BottomBarLeft::ContextualHints(hints)
+        } else if self.cmd_only_held {
+            BottomBarLeft::CmdShortcuts(general_shortcut_hints())
+        } else {
+            BottomBarLeft::Info
         };
-        let help_hints = contextual_help_hints(self);
-        let (show_rich_info, show_help_bar) = cx
-            .try_global::<crate::prefs::FmPrefs>()
-            .map(|p| (p.show_rich_info, p.show_help_bar))
-            .unwrap_or((true, true));
         let error_message = self.error_message.clone();
         let shell_banner = self
             .shell_running
@@ -368,7 +359,8 @@ impl Render for FileManager {
             .as_ref()
             .map(|needle| count_find_matches(&self.entries, needle))
             .unwrap_or(0);
-        let header_chips = HeaderChipState {
+        let top_bar = TopBarState {
+            dir_path: dir_display,
             sort: self.sort,
             reverse: self.reverse,
             filter_query: if filter_active {
@@ -557,10 +549,9 @@ impl Render for FileManager {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
-            .on_action(cx.listener(Self::toggle_rich_info))
-            .on_action(cx.listener(Self::toggle_help_bar))
             .on_key_down(cx.listener(Self::handle_key_down))
-            .child(render_header_chips(&header_chips, cx))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .child(render_top_bar(&top_bar, cx))
             .when(filter_committed, |this| {
                 this.child(
                     h_flex()
@@ -658,24 +649,7 @@ impl Render for FileManager {
                         .child(Label::new(msg).size(LabelSize::Small).color(Color::Error)),
                 )
             })
-            .when(show_rich_info, |this| {
-                this.child(render_rich_info_bar(&info_bar_state, cx))
-            })
-            .child(
-                h_flex()
-                    .px(px(8.))
-                    .py(px(1.))
-                    .border_t_1()
-                    .border_color(border_color)
-                    .child(
-                        Label::new(status_text)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-            .when(show_help_bar, |this| {
-                this.child(render_help_bar(&help_hints, cx))
-            })
+            .child(render_bottom_bar(&bottom_bar_state, bottom_left_mode, cx))
     }
 }
 
@@ -933,7 +907,8 @@ fn human_size(bytes: u64) -> String {
 /// Snapshot of the header-chip inputs. Built once per render in
 /// `FileManager::render` and handed to `render_header_chips` so the
 /// helper stays free of `&FileManager` plumbing.
-struct HeaderChipState {
+struct TopBarState {
+    dir_path: String,
     sort: crate::prefs::SortMode,
     reverse: bool,
     filter_query: Option<String>,
@@ -942,10 +917,9 @@ struct HeaderChipState {
     show_hidden: bool,
 }
 
-/// Snapshot of every signal the rich info bar needs. Kept separate so
-/// `render_rich_info_bar` doesn't need a `FileManager` borrow during
-/// layout.
-pub(crate) struct RichInfoBarState {
+/// Snapshot of every signal the bottom bar's *info* mode needs. Kept
+/// separate so the renderer doesn't need a `FileManager` borrow.
+pub(crate) struct BottomBarState {
     pub entry: Option<DirEntry>,
     pub child_count: Option<usize>,
     pub marked_count: usize,
@@ -953,15 +927,103 @@ pub(crate) struct RichInfoBarState {
     pub listing_total_size: u64,
     pub listing_count: usize,
     pub visual_mode: bool,
+    pub selected_index: usize,
+}
+
+/// Which content occupies the bottom bar's left half this frame. The
+/// renderer picks one of these and the shell (padding / border / bg)
+/// stays identical across modes so toggling doesn't reflow.
+pub(crate) enum BottomBarLeft {
+    /// Default — focused-entry segments (perms / owner / size / mtime /
+    /// name).
+    Info,
+    /// Task-driven hints (open prompt, visual range, marked set).
+    /// Outranks `CmdShortcuts` when both apply.
+    ContextualHints(Vec<(&'static str, &'static str)>),
+    /// General shortcut cheatsheet shown while Cmd is the only modifier
+    /// held in the window.
+    CmdShortcuts(Vec<(&'static str, &'static str)>),
 }
 
 /// Ranger-style info row above the status line: focused entry's
 /// permissions / owner / size / mtime, plus listing/selection totals on
 /// the right. Reads dense at a glance without crowding the status bar.
-pub(crate) fn render_rich_info_bar(state: &RichInfoBarState, cx: &App) -> impl IntoElement {
+pub(crate) fn render_bottom_bar(
+    state: &BottomBarState,
+    left_mode: BottomBarLeft,
+    cx: &App,
+) -> impl IntoElement {
     let theme = cx.theme();
     let border_color = theme.colors().border;
 
+    let right_segments: Vec<String> = {
+        let position = if state.listing_count > 0 {
+            format!("{}/{}", state.selected_index + 1, state.listing_count)
+        } else {
+            format!("0/{}", state.listing_count)
+        };
+        if state.marked_count > 0 || state.visual_mode {
+            let mut v = Vec::new();
+            if state.visual_mode {
+                v.push(format!("VISUAL ({})", state.marked_count));
+            } else {
+                v.push(format!("{} marked", state.marked_count));
+            }
+            if state.marked_total_size > 0 {
+                v.push(human_size(state.marked_total_size));
+            }
+            v.push(format!(
+                "/ {} files ({})",
+                state.listing_count,
+                human_size(state.listing_total_size),
+            ));
+            v.push(position);
+            v
+        } else {
+            vec![
+                format!(
+                    "{} entries ({})",
+                    state.listing_count,
+                    human_size(state.listing_total_size),
+                ),
+                position,
+            ]
+        }
+    };
+
+    let left_element: gpui::AnyElement = match left_mode {
+        BottomBarLeft::Info => render_bottom_left_info(state).into_any_element(),
+        BottomBarLeft::ContextualHints(hints) => {
+            render_bottom_left_hints(&hints).into_any_element()
+        }
+        BottomBarLeft::CmdShortcuts(hints) => {
+            render_bottom_left_hints(&hints).into_any_element()
+        }
+    };
+
+    h_flex()
+        .px(px(8.))
+        .py(px(1.))
+        .gap(px(8.))
+        .border_t_1()
+        .border_color(border_color)
+        .bg(theme.colors().editor_background)
+        .child(left_element)
+        .child(
+            h_flex()
+                .gap(px(6.))
+                .children(right_segments.into_iter().map(|s| {
+                    Label::new(SharedString::from(s))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element()
+                })),
+        )
+}
+
+/// Default left half — the rich info segments for the focused entry.
+/// Mirrors what the standalone rich-info bar used to show.
+fn render_bottom_left_info(state: &BottomBarState) -> impl IntoElement {
     let mut left_segments: Vec<String> = Vec::new();
     if let Some(entry) = state.entry.as_ref() {
         let perms = format_permissions(entry.is_dir, entry.is_symlink, entry.mode);
@@ -986,73 +1048,25 @@ pub(crate) fn render_rich_info_bar(state: &RichInfoBarState, cx: &App) -> impl I
         left_segments.push("—".to_string());
     }
 
-    let right_segments: Vec<String> = if state.marked_count > 0 || state.visual_mode {
-        let mut v = Vec::new();
-        if state.visual_mode {
-            v.push(format!("VISUAL ({})", state.marked_count));
-        } else {
-            v.push(format!("{} marked", state.marked_count));
-        }
-        if state.marked_total_size > 0 {
-            v.push(human_size(state.marked_total_size));
-        }
-        v.push(format!(
-            "/ {} files ({})",
-            state.listing_count,
-            human_size(state.listing_total_size),
-        ));
-        v
-    } else {
-        vec![format!(
-            "{} entries ({})",
-            state.listing_count,
-            human_size(state.listing_total_size),
-        )]
-    };
-
     h_flex()
-        .px(px(8.))
-        .py(px(1.))
-        .gap(px(8.))
-        .border_t_1()
-        .border_color(border_color)
-        .bg(theme.colors().editor_background)
-        .child(
-            h_flex()
-                .flex_1()
-                .gap(px(6.))
-                .children(left_segments.into_iter().map(|s| {
-                    Label::new(SharedString::from(s))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element()
-                })),
-        )
-        .child(
-            h_flex()
-                .gap(px(6.))
-                .children(right_segments.into_iter().map(|s| {
-                    Label::new(SharedString::from(s))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element()
-                })),
-        )
+        .flex_1()
+        .min_w_0()
+        .gap(px(6.))
+        .children(left_segments.into_iter().map(|s| {
+            Label::new(SharedString::from(s))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        }))
 }
 
-/// Compact, context-aware help row of `key — verb` hints. Adapts to
-/// whether a prompt is open, marks are set, etc — so the surface is
-/// always relevant rather than a static cheat sheet.
-pub(crate) fn render_help_bar(hints: &[(&'static str, &'static str)], cx: &App) -> impl IntoElement {
-    let theme = cx.theme();
-    let border_color = theme.colors().border;
+/// Hint left half — `key — verb` pairs, used by both the contextual
+/// overlay (open prompt / visual / marks) and the Cmd-held cheatsheet.
+fn render_bottom_left_hints(hints: &[(&'static str, &'static str)]) -> impl IntoElement {
     h_flex()
-        .px(px(8.))
-        .py(px(1.))
+        .flex_1()
+        .min_w_0()
         .gap(px(10.))
-        .border_t_1()
-        .border_color(border_color)
-        .bg(theme.colors().editor_background)
         .children(hints.iter().map(|(k, v)| {
             h_flex()
                 .gap(px(3.))
@@ -1073,33 +1087,46 @@ pub(crate) fn render_help_bar(hints: &[(&'static str, &'static str)], cx: &App) 
 /// Pick which hints to surface based on what the user is currently
 /// doing. Order is "most relevant first" so the leftmost slots earn
 /// their pixels.
-pub(crate) fn contextual_help_hints(fm: &FileManager) -> Vec<(&'static str, &'static str)> {
+/// Hints surfaced by the bottom bar when the FM is in a task-driven
+/// state — an open prompt, an active visual-line range, or a non-empty
+/// marked set. Returns `None` when nothing contextual applies, so the
+/// caller can fall back to the default info segments.
+pub(crate) fn contextual_help_hints(
+    fm: &FileManager,
+) -> Option<Vec<(&'static str, &'static str)>> {
     if fm.pending_input.is_some() {
-        return vec![
+        return Some(vec![
             ("⏎", "confirm"),
             ("Esc", "cancel"),
             ("Tab", "complete"),
-        ];
+        ]);
     }
     if fm.visual_anchor.is_some() {
-        return vec![
+        return Some(vec![
             ("j/k", "extend"),
             ("⏎/Esc", "commit"),
             ("y", "yank"),
             ("d", "cut"),
             ("D", "trash"),
-        ];
+        ]);
     }
     if !fm.marked.is_empty() {
-        return vec![
+        return Some(vec![
             ("p", "paste"),
             ("y", "yank"),
             ("d", "cut"),
             ("D", "delete"),
             ("R", "bulk-rename"),
             ("uv", "clear marks"),
-        ];
+        ]);
     }
+    None
+}
+
+/// Static "what can I do here" cheatsheet shown in the bottom bar
+/// while Cmd is the only modifier held. Same key/verb format as
+/// `contextual_help_hints` so the renderer can share one helper.
+pub(crate) fn general_shortcut_hints() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hjkl", "nav"),
         ("⏎", "open"),
@@ -1164,10 +1191,12 @@ fn truncate_label(s: &str, max: usize) -> String {
     out
 }
 
-/// Header-chip row: one chip per active modifier, right-aligned. Sort
-/// is always present (dim when at the default `name ↓` setting);
-/// filter/find/hidden chips appear only when their state is non-default.
-fn render_header_chips(state: &HeaderChipState, cx: &App) -> impl IntoElement {
+/// Top bar: current directory path on the left + active chips on the
+/// right. Sort is always present (dim when at the default `name ↓`
+/// setting); filter / find / hidden chips appear only when their
+/// state is non-default. The path uses `min_w_0` + `single_line` so a
+/// long path truncates rather than pushing the chips off-screen.
+fn render_top_bar(state: &TopBarState, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let status = theme.status();
     let border_color = theme.colors().border;
@@ -1215,12 +1244,19 @@ fn render_header_chips(state: &HeaderChipState, cx: &App) -> impl IntoElement {
     h_flex()
         .px(px(8.))
         .py(px(2.))
-        .gap(px(4.))
+        .gap(px(6.))
         .border_b_1()
         .border_color(border_color)
         .bg(theme.colors().editor_background)
-        .justify_end()
-        .children(chips)
+        .child(
+            div().flex_1().min_w_0().child(
+                Label::new(SharedString::from(state.dir_path.clone()))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .single_line(),
+            ),
+        )
+        .child(h_flex().gap(px(4.)).children(chips))
 }
 
 /// One chip element: rounded, padded, single-line label. Used by every
