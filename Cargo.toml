@@ -6,6 +6,7 @@ members = [
     "crates/codon-agent",
     "crates/codon-command-palette",
     "crates/codon-config",
+    "crates/codon-jump",
     "crates/codon-keymap",
     "crates/codon-mode",
     "crates/codon-pickers",
@@ -347,6 +348,7 @@ file-manager = { path = "crates/file-manager" }
 codon-agent = { path = "crates/codon-agent" }
 codon-command-palette = { path = "crates/codon-command-palette" }
 codon-config = { path = "crates/codon-config" }
+codon-jump = { path = "crates/codon-jump", version = "0.1.0" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
 codon-pickers = { path = "crates/codon-pickers" }

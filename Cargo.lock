@@ -3470,6 +3470,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-jump"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "codon-keymap"
 version = "0.1.0"
 dependencies = [

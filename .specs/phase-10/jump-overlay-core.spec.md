@@ -8,7 +8,7 @@ summary: >
   modal, `JumpRegistry` global, `JumpProvider` trait, label
   alphabet + assignment, and the two-keystroke capture loop.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-overlay-core
   - REQ:codon/jump-hints#c-provider-trait
