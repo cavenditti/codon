@@ -16,7 +16,8 @@ mod view;
 
 pub use file_manager::{
     ChooseOpener, CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, GotoPath,
-    HistoryBack, HistoryForward, MoveMarked, Open, RenameEntry, Reveal, ToggleMark, YankPath,
+    HistoryBack, HistoryForward, MoveMarked, Open, RenameEntry, Reveal, ToggleHelpBar,
+    ToggleMark, ToggleRichInfo, YankPath,
 };
 pub use openers::{Opener, OpenerStore};
 

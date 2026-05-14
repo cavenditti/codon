@@ -59,12 +59,19 @@ pub struct FmPrefs {
     pub sort: SortMode,
     #[serde(default)]
     pub reverse: bool,
-    #[serde(default)]
+    #[serde(default = "default_line_mode")]
     pub line_mode: LineMode,
     #[serde(default = "default_show_gitignored")]
     pub show_gitignored: bool,
     #[serde(default = "default_preview_fraction")]
     pub preview_fraction: f32,
+    /// Show the ranger-style info bar (perms / owner / size / mtime
+    /// for the focused entry + totals) above the status line.
+    #[serde(default = "default_true")]
+    pub show_rich_info: bool,
+    /// Show the contextual key-hints row under the status line.
+    #[serde(default = "default_true")]
+    pub show_help_bar: bool,
 }
 
 fn default_show_gitignored() -> bool {
@@ -75,14 +82,27 @@ fn default_preview_fraction() -> f32 {
     PREVIEW_FRACTION_DEFAULT
 }
 
+/// Default meta column shows file sizes — denser and closer to ranger
+/// than the old `None` default. Cycling `M` still rotates through the
+/// other modes.
+fn default_line_mode() -> LineMode {
+    LineMode::Size
+}
+
+fn default_true() -> bool {
+    true
+}
+
 impl Default for FmPrefs {
     fn default() -> Self {
         Self {
             sort: SortMode::default(),
             reverse: false,
-            line_mode: LineMode::default(),
+            line_mode: default_line_mode(),
             show_gitignored: true,
             preview_fraction: PREVIEW_FRACTION_DEFAULT,
+            show_rich_info: true,
+            show_help_bar: true,
         }
     }
 }
@@ -132,6 +152,16 @@ impl FmPrefs {
 
     pub fn set_preview_fraction(&mut self, value: f32) {
         self.preview_fraction = clamp_fraction(value);
+        self.save();
+    }
+
+    pub fn set_show_rich_info(&mut self, value: bool) {
+        self.show_rich_info = value;
+        self.save();
+    }
+
+    pub fn set_show_help_bar(&mut self, value: bool) {
+        self.show_help_bar = value;
         self.save();
     }
 
@@ -213,8 +243,12 @@ mod tests {
         let p = FmPrefs::default();
         assert_eq!(p.sort, SortMode::Name);
         assert!(!p.reverse);
-        assert_eq!(p.line_mode, LineMode::None);
+        // Default flipped from `None` to `Size` so the meta column
+        // reads dense out of the box (ranger-style).
+        assert_eq!(p.line_mode, LineMode::Size);
         assert!(p.show_gitignored);
+        assert!(p.show_rich_info);
+        assert!(p.show_help_bar);
         assert!((p.preview_fraction - PREVIEW_FRACTION_DEFAULT).abs() < f32::EPSILON);
     }
 
@@ -226,6 +260,8 @@ mod tests {
             line_mode: LineMode::Permissions,
             show_gitignored: false,
             preview_fraction: 0.5,
+            show_rich_info: false,
+            show_help_bar: false,
         };
         let s = toml::to_string_pretty(&p).expect("serialise");
         let parsed: FmPrefs = toml::from_str(&s).expect("parse");
@@ -233,6 +269,8 @@ mod tests {
         assert!(parsed.reverse);
         assert_eq!(parsed.line_mode, LineMode::Permissions);
         assert!(!parsed.show_gitignored);
+        assert!(!parsed.show_rich_info);
+        assert!(!parsed.show_help_bar);
         assert!((parsed.preview_fraction - 0.5).abs() < f32::EPSILON);
     }
 }

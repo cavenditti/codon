@@ -42,6 +42,11 @@ actions!(
         HistoryForward,
         /// Show the choose-opener picker for the entry under the cursor.
         ChooseOpener,
+        /// Toggle the ranger-style info bar (perms / owner / size /
+        /// mtime + totals) above the status line.
+        ToggleRichInfo,
+        /// Toggle the contextual key-hints row under the status line.
+        ToggleHelpBar,
     ]
 );
 
@@ -3137,6 +3142,34 @@ impl FileManager {
         self.line_mode = self.line_mode.next();
         let mode = self.line_mode;
         cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_line_mode(mode));
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_rich_info(
+        &mut self,
+        _: &ToggleRichInfo,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = !cx
+            .try_global::<crate::prefs::FmPrefs>()
+            .map(|p| p.show_rich_info)
+            .unwrap_or(true);
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_show_rich_info(value));
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_help_bar(
+        &mut self,
+        _: &ToggleHelpBar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = !cx
+            .try_global::<crate::prefs::FmPrefs>()
+            .map(|p| p.show_help_bar)
+            .unwrap_or(true);
+        cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_show_help_bar(value));
         cx.notify();
     }
 

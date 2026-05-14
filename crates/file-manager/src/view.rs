@@ -130,14 +130,14 @@ impl FileManager {
         dimmed: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let theme = cx.theme();
-        let bg = theme.colors().surface_background;
         let line_mode = self.line_mode;
 
+        // No explicit bg — the root container paints the panel color
+        // once and the columns inherit it, so the three sub-panels
+        // blend into one continuous surface (no card-vs-window contrast).
         v_flex()
             .flex_1()
             .overflow_hidden()
-            .bg(bg)
             .py(px(2.))
             .children(
                 entries
@@ -148,14 +148,11 @@ impl FileManager {
     }
 
     fn render_preview(&self, cx: &Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let bg = theme.colors().surface_background;
         let line_mode = self.line_mode;
 
         v_flex()
             .flex_1()
             .overflow_hidden()
-            .bg(bg)
             .py(px(2.))
             .child(match &self.preview {
                 Preview::Directory(entries) => div()
@@ -271,7 +268,10 @@ impl Render for FileManager {
 
         let theme = cx.theme();
         let border_color = theme.colors().border;
-        let bg = theme.colors().surface_background;
+        // Single unified background for the whole panel — columns,
+        // preview, and chrome all paint on the same surface so the FM
+        // reads as one panel, not three cards floating over the window.
+        let panel_bg = theme.colors().panel_background;
         let dir_display = self.current_dir.display().to_string();
         let entry_count = self.entries.len();
         let marked_count = self.marked.len();
@@ -281,16 +281,39 @@ impl Render for FileManager {
         let filter_committed =
             filter_active && !matches!(self.pending_input, Some(PendingInput::Filter));
         let filter_query = self.filter_query.clone();
-        let focused_meta = self.entries.get(self.selected_index).and_then(|e| {
+        let focused_entry = self.entries.get(self.selected_index).cloned();
+        let focused_child_count = focused_entry.as_ref().and_then(|e| {
             if e.is_dir {
                 match &self.preview {
-                    Preview::Directory(children) => Some(format!("{} items", children.len())),
+                    Preview::Directory(children) => Some(children.len()),
                     _ => None,
                 }
             } else {
-                Some(human_size(e.size))
+                None
             }
         });
+        let marked_total_size: u64 = self
+            .marked
+            .iter()
+            .filter_map(|i| self.entries.get(*i))
+            .filter(|e| !e.is_dir)
+            .map(|e| e.size)
+            .sum();
+        let listing_total_size: u64 = self
+            .entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.size)
+            .sum();
+        let info_bar_state = RichInfoBarState {
+            entry: focused_entry.clone(),
+            child_count: focused_child_count,
+            marked_count,
+            marked_total_size,
+            listing_total_size,
+            listing_count: entry_count,
+            visual_mode: self.visual_anchor.is_some(),
+        };
         let status_text = {
             let position = if entry_count > 0 {
                 format!("{}/{}", selected_index + 1, entry_count)
@@ -298,9 +321,6 @@ impl Render for FileManager {
                 format!("0/{entry_count}")
             };
             let mut parts = vec![dir_display, position];
-            if let Some(meta) = focused_meta {
-                parts.push(meta);
-            }
             if self.visual_anchor.is_some() {
                 parts.push(format!("VISUAL ({marked_count})"));
             } else if marked_count > 0 {
@@ -308,6 +328,11 @@ impl Render for FileManager {
             }
             parts.join(" | ")
         };
+        let help_hints = contextual_help_hints(self);
+        let (show_rich_info, show_help_bar) = cx
+            .try_global::<crate::prefs::FmPrefs>()
+            .map(|p| (p.show_rich_info, p.show_help_bar))
+            .unwrap_or((true, true));
         let error_message = self.error_message.clone();
         let shell_banner = self
             .shell_running
@@ -509,16 +534,18 @@ impl Render for FileManager {
             }
         })
         .size_full()
-        .bg(bg)
         .py(px(2.))
         .track_scroll(&self.scroll_handle);
 
         v_flex()
             .size_full()
+            .bg(panel_bg)
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
+            .on_action(cx.listener(Self::toggle_rich_info))
+            .on_action(cx.listener(Self::toggle_help_bar))
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(render_header_chips(&header_chips, cx))
             .when(filter_committed, |this| {
@@ -618,6 +645,9 @@ impl Render for FileManager {
                         .child(Label::new(msg).size(LabelSize::Small).color(Color::Error)),
                 )
             })
+            .when(show_rich_info, |this| {
+                this.child(render_rich_info_bar(&info_bar_state, cx))
+            })
             .child(
                 h_flex()
                     .px(px(8.))
@@ -632,6 +662,9 @@ impl Render for FileManager {
                             .color(Color::Muted),
                     ),
             )
+            .when(show_help_bar, |this| {
+                this.child(render_help_bar(&help_hints, cx))
+            })
     }
 }
 
@@ -868,6 +901,180 @@ struct HeaderChipState {
     find_query: Option<String>,
     find_match_count: usize,
     show_hidden: bool,
+}
+
+/// Snapshot of every signal the rich info bar needs. Kept separate so
+/// `render_rich_info_bar` doesn't need a `FileManager` borrow during
+/// layout.
+pub(crate) struct RichInfoBarState {
+    pub entry: Option<DirEntry>,
+    pub child_count: Option<usize>,
+    pub marked_count: usize,
+    pub marked_total_size: u64,
+    pub listing_total_size: u64,
+    pub listing_count: usize,
+    pub visual_mode: bool,
+}
+
+/// Ranger-style info row above the status line: focused entry's
+/// permissions / owner / size / mtime, plus listing/selection totals on
+/// the right. Reads dense at a glance without crowding the status bar.
+pub(crate) fn render_rich_info_bar(state: &RichInfoBarState, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let border_color = theme.colors().border;
+
+    let mut left_segments: Vec<String> = Vec::new();
+    if let Some(entry) = state.entry.as_ref() {
+        let perms = format_permissions(entry.is_dir, entry.is_symlink, entry.mode);
+        left_segments.push(perms);
+        let owner = format_owner(entry.uid, entry.gid);
+        if owner != "?:?" {
+            left_segments.push(owner);
+        }
+        if entry.is_dir {
+            match state.child_count {
+                Some(n) => left_segments.push(format!("{n} items")),
+                None => left_segments.push("dir".to_string()),
+            }
+        } else {
+            left_segments.push(human_size(entry.size));
+        }
+        if let Some(t) = entry.mtime {
+            left_segments.push(format_relative_time(t));
+        }
+        left_segments.push(entry.name.clone());
+    } else {
+        left_segments.push("—".to_string());
+    }
+
+    let right_segments: Vec<String> = if state.marked_count > 0 || state.visual_mode {
+        let mut v = Vec::new();
+        if state.visual_mode {
+            v.push(format!("VISUAL ({})", state.marked_count));
+        } else {
+            v.push(format!("{} marked", state.marked_count));
+        }
+        if state.marked_total_size > 0 {
+            v.push(human_size(state.marked_total_size));
+        }
+        v.push(format!(
+            "/ {} files ({})",
+            state.listing_count,
+            human_size(state.listing_total_size),
+        ));
+        v
+    } else {
+        vec![format!(
+            "{} entries ({})",
+            state.listing_count,
+            human_size(state.listing_total_size),
+        )]
+    };
+
+    h_flex()
+        .px(px(8.))
+        .py(px(1.))
+        .gap(px(8.))
+        .border_t_1()
+        .border_color(border_color)
+        .bg(theme.colors().editor_background)
+        .child(
+            h_flex()
+                .flex_1()
+                .gap(px(6.))
+                .children(left_segments.into_iter().map(|s| {
+                    Label::new(SharedString::from(s))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element()
+                })),
+        )
+        .child(
+            h_flex()
+                .gap(px(6.))
+                .children(right_segments.into_iter().map(|s| {
+                    Label::new(SharedString::from(s))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element()
+                })),
+        )
+}
+
+/// Compact, context-aware help row of `key — verb` hints. Adapts to
+/// whether a prompt is open, marks are set, etc — so the surface is
+/// always relevant rather than a static cheat sheet.
+pub(crate) fn render_help_bar(hints: &[(&'static str, &'static str)], cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let border_color = theme.colors().border;
+    h_flex()
+        .px(px(8.))
+        .py(px(1.))
+        .gap(px(10.))
+        .border_t_1()
+        .border_color(border_color)
+        .bg(theme.colors().editor_background)
+        .children(hints.iter().map(|(k, v)| {
+            h_flex()
+                .gap(px(3.))
+                .child(
+                    Label::new(SharedString::new_static(k))
+                        .size(LabelSize::Small)
+                        .color(Color::Accent),
+                )
+                .child(
+                    Label::new(SharedString::new_static(v))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element()
+        }))
+}
+
+/// Pick which hints to surface based on what the user is currently
+/// doing. Order is "most relevant first" so the leftmost slots earn
+/// their pixels.
+pub(crate) fn contextual_help_hints(fm: &FileManager) -> Vec<(&'static str, &'static str)> {
+    if fm.pending_input.is_some() {
+        return vec![
+            ("⏎", "confirm"),
+            ("Esc", "cancel"),
+            ("Tab", "complete"),
+        ];
+    }
+    if fm.visual_anchor.is_some() {
+        return vec![
+            ("j/k", "extend"),
+            ("⏎/Esc", "commit"),
+            ("y", "yank"),
+            ("d", "cut"),
+            ("D", "trash"),
+        ];
+    }
+    if !fm.marked.is_empty() {
+        return vec![
+            ("p", "paste"),
+            ("y", "yank"),
+            ("d", "cut"),
+            ("D", "delete"),
+            ("R", "bulk-rename"),
+            ("uv", "clear marks"),
+        ];
+    }
+    vec![
+        ("hjkl", "nav"),
+        ("⏎", "open"),
+        ("a/A", "new file/dir"),
+        ("r", "rename"),
+        ("d", "cut"),
+        ("y", "copy"),
+        ("v", "mark"),
+        ("/", "find"),
+        ("f", "filter"),
+        (".", "hidden"),
+        ("M", "info col"),
+        (";:", "cmd"),
+    ]
 }
 
 /// Count case-insensitive substring matches of `needle` against every
