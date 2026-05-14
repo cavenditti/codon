@@ -8,6 +8,8 @@ use ui::{
     Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 
+use codon_mode::{CodonModeTracker, PaneMode};
+
 use crate::file_manager::{
     ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
     format_hex_dump,
@@ -544,11 +546,13 @@ impl Render for FileManager {
                 )
             })
             .child(
-                div()
+                h_flex()
                     .px(px(8.))
                     .py(px(1.))
+                    .gap(px(6.))
                     .border_t_1()
                     .border_color(border_color)
+                    .child(render_mode_badge(cx))
                     .child(
                         Label::new(status_text)
                             .size(LabelSize::Small)
@@ -556,6 +560,34 @@ impl Render for FileManager {
                     ),
             )
     }
+}
+
+/// Footer mode badge: a compact rounded chip showing the active
+/// `CodonModeTracker` state. Reads from the global directly so any
+/// pane (vim editor, terminal, fm prompt) that updated the tracker is
+/// reflected without per-pane plumbing.
+fn render_mode_badge(cx: &App) -> impl IntoElement {
+    let tracker = cx.global::<CodonModeTracker>();
+    let mode = if tracker.command_active {
+        PaneMode::Command
+    } else {
+        tracker.mode
+    };
+    let status = cx.theme().status();
+    let (label, bg, fg) = match mode {
+        PaneMode::Normal => ("NOR", status.success_background, status.success),
+        PaneMode::Insert => ("INS", status.info_background, status.info),
+        PaneMode::Command => ("CMD", status.warning_background, status.warning),
+    };
+    div()
+        .px(px(6.))
+        .rounded_sm()
+        .bg(bg)
+        .child(
+            Label::new(label)
+                .size(LabelSize::Small)
+                .color(Color::Custom(fg)),
+        )
 }
 
 fn render_image_preview(info: &ImageInfo) -> impl IntoElement {

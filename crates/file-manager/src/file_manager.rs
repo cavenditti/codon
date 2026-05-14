@@ -282,6 +282,13 @@ impl FileManager {
         })
         .detach();
 
+        // Re-render the footer mode badge as the tracker flips between
+        // Normal / Insert / Command. We don't hold the Subscription —
+        // the panel lives for the lifetime of the app, so detaching is
+        // safe and avoids growing the struct.
+        cx.observe_global::<CodonModeTracker>(|_, cx| cx.notify())
+            .detach();
+
         let prefs = cx.try_global::<crate::prefs::FmPrefs>().cloned().unwrap_or_default();
 
         let mut this = Self {
