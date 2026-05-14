@@ -888,11 +888,6 @@ impl FileManager {
         } else {
             self.marked.insert(self.selected_index);
         }
-        // Move down after marking (yazi behavior)
-        if self.selected_index < self.entries.len().saturating_sub(1) {
-            self.selected_index += 1;
-            self.update_preview_sync();
-        }
         cx.notify();
     }
 
