@@ -461,6 +461,14 @@ fn resolve_binding(
         // File manager
         "file_manager::Open" => bind!(file_manager::Open),
         "file_manager::ChooseOpener" => bind!(file_manager::ChooseOpener),
+        "file_manager::SortByName" => bind!(file_manager::SortByName),
+        "file_manager::SortBySize" => bind!(file_manager::SortBySize),
+        "file_manager::SortByMtime" => bind!(file_manager::SortByMtime),
+        "file_manager::SortByBtime" => bind!(file_manager::SortByBtime),
+        "file_manager::SortByExtension" => bind!(file_manager::SortByExtension),
+        "file_manager::SortByNatural" => bind!(file_manager::SortByNatural),
+        "file_manager::SortByRandom" => bind!(file_manager::SortByRandom),
+        "file_manager::ToggleSortReverse" => bind!(file_manager::ToggleSortReverse),
 
         // Codon session
         "codon_session::SessionNew" => bind!(codon_session::SessionNew),
