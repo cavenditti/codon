@@ -379,16 +379,38 @@ impl Render for FileManager {
                         };
                         let meta = entry_meta_label(entry, line_mode);
 
+                        // Marked rows get a 2px left-edge stripe in
+                        // the accent color in addition to the bg tint.
+                        // The stripe survives when the cursor row also
+                        // tints — the bg color of the row swallows the
+                        // marked alpha but not the explicit stripe.
+                        let stripe_color = theme.colors().text_accent;
                         div()
                             .id(("file-entry", i))
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .px(px(4.))
+                                    .pr(px(4.))
                                     .py(px(1.))
                                     .gap(px(4.))
                                     .when(is_marked && !is_selected, |d| d.bg(marked_bg))
                                     .when(is_selected, |d| d.bg(selected_bg))
+                                    // Left edge: 2px stripe slot (in
+                                    // accent when marked, transparent
+                                    // otherwise) followed by 2px of
+                                    // breathing room. Keeps the row's
+                                    // text aligned regardless of mark
+                                    // state.
+                                    .child(if is_marked {
+                                        div()
+                                            .w(px(2.))
+                                            .flex_none()
+                                            .bg(stripe_color)
+                                            .into_any_element()
+                                    } else {
+                                        div().w(px(2.)).flex_none().into_any_element()
+                                    })
+                                    .child(div().w(px(2.)).flex_none())
                                     .child(
                                         div().w(px(12.)).child(
                                             Label::new(SharedString::new_static(git_glyph))
