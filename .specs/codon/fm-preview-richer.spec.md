@@ -38,4 +38,17 @@ The file manager preview pane SHOULD support:
   file size in human units, mime guess (from extension), and the
   first 256 bytes rendered as hex + ASCII side by side. Replaces the
   bare `[binary]` label.
+- {#c-syntax-highlight} for text files, render content through a
+  read-only `editor::Editor` so syntax highlighting matches what the
+  user sees when the file is opened. Language is resolved from the
+  workspace `LanguageRegistry` by file path (extension + filename
+  rules), loaded async so the preview doesn't block on first hit.
+  Files without a registered language render as plain (unhighlighted)
+  text. The editor entity is cached keyed by path so rapid `j`/`k`
+  scrolling reuses the same view instead of allocating per keystroke.
+- {#c-metadata-fallback} the binary fallback SHOULD surface a
+  human-readable type label derived from the mime guess (Audio,
+  Video, PDF, Font, …) above the hex dump, so non-renderable types
+  feel informative rather than opaque. This is metadata-only — no
+  decoding (audio duration, video codec, PDF page count) is required.
 :::

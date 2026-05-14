@@ -33,8 +33,8 @@ pub enum SortMode {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineMode {
-    #[default]
     None,
+    #[default]
     Size,
     Mtime,
     Permissions,

@@ -408,6 +408,7 @@ mod tests {
             mode,
             uid: None,
             gid: None,
+            child_count: None,
         }
     }
 
