@@ -303,6 +303,14 @@ pub enum FileManagerEvent {
 impl EventEmitter<FileManagerEvent> for FileManager {}
 
 impl FileManager {
+    /// Absolute path of the directory the file manager is currently
+    /// browsing. Used by codon-session's contextual split actions
+    /// (`SplitTerminal*` / `SplitFileManager*`) to seed the newly
+    /// opened pane with the caller's location.
+    pub fn current_directory(&self) -> &Path {
+        &self.current_dir
+    }
+
     pub fn new(
         initial_dir: PathBuf,
         workspace: WeakEntity<Workspace>,
