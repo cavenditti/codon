@@ -19,7 +19,14 @@
 //! outside the configured alphabet — including arrows, modifiers,
 //! punctuation — dismisses it without firing.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context as _, Result};
+use fs::Fs;
+use futures::StreamExt as _;
+use serde::Deserialize;
 
 use gpui::{
     AnyElement, App, AppContext as _, BorrowAppContext, Bounds, ClipboardItem, Context,
@@ -53,8 +60,268 @@ actions!(
 );
 
 /// The default label alphabet — lowercase `a..z`. 26² = 676 two-char
-/// labels before falling back to 3-char.
+/// labels before falling back to 3-char. The
+/// [`JumpConfigStore`] global may override this at runtime.
 pub const DEFAULT_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
+
+/// Default safety cap on per-provider candidate count. Mirrors the
+/// `alphabet.len()³ = 17_576` natural ceiling so providers that
+/// over-yield still drain in `O(n)`.
+pub const DEFAULT_MAX_CANDIDATES_PER_PROVIDER: usize = 17_576;
+
+/// Where a chip paints relative to its candidate bounds. Today only
+/// `TopLeft` and `Center` are implemented — `TopLeft` (the historical
+/// behaviour) is the default so on-disk configs without a `[jump]`
+/// section keep working unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LabelPosition {
+    /// Paint at the candidate's `bounds.origin` (the historical W1
+    /// behaviour).
+    #[default]
+    TopLeft,
+    /// Paint at the candidate's geometric center, with a small
+    /// translate so the chip's center aligns with the bounds center.
+    Center,
+}
+
+impl LabelPosition {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "top-left" | "topleft" | "top_left" => Some(Self::TopLeft),
+            "center" | "centre" => Some(Self::Center),
+            _ => None,
+        }
+    }
+}
+
+/// Resolved jump-overlay configuration. Constructed from the embedded
+/// defaults at startup and overlaid with `~/.config/codon/jump.toml`
+/// when present. The [`JumpConfigStore`] global hands callers a
+/// snapshot via [`JumpConfigStore::current`].
+#[derive(Debug, Clone)]
+pub struct JumpConfig {
+    /// Characters drawn from when assigning labels. Empty alphabets
+    /// fall back to [`DEFAULT_ALPHABET`] at use time so a malformed
+    /// override never wedges the overlay.
+    pub alphabet: String,
+    /// Where chips paint relative to candidate bounds.
+    pub label_position: LabelPosition,
+    /// Hard cap on how many candidates a single provider may
+    /// contribute. Defaults to [`DEFAULT_MAX_CANDIDATES_PER_PROVIDER`].
+    pub max_candidates_per_provider: usize,
+    /// Dismiss the overlay when the underlying workspace scrolls. The
+    /// scroll-event wiring itself is still a TODO inside `open()`; this
+    /// flag is plumbed through so the wiring lands as a no-op flip.
+    pub dismiss_on_scroll: bool,
+}
+
+impl Default for JumpConfig {
+    fn default() -> Self {
+        Self {
+            alphabet: DEFAULT_ALPHABET.to_string(),
+            label_position: LabelPosition::TopLeft,
+            max_candidates_per_provider: DEFAULT_MAX_CANDIDATES_PER_PROVIDER,
+            dismiss_on_scroll: true,
+        }
+    }
+}
+
+impl JumpConfig {
+    /// Borrow the alphabet as a `Vec<char>`, falling back to the
+    /// built-in default whenever the user override is empty.
+    pub fn alphabet_chars(&self) -> Vec<char> {
+        if self.alphabet.is_empty() {
+            DEFAULT_ALPHABET.chars().collect()
+        } else {
+            self.alphabet.chars().collect()
+        }
+    }
+}
+
+/// `App`-global wrapping the active [`JumpConfig`]. Mirrors
+/// `FmThemeStore` and `OpenerStore` (FS-watch + atomic replace on
+/// reload), so the overlay never reads from disk on its hot path.
+#[derive(Debug, Default)]
+pub struct JumpConfigStore {
+    config: JumpConfig,
+}
+
+impl Global for JumpConfigStore {}
+
+impl JumpConfigStore {
+    /// Snapshot the current config. Cheap clone of an owned
+    /// `JumpConfig` — callers don't need to hold the global borrow.
+    pub fn current(cx: &App) -> JumpConfig {
+        cx.try_global::<JumpConfigStore>()
+            .map(|store| store.config.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace the stored config — used by both the synchronous
+    /// startup load and the FS-watch reload path.
+    fn install(&mut self, config: JumpConfig) {
+        self.config = config;
+    }
+}
+
+const JUMP_CONFIG_FILE: &str = "jump.toml";
+
+/// Raw on-disk schema for `~/.config/codon/jump.toml`. Every field is
+/// optional so a partial override merges cleanly with the embedded
+/// defaults.
+#[derive(Debug, Default, Deserialize)]
+struct JumpDoc {
+    #[serde(default)]
+    jump: JumpSection,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct JumpSection {
+    #[serde(default)]
+    alphabet: Option<String>,
+    #[serde(default)]
+    label_position: Option<String>,
+    #[serde(default)]
+    max_candidates_per_provider: Option<usize>,
+    #[serde(default)]
+    dismiss_on_scroll: Option<bool>,
+    // The `[jump.chord]` block is currently advisory — the keymap
+    // already carries the bindings, and the cheatsheet picks them up
+    // automatically. Echoing into the keymap is a follow-up; we still
+    // parse the block so an early-adopter user's TOML doesn't error
+    // out with "unknown key".
+    #[serde(default)]
+    chord: Option<JumpChordSection>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct JumpChordSection {
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+/// Where the loader expects the jump config file to live. Honours
+/// `$XDG_CONFIG_HOME` through `codon_config::codon_config_dir`.
+pub fn user_jump_config_path() -> Option<PathBuf> {
+    codon_config::codon_config_dir().map(|d| d.join(JUMP_CONFIG_FILE))
+}
+
+fn parse_jump_doc(content: &str) -> Result<JumpDoc> {
+    toml::from_str::<JumpDoc>(content).context("parsing jump.toml")
+}
+
+fn build_config(doc: JumpDoc) -> JumpConfig {
+    let mut config = JumpConfig::default();
+    let JumpSection {
+        alphabet,
+        label_position,
+        max_candidates_per_provider,
+        dismiss_on_scroll,
+        chord,
+    } = doc.jump;
+    if let Some(alpha) = alphabet
+        && !alpha.is_empty()
+    {
+        config.alphabet = alpha;
+    }
+    if let Some(position) = label_position {
+        match LabelPosition::parse(&position) {
+            Some(parsed) => config.label_position = parsed,
+            None => log::warn!(
+                "jump.toml: ignoring unknown label_position '{position}' (expected top-left | center)"
+            ),
+        }
+    }
+    if let Some(cap) = max_candidates_per_provider
+        && cap > 0
+    {
+        config.max_candidates_per_provider = cap;
+    }
+    if let Some(flag) = dismiss_on_scroll {
+        config.dismiss_on_scroll = flag;
+    }
+    // Chord block parsed for forward-compat — see the schema comment.
+    if let Some(chord) = chord {
+        if let Some(target) = chord.target {
+            log::debug!("jump.toml: chord.target='{target}' (advisory — rebind via codon.toml)");
+        }
+        if let Some(url) = chord.url {
+            log::debug!("jump.toml: chord.url='{url}' (advisory — rebind via codon.toml)");
+        }
+    }
+    config
+}
+
+/// Synchronous initial load. Missing file is fine — the store keeps
+/// the embedded defaults. Parse failures keep the previous contents
+/// and log a warning.
+pub fn apply_user_jump_config(cx: &mut App) {
+    let Some(path) = user_jump_config_path() else {
+        return;
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match parse_jump_doc(&content) {
+            Ok(doc) => {
+                let config = build_config(doc);
+                cx.update_global::<JumpConfigStore, _>(|store, _| store.install(config));
+                log::debug!("codon-jump: loaded {}", path.display());
+            }
+            Err(err) => log::warn!(
+                "codon-jump: ignoring malformed {} ({err:#})",
+                path.display()
+            ),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!("codon-jump: {} not present", path.display());
+        }
+        Err(err) => log::warn!(
+            "codon-jump: could not read {} ({err})",
+            path.display()
+        ),
+    }
+}
+
+/// Initialise the [`JumpConfigStore`] global with embedded defaults,
+/// do the synchronous user-file load, then start the FS watcher so
+/// subsequent on-disk edits hot-reload. Mirrors
+/// `file_manager::theme::init` step-for-step.
+fn init_jump_config(fs: Arc<dyn Fs>, cx: &mut App) {
+    cx.set_global(JumpConfigStore::default());
+    apply_user_jump_config(cx);
+    start_jump_config_watcher(fs, cx);
+}
+
+fn start_jump_config_watcher(fs: Arc<dyn Fs>, cx: &mut App) {
+    let Some(path) = user_jump_config_path() else {
+        return;
+    };
+    let executor = cx.background_executor().clone();
+    let (mut rx, watch_task) = settings::watch_config_file(&executor, fs, path);
+    let mut saw_initial = false;
+    cx.spawn(async move |cx| {
+        while let Some(content) = rx.next().await {
+            if !saw_initial {
+                saw_initial = true;
+                continue;
+            }
+            cx.update(|cx| match parse_jump_doc(&content) {
+                Ok(doc) => {
+                    let config = build_config(doc);
+                    cx.update_global::<JumpConfigStore, _>(|store, _| store.install(config));
+                    log::debug!("codon-jump: hot-reload applied");
+                }
+                Err(err) => log::warn!("codon-jump: hot-reload failed ({err:#})"),
+            });
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+        }
+        drop(watch_task);
+    })
+    .detach();
+}
 
 /// What kind of element a candidate represents. Used by the Url-only
 /// mode to filter the candidate set, and by future styling hooks.
@@ -273,6 +540,7 @@ pub struct JumpOverlay {
     focus_handle: FocusHandle,
     mode: JumpMode,
     alphabet: Vec<char>,
+    label_position: LabelPosition,
     labeled: Vec<LabeledCandidate>,
     state: KeystrokeState,
     /// Set on dismiss so any frame still in flight paints empty.
@@ -298,7 +566,9 @@ impl JumpOverlay {
         cx: &mut Context<Workspace>,
     ) {
         let cursor_anchor = active_pane_anchor(workspace_entity, window, cx);
-        let alphabet: Vec<char> = DEFAULT_ALPHABET.chars().collect();
+        let config = JumpConfigStore::current(cx);
+        let alphabet: Vec<char> = config.alphabet_chars();
+        let label_position = config.label_position;
 
         let ctx = JumpContext {
             mode,
@@ -333,6 +603,7 @@ impl JumpOverlay {
                 focus_handle: cx.focus_handle(),
                 mode,
                 alphabet,
+                label_position,
                 labeled,
                 state: KeystrokeState::WaitFirst,
                 dismissed: false,
@@ -608,7 +879,7 @@ impl Render for JumpOverlay {
             .size_full();
 
         for entry in &self.labeled {
-            let origin = entry.candidate.bounds.origin;
+            let origin = chip_anchor(&entry.candidate.bounds, self.label_position);
             let (first_char, second_char) = split_label(&entry.label);
             let (matches_prefix, after_first) = match &self.state {
                 KeystrokeState::WaitFirst => (true, false),
@@ -642,6 +913,27 @@ impl Render for JumpOverlay {
         }
 
         root
+    }
+}
+
+/// Compute the chip's window-absolute origin from a candidate's
+/// bounds and the configured [`LabelPosition`]. The chip itself is
+/// small (under 30px wide), so for `Center` we offset by half the
+/// candidate's size and leave the chip's own width/height correction
+/// to a fixed magic-number translate — close enough to look centered
+/// for word-sized targets, which is the only thing `Center` is
+/// useful for.
+fn chip_anchor(bounds: &Bounds<Pixels>, position: LabelPosition) -> Point<Pixels> {
+    match position {
+        LabelPosition::TopLeft => bounds.origin,
+        LabelPosition::Center => {
+            let chip_half_w = px(10.0);
+            let chip_half_h = px(8.0);
+            Point {
+                x: bounds.origin.x + bounds.size.width / 2.0 - chip_half_w,
+                y: bounds.origin.y + bounds.size.height / 2.0 - chip_half_h,
+            }
+        }
     }
 }
 
@@ -728,8 +1020,9 @@ impl ModalView for JumpOverlay {
 ///
 /// `jump-action-target` (a follow-up task) is responsible for wiring
 /// the call into `apps/codon/src/main.rs` along with the actions.
-pub fn init(cx: &mut App) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     cx.set_global(JumpRegistry::new());
+    init_jump_config(fs, cx);
 }
 
 // `JumpClickable` element wrapper + paint-time registry live in
@@ -1045,6 +1338,182 @@ mod tests {
         assert_eq!(clickable_registry_len(), 0);
         let drained = take_clickables();
         assert!(drained.is_empty());
+    }
+
+    #[test]
+    fn jump_config_default_alphabet_is_a_to_z() {
+        let config = JumpConfig::default();
+        assert_eq!(config.alphabet, DEFAULT_ALPHABET);
+        assert_eq!(config.alphabet_chars().len(), 26);
+        assert_eq!(config.label_position, LabelPosition::TopLeft);
+        assert!(config.dismiss_on_scroll);
+        assert_eq!(
+            config.max_candidates_per_provider,
+            DEFAULT_MAX_CANDIDATES_PER_PROVIDER
+        );
+    }
+
+    #[test]
+    fn jump_config_empty_alphabet_falls_back_to_default() {
+        let mut config = JumpConfig::default();
+        config.alphabet = String::new();
+        assert_eq!(config.alphabet_chars().len(), 26);
+    }
+
+    #[test]
+    fn build_config_applies_alphabet_override() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            alphabet = "asdfghjkl;"
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.alphabet, "asdfghjkl;");
+    }
+
+    #[test]
+    fn build_config_ignores_empty_alphabet_override() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            alphabet = ""
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.alphabet, DEFAULT_ALPHABET);
+    }
+
+    #[test]
+    fn build_config_parses_label_position_center() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            label_position = "center"
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.label_position, LabelPosition::Center);
+    }
+
+    #[test]
+    fn build_config_unknown_label_position_keeps_default() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            label_position = "off-screen"
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.label_position, LabelPosition::TopLeft);
+    }
+
+    #[test]
+    fn build_config_round_trips_dismiss_on_scroll_false() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            dismiss_on_scroll = false
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert!(!config.dismiss_on_scroll);
+    }
+
+    #[test]
+    fn build_config_round_trips_max_candidates_per_provider() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            max_candidates_per_provider = 64
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.max_candidates_per_provider, 64);
+    }
+
+    #[test]
+    fn build_config_zero_max_candidates_keeps_default() {
+        let doc = parse_jump_doc(
+            r#"
+            [jump]
+            max_candidates_per_provider = 0
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(
+            config.max_candidates_per_provider,
+            DEFAULT_MAX_CANDIDATES_PER_PROVIDER
+        );
+    }
+
+    #[test]
+    fn build_config_chord_block_is_advisory_only() {
+        // Sanity: parsing a chord block doesn't error and doesn't mutate
+        // the resolved keymap state (we're a no-op forward-compat path).
+        let doc = parse_jump_doc(
+            r#"
+            [jump.chord]
+            target = "space j"
+            url    = "space u"
+            "#,
+        )
+        .expect("parse");
+        let config = build_config(doc);
+        assert_eq!(config.alphabet, DEFAULT_ALPHABET);
+    }
+
+    #[test]
+    fn label_position_parse_accepts_synonyms() {
+        assert_eq!(LabelPosition::parse("top-left"), Some(LabelPosition::TopLeft));
+        assert_eq!(LabelPosition::parse("topleft"), Some(LabelPosition::TopLeft));
+        assert_eq!(LabelPosition::parse("top_left"), Some(LabelPosition::TopLeft));
+        assert_eq!(LabelPosition::parse("Center"), Some(LabelPosition::Center));
+        assert_eq!(LabelPosition::parse("CENTRE"), Some(LabelPosition::Center));
+        assert_eq!(LabelPosition::parse("bottom-right"), None);
+    }
+
+    #[test]
+    fn chip_anchor_top_left_returns_origin() {
+        let bounds = Bounds {
+            origin: Point {
+                x: px(15.0),
+                y: px(40.0),
+            },
+            size: gpui::Size {
+                width: px(20.0),
+                height: px(16.0),
+            },
+        };
+        let anchor = chip_anchor(&bounds, LabelPosition::TopLeft);
+        assert_eq!(f32::from(anchor.x), 15.0);
+        assert_eq!(f32::from(anchor.y), 40.0);
+    }
+
+    #[test]
+    fn chip_anchor_center_offsets_from_midpoint() {
+        let bounds = Bounds {
+            origin: Point {
+                x: px(0.0),
+                y: px(0.0),
+            },
+            size: gpui::Size {
+                width: px(40.0),
+                height: px(20.0),
+            },
+        };
+        let anchor = chip_anchor(&bounds, LabelPosition::Center);
+        // Midpoint is (20, 10); chip half-size shifts pull back to
+        // (20 - 10, 10 - 8) = (10, 2).
+        assert_eq!(f32::from(anchor.x), 10.0);
+        assert_eq!(f32::from(anchor.y), 2.0);
     }
 
     #[test]

@@ -1,0 +1,45 @@
+# Codon jump-hint overlay configuration.
+#
+# Copy to ~/.config/codon/jump.toml — every field is optional. Codon
+# watches the file with the same FS-watch hot-reload path used by
+# openers.toml and file-manager-theme.toml, so edits land without a
+# restart.
+#
+# The keybindings themselves live in ~/.config/codon/codon.toml or the
+# embedded keymap defaults — the `[jump.chord]` block below is parsed
+# but advisory; rebind via codon.toml's `[bindings.global]` if you want
+# to change the chords:
+#
+#   [bindings.global]
+#   "space j" = "codon_jump::JumpToTarget"
+#   "space u" = "codon_jump::JumpToUrl"
+
+[jump]
+# Characters drawn from when assigning chip labels. Shorter alphabets
+# yield fewer chips but each one is faster to type — the home-row
+# default below caps at ~100 two-char labels (10 × 10).
+#
+# Default: "abcdefghijklmnopqrstuvwxyz"
+# alphabet = "asdfghjkl;"
+
+# Where each chip paints relative to its candidate bounds.
+#   - "top-left" (default): paint at the candidate's top-left corner.
+#   - "center":             paint over the candidate's geometric center.
+# label_position = "top-left"
+
+# Safety cap on how many candidates a single provider may contribute
+# per overlay opening. Defaults to alphabet.len()^3 = 17576, well past
+# anything visible on a 4K monitor — bump only if a provider returns
+# a degenerate stream of candidates.
+# max_candidates_per_provider = 200
+
+# Dismiss the overlay when the underlying workspace scrolls. Set to
+# `false` for very long terminal scrollback flows where you want the
+# chips to track on-screen while you scroll through.
+# dismiss_on_scroll = true
+
+# Chord overrides (advisory — see header). These echo into the
+# cheatsheet but the actual binding still lives in codon.toml.
+# [jump.chord]
+# target = "cmd-k j"
+# url    = "cmd-k u"

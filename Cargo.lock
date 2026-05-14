@@ -3475,9 +3475,15 @@ name = "codon-jump"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-config",
+ "fs",
+ "futures 0.3.32",
  "gpui",
  "log",
+ "serde",
+ "settings",
  "theme",
+ "toml 0.8.23",
  "ui",
  "workspace",
 ]

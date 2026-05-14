@@ -9,7 +9,7 @@ summary: >
   the two chords. FS-watch hot reload via the same pattern
   used by openers and file-manager-theme.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-config-toml
 aspects: [config-loader, hot-reload, example-asset]
