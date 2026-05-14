@@ -31,11 +31,16 @@ The codon keymap MUST:
 - {#c-jump-to-word-curated} include `g w` →
   `vim::HelixJumpToWord` in `[bindings.editor.normal]` so it
   appears in the cheatsheet and can be rebound from
-  `~/.config/codon/codon.toml`.
-- {#c-jump-extend-curated} include `g W` →
-  `vim::HelixExtendToWord` in `[bindings.editor.normal]` so the
-  visual-mode extend variant is also discoverable.
-- {#c-resolver-arms} expose resolver arms for both action names
-  in `resolve_binding` so a user override in `codon.toml` works
-  without depending on the upstream `vim.json` default.
+  `~/.config/codon/codon.toml`. The same action auto-extends
+  the selection when invoked in Visual mode — no separate
+  binding is needed.
+- {#c-jump-extend-curated} the Visual-mode extend behavior is
+  handled inside `HelixJumpToWord` itself (`Vim::mode.is_visual()`
+  switches to `HelixJumpBehaviour::Extend`); no separate
+  `HelixExtendToWord` action exists upstream and codon does
+  not introduce one.
+- {#c-resolver-arms} expose a resolver arm for
+  `"vim::HelixJumpToWord"` in `resolve_binding` so a user
+  override in `codon.toml` works without depending on the
+  upstream `vim.json` default.
 :::
