@@ -7,7 +7,7 @@ summary: >
   File-manager provider — one JumpCandidate per visible row.
   Action sets the cursor index. URL candidates skipped.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/jump-hints#c-pane-file-manager
 aspects: [fm-row-provider]

@@ -2,9 +2,9 @@ use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSou
 use fs::{copy_recursive, CopyOptions, RenameOptions};
 use git::status::FileStatus;
 use gpui::{
-    actions, prelude::*, Action, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, ScrollStrategy, SharedString, Task, UniformListScrollHandle, WeakEntity,
-    Window,
+    actions, point, prelude::*, Action, App, Bounds, ClipboardItem, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task,
+    UniformListScrollHandle, WeakEntity, Window,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -325,6 +325,12 @@ impl FileManager {
             shell_running: None,
         };
         this.reload_entries_sync();
+        // Register the jump provider with codon-jump's global registry
+        // so `cmd-k j` paints a chip on every visible file-manager row.
+        // The provider holds a WeakEntity, so the registry's
+        // `is_alive`-based pruning collects it once this FileManager
+        // drops — no explicit teardown needed.
+        crate::jump_provider::register(cx);
         this
     }
 
@@ -421,6 +427,107 @@ impl FileManager {
             self.update_preview_sync();
             cx.notify();
         }
+    }
+
+    /// Move the cursor to `row`, clamped to the entry list. Used by
+    /// the jump-hint overlay (`codon-jump`) when a label is dispatched
+    /// against a file-manager row.
+    pub fn set_cursor_index(&mut self, row: usize, cx: &mut Context<Self>) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let clamped = cmp::min(row, self.entries.len() - 1);
+        if clamped == self.selected_index {
+            return;
+        }
+        self.selected_index = clamped;
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, ScrollStrategy::Nearest);
+        self.update_preview_sync();
+        cx.notify();
+    }
+
+    /// Index of the topmost row currently inside the viewport. Reads
+    /// the `UniformListScrollHandle`'s base scroll state directly;
+    /// before the first paint (when the list hasn't laid out yet) the
+    /// `top_item` call falls back to 0, which is what the jump
+    /// provider wants for a freshly-opened panel.
+    pub fn first_visible_row(&self) -> usize {
+        let state = self.scroll_handle.0.borrow();
+        // If a `scroll_to_item` is deferred but not yet applied, prefer
+        // the target index so that hints assigned right after a `Ctrl-d`
+        // line up with where the user is about to see the list — the
+        // base handle's `top_item` still points at the pre-scroll row.
+        if let Some(deferred) = state.deferred_scroll_to_item.as_ref() {
+            return deferred.item_index.min(self.entries.len().saturating_sub(1));
+        }
+        state.base_handle.top_item()
+    }
+
+    /// Number of visible rows in the file-manager viewport, derived
+    /// from the captured item size. Returns `0` before the first
+    /// layout pass — callers (notably the jump provider) treat zero
+    /// rows as "no candidates".
+    pub fn visible_row_count(&self) -> usize {
+        let state = self.scroll_handle.0.borrow();
+        let Some(item_size) = state.last_item_size else {
+            return 0;
+        };
+        let row_height = item_size.item.height;
+        if row_height <= Pixels::from(0.0) {
+            return 0;
+        }
+        let viewport_height = state.base_handle.bounds().size.height;
+        let raw = (f32::from(viewport_height) / f32::from(row_height)).ceil() as i64;
+        if raw <= 0 {
+            return 0;
+        }
+        let raw = raw as usize;
+        // Cap at the list length so the last partially-visible row is
+        // still represented but we never produce candidates pointing
+        // past the entry tail.
+        raw.min(self.entries.len().saturating_sub(self.first_visible_row()))
+    }
+
+    /// Screen-space bounds of `row` in window-absolute pixel space, or
+    /// `None` when the list hasn't laid out yet (`last_item_size` not
+    /// captured) or `row` is outside the visible window. Computes the
+    /// position analytically from the captured row height + the list's
+    /// own bounds — uniform-list rows are fixed-height, so we don't
+    /// need to consult per-row bounds (which the handle doesn't
+    /// expose).
+    pub fn row_screen_bounds(&self, row: usize, _cx: &App) -> Option<Bounds<Pixels>> {
+        let state = self.scroll_handle.0.borrow();
+        let item_size = state.last_item_size?;
+        let row_height = item_size.item.height;
+        if row_height <= Pixels::from(0.0) {
+            return None;
+        }
+        let list_bounds = state.base_handle.bounds();
+        if list_bounds.size.height <= Pixels::from(0.0) {
+            return None;
+        }
+        let first = if let Some(deferred) = state.deferred_scroll_to_item.as_ref() {
+            deferred.item_index.min(self.entries.len().saturating_sub(1))
+        } else {
+            state.base_handle.top_item()
+        };
+        if row < first {
+            return None;
+        }
+        let row_offset_from_top = (row - first) as f32 * f32::from(row_height);
+        let row_top = list_bounds.origin.y + Pixels::from(row_offset_from_top);
+        if row_top >= list_bounds.origin.y + list_bounds.size.height {
+            return None;
+        }
+        let width = list_bounds.size.width;
+        Some(Bounds {
+            origin: point(list_bounds.origin.x, row_top),
+            size: Size {
+                width,
+                height: row_height,
+            },
+        })
     }
 
     /// Navigate to `target_dir` and optionally select an entry by name.

@@ -6700,6 +6700,7 @@ dependencies = [
  "anyhow",
  "codon-command-palette",
  "codon-config",
+ "codon-jump",
  "codon-mode",
  "editor",
  "file_icons",
