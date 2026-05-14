@@ -723,19 +723,23 @@ pub fn clear_clickable_registry() {
 /// The `on_click` closure passed to `jump_target` should mirror what
 /// the element's own `on_click` already does — the overlay invokes it
 /// directly when the user selects this candidate's two-key label.
-pub trait JumpClickableExt: Element + Sized {
-    fn jump_target<F>(self, on_click: F) -> JumpClickable<Self>
+///
+/// Implemented for any `IntoElement` so call sites can chain it after
+/// `Button`-shaped `RenderOnce` components without manually calling
+/// `.into_element()` first.
+pub trait JumpClickableExt: IntoElement + Sized {
+    fn jump_target<F>(self, on_click: F) -> JumpClickable<Self::Element>
     where
         F: Fn(&mut Window, &mut App) + Send + Sync + 'static,
     {
         JumpClickable {
-            inner: self,
+            inner: self.into_element(),
             on_click: Arc::new(on_click),
         }
     }
 }
 
-impl<E: Element> JumpClickableExt for E {}
+impl<E: IntoElement> JumpClickableExt for E {}
 
 /// Element wrapper that registers its paint-time bounds into the
 /// thread-local [`CLICKABLE_REGISTRY`]. Composes transparently over
