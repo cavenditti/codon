@@ -181,13 +181,9 @@ impl SessionSwitchModal {
             window,
             move |this, _, event: &SessionSelected, window, cx| {
                 let id = event.id;
-                if let Err(err) = SessionRegistry::global(cx).set_active(id) {
-                    log::warn!("could not activate session: {err:?}");
-                }
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.set_session_id(Some(id.to_string()));
-                        cx.notify();
+                        crate::actions::attach_session(workspace, id, window, cx);
                     });
                 }
                 this.dismiss(window, cx);

@@ -249,7 +249,7 @@ impl OverviewModal {
         id: SessionId,
         pin_active_window: Option<usize>,
         registry: &SessionRegistry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(idx) = pin_active_window
@@ -262,15 +262,9 @@ impl OverviewModal {
                 }
             }
         }
-        if let Err(err) = registry.set_active(id) {
-            log::warn!("could not activate session: {err:?}");
-            cx.emit(DismissEvent);
-            return;
-        }
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                workspace.set_session_id(Some(id.to_string()));
-                cx.notify();
+                crate::actions::attach_session(workspace, id, window, cx);
             });
         }
         cx.emit(DismissEvent);
