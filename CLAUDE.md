@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Codon is a **terminal-first, always-modal multiplexer editor** built as a Zed fork. It is a single Cargo workspace that combines codon-specific crates (under `crates/`) with a vendored copy of Zed (`vendor/zed/`, a git submodule on the `codon` branch) and a vendored copy of forge-spec for roadmap tracking (`vendor/forge-spec/`, also a submodule).
 
+**Keyboard-first, always.** Codon is driven entirely by the keyboard. Never add or preserve mouse-only affordances like tab close "x" buttons, hover-only icons, or click-to-do-anything controls when a keybinding already covers the action. When porting UI from Zed, strip those affordances and rely on the codon TOML keymap. If a verb has no binding yet, add the binding to the TOML defaults — do not fall back to leaving a mouse control in place.
+
 The binary is `apps/codon` (`codon-architecture.typ` has the long-form design doc; treat it as background reading).
 
 ## Commands
