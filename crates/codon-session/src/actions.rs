@@ -26,14 +26,16 @@ actions!(
         SessionNew,
         /// Open a fuzzy picker to switch sessions.
         SessionSwitch,
-        /// Open a tmux-style grid overview of all sessions with arrow/hjkl
-        /// navigation; Enter attaches the highlighted session.
+        /// Open the tmux-style overview, pre-positioned on the active
+        /// session row. Sessions are top-level rows; windows nest under
+        /// them. `j`/`k` move between visible rows, `h`/`l` collapse or
+        /// expand, Enter attaches.
         SessionOverview,
         /// Open a fuzzy picker to switch windows within the active session.
         WindowSwitch,
-        /// Open a tmux-style grid overview of all windows in the active
-        /// session with arrow/hjkl navigation; Enter switches to the
-        /// highlighted window. Each tile shows a tiny layout sketch.
+        /// Open the tmux-style overview, pre-positioned on the active
+        /// window row. Same modal as `SessionOverview`; differs only in
+        /// where the initial selection lands.
         WindowOverview,
         /// Rename the active session.
         SessionRename,
@@ -181,7 +183,12 @@ fn handle_session_overview(
 ) {
     let weak = workspace.weak_handle();
     workspace.toggle_modal(window, cx, move |window, cx| {
-        crate::session_overview::SessionOverviewModal::new(weak, window, cx)
+        crate::overview::OverviewModal::new(
+            crate::overview::InitialFocus::Session,
+            weak,
+            window,
+            cx,
+        )
     });
 }
 
@@ -205,7 +212,12 @@ fn handle_window_overview(
 ) {
     let weak = workspace.weak_handle();
     workspace.toggle_modal(window, cx, move |window, cx| {
-        crate::window_overview::WindowOverviewModal::new(weak, window, cx)
+        crate::overview::OverviewModal::new(
+            crate::overview::InitialFocus::Window,
+            weak,
+            window,
+            cx,
+        )
     });
 }
 
