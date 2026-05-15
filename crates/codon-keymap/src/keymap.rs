@@ -126,8 +126,10 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-w w" = "codon_session::WindowSwitch"
 "cmd-k shift-w o" = "codon_session::WindowOverview"
 
-# Fuzzy window picker within the active session (tmux-style ctrl-w w).
-"ctrl-w w" = "codon_session::WindowSwitch"
+# `ctrl-w` is intentionally left unbound — it's reserved for
+# delete-word in insert mode. The window-switch picker lives on
+# `cmd-k shift-w w` above; add a chord here only if it does not
+# stomp `ctrl-w`.
 
 # Agent (cmd-k a prefix)
 "cmd-k a a" = "assistant::FocusAgent"

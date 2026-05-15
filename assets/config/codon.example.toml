@@ -120,15 +120,14 @@ format_on_save = "on"
 "cmd-k s s" = "codon_session::SessionSwitch"
 "cmd-k s c" = "codon_session::SessionClose"
 
-# Fuzzy window picker within the active session (tmux-style ctrl-w w).
-"ctrl-w w" = "codon_session::WindowSwitch"
-
 # Windows within a session (cmd-k W prefix — capital W; lowercase w
-# is "close active item" above).
+# is "close active item" above). `ctrl-w` is intentionally left
+# unbound — it's reserved for delete-word in insert mode.
 "cmd-k shift-w n" = "codon_session::WindowNew"
 "cmd-k shift-w l" = "codon_session::WindowNext"
 "cmd-k shift-w h" = "codon_session::WindowPrev"
 "cmd-k shift-w c" = "codon_session::WindowClose"
+"cmd-k shift-w w" = "codon_session::WindowSwitch"
 
 # Agent (cmd-k a prefix). Explain / Summarize / Refactor capture the
 # active selection (text from focused editor or terminal), open the
@@ -197,5 +196,5 @@ format_on_save = "on"
 [bindings.git_panel.insert]
 # Active while the commit-message editor is focused. Esc returns to
 # the changes list (modulo vim's own Esc handling at the editor
-# level — if that wins, rebind below to a chord like ctrl-w q).
+# level — if that wins, rebind below to a chord like `cmd-k q`).
 # "escape" = "git_panel::FocusChanges"
