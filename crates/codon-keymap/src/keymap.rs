@@ -1,6 +1,6 @@
-use gpui::{App, KeyBinding};
+use gpui::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate};
 use serde::Deserialize;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, rc::Rc, time::Duration};
 
 /// Codon binds plenty of three-keystroke chords (`cmd-k s n`, `cmd-k shift-w n`,
 /// `cmd-k a e`, …). GPUI's default 1-second chord timeout is too aggressive
@@ -403,7 +403,7 @@ fn apply_bindings(bindings: Vec<(String, String, Option<String>)>, cx: &mut App)
     let mut key_bindings = Vec::new();
 
     for (keystroke, action_name, context) in bindings {
-        if let Some(binding) = resolve_binding(&keystroke, &action_name, context.as_deref()) {
+        if let Some(binding) = build_binding(cx, &keystroke, &action_name, context.as_deref()) {
             key_bindings.push(binding);
         }
     }
@@ -428,7 +428,8 @@ fn apply_raw_bindings(cx: &mut App) {
     // (vim.json line 930) so we know it matches everywhere a
     // bare-context palette is wanted — `Workspace && !Editor` failed
     // to match in the Onboarding focus chain in practice.
-    if let Some(binding) = resolve_binding(
+    if let Some(binding) = build_binding(
+        cx,
         ":",
         "codon_command_palette::Toggle",
         Some("!Editor && !Terminal"),
@@ -440,148 +441,87 @@ fn apply_raw_bindings(cx: &mut App) {
     }
 }
 
-fn resolve_binding(
+/// Build a [`KeyBinding`] by looking the action up in GPUI's global action
+/// registry — no allowlist. Any action declared with `actions!(...)` or
+/// `#[derive(Action)]` that's linked into the binary is bindable from codon
+/// TOML by its `namespace::Name` string.
+///
+/// Returns `None` (with a logged warning) for an unknown action name, a
+/// malformed keystroke, or a malformed context predicate — the rest of the
+/// keymap continues to apply.
+fn build_binding(
+    cx: &App,
     keystroke: &str,
     action_name: &str,
     context: Option<&str>,
 ) -> Option<KeyBinding> {
-    macro_rules! bind {
-        ($action:expr) => {
-            Some(KeyBinding::new(keystroke, $action, context))
-        };
-    }
-    match action_name {
-        // Workspace pane focus
-        "workspace::ActivatePaneLeft" => bind!(workspace::ActivatePaneLeft),
-        "workspace::ActivatePaneRight" => bind!(workspace::ActivatePaneRight),
-        "workspace::ActivatePaneUp" => bind!(workspace::ActivatePaneUp),
-        "workspace::ActivatePaneDown" => bind!(workspace::ActivatePaneDown),
-
-        // Workspace pane swap
-        "workspace::SwapPaneLeft" => bind!(workspace::SwapPaneLeft),
-        "workspace::SwapPaneRight" => bind!(workspace::SwapPaneRight),
-        "workspace::SwapPaneUp" => bind!(workspace::SwapPaneUp),
-        "workspace::SwapPaneDown" => bind!(workspace::SwapPaneDown),
-
-        // Vim pane resize
-        "vim::ResizePaneLeft" => bind!(vim::ResizePaneLeft),
-        "vim::ResizePaneRight" => bind!(vim::ResizePaneRight),
-        "vim::ResizePaneUp" => bind!(vim::ResizePaneUp),
-        "vim::ResizePaneDown" => bind!(vim::ResizePaneDown),
-
-        // Helix jump-to-word — overlay-label two-letter jump. In
-        // Visual mode the same action extends the selection.
-        "vim::HelixJumpToWord" => bind!(vim::HelixJumpToWord),
-
-        // Codon jump-hint overlay (Vimium-style, window-wide).
-        "codon_jump::JumpToTarget" => bind!(codon_jump::JumpToTarget),
-        "codon_jump::JumpToUrl" => bind!(codon_jump::JumpToUrl),
-
-        // Workspace
-        "workspace::NewTerminal" => bind!(workspace::NewTerminal { local: false }),
-
-        // Pane
-        "pane::SplitRight" => bind!(workspace::pane::SplitRight::default()),
-        "pane::SplitDown" => bind!(workspace::pane::SplitDown::default()),
-        "pane::SplitLeft" => bind!(workspace::pane::SplitLeft::default()),
-        "pane::SplitUp" => bind!(workspace::pane::SplitUp::default()),
-        "pane::CloseActiveItem" => bind!(workspace::CloseActiveItem {
-            save_intent: None,
-            close_pinned: false,
-        }),
-
-        // File manager
-        "file_manager::Open" => bind!(file_manager::Open),
-        "file_manager::ChooseOpener" => bind!(file_manager::ChooseOpener),
-        "file_manager::SortByName" => bind!(file_manager::SortByName),
-        "file_manager::SortBySize" => bind!(file_manager::SortBySize),
-        "file_manager::SortByMtime" => bind!(file_manager::SortByMtime),
-        "file_manager::SortByBtime" => bind!(file_manager::SortByBtime),
-        "file_manager::SortByExtension" => bind!(file_manager::SortByExtension),
-        "file_manager::SortByNatural" => bind!(file_manager::SortByNatural),
-        "file_manager::SortByRandom" => bind!(file_manager::SortByRandom),
-        "file_manager::ToggleSortReverse" => bind!(file_manager::ToggleSortReverse),
-
-        // Codon session
-        "codon_session::SessionNew" => bind!(codon_session::SessionNew),
-        "codon_session::SessionSwitch" => bind!(codon_session::SessionSwitch),
-        "codon_session::SessionOverview" => bind!(codon_session::SessionOverview),
-        "codon_session::WindowSwitch" => bind!(codon_session::WindowSwitch),
-        "codon_session::WindowOverview" => bind!(codon_session::WindowOverview),
-        "codon_session::DiffOpen" => bind!(codon_session::DiffOpen),
-        "codon_session::SessionClose" => bind!(codon_session::SessionClose),
-        "codon_session::SessionRename" => bind!(codon_session::SessionRename),
-        "codon_session::WindowNew" => bind!(codon_session::WindowNew),
-        "codon_session::WindowNext" => bind!(codon_session::WindowNext),
-        "codon_session::WindowPrev" => bind!(codon_session::WindowPrev),
-        "codon_session::WindowLast" => bind!(codon_session::WindowLast),
-        "codon_session::WindowClose" => bind!(codon_session::WindowClose),
-        "codon_session::WindowRename" => bind!(codon_session::WindowRename),
-        "codon_session::BreakPaneToWindow" => bind!(codon_session::BreakPaneToWindow),
-        "codon_session::WindowGoto(0)" => bind!(codon_session::WindowGoto(0)),
-        "codon_session::WindowGoto(1)" => bind!(codon_session::WindowGoto(1)),
-        "codon_session::WindowGoto(2)" => bind!(codon_session::WindowGoto(2)),
-        "codon_session::WindowGoto(3)" => bind!(codon_session::WindowGoto(3)),
-        "codon_session::WindowGoto(4)" => bind!(codon_session::WindowGoto(4)),
-        "codon_session::WindowGoto(5)" => bind!(codon_session::WindowGoto(5)),
-        "codon_session::WindowGoto(6)" => bind!(codon_session::WindowGoto(6)),
-        "codon_session::WindowGoto(7)" => bind!(codon_session::WindowGoto(7)),
-        "codon_session::WindowGoto(8)" => bind!(codon_session::WindowGoto(8)),
-        "codon_session::SafeCloseActiveItem" => bind!(codon_session::SafeCloseActiveItem),
-        "codon_session::HoldQuit" => bind!(codon_session::HoldQuit),
-        "codon_session::GotoOrOpenTerminal" => bind!(codon_session::GotoOrOpenTerminal),
-        "codon_session::GotoOrOpenFileManager" => bind!(codon_session::GotoOrOpenFileManager),
-        "codon_session::GotoOrOpenEditor" => bind!(codon_session::GotoOrOpenEditor),
-        "codon_session::SplitTerminalRight" => {
-            bind!(codon_session::contextual_split::SplitTerminalRight)
+    let (name, params) = match parse_action_spec(action_name) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            log::warn!("codon-keymap: invalid action spec '{action_name}': {err}");
+            return None;
         }
-        "codon_session::SplitTerminalDown" => {
-            bind!(codon_session::contextual_split::SplitTerminalDown)
+    };
+    let action = match cx.build_action(name, params) {
+        Ok(action) => action,
+        Err(err) => {
+            log::warn!("codon-keymap: cannot build action '{action_name}': {err}");
+            return None;
         }
-        "codon_session::SplitFileManagerRight" => {
-            bind!(codon_session::contextual_split::SplitFileManagerRight)
-        }
-        "codon_session::SplitFileManagerDown" => {
-            bind!(codon_session::contextual_split::SplitFileManagerDown)
-        }
-        "zed::Quit" => bind!(zed_actions::Quit),
-
-        // Codon agent
-        "codon_agent::AgentExplain" => bind!(codon_agent::AgentExplain),
-        "codon_agent::AgentSummarize" => bind!(codon_agent::AgentSummarize),
-        "codon_agent::AgentRefactor" => bind!(codon_agent::AgentRefactor),
-        "assistant::FocusAgent" => bind!(zed_actions::assistant::FocusAgent),
-
-        // Git
-        "git::GenerateCommitMessage" => bind!(git::GenerateCommitMessage),
-        "git::StageFile" => bind!(git::StageFile),
-        "git::UnstageFile" => bind!(git::UnstageFile),
-        "git::ToggleStaged" => bind!(git::ToggleStaged),
-        "git_panel::ToggleFocus" => bind!(git_ui::git_panel::ToggleFocus),
-
-        // Diagnostics pane
-        "diagnostics::Deploy" => bind!(diagnostics::Deploy),
-        "git_panel::FocusEditor" => bind!(git_ui::git_panel::FocusEditor),
-        "git_panel::FocusChanges" => bind!(git_ui::git_panel::FocusChanges),
-        "git_panel::NextEntry" => bind!(git_ui::git_panel::NextEntry),
-        "git_panel::PreviousEntry" => bind!(git_ui::git_panel::PreviousEntry),
-        "git_panel::FirstEntry" => bind!(git_ui::git_panel::FirstEntry),
-        "git_panel::LastEntry" => bind!(git_ui::git_panel::LastEntry),
-        "menu::Confirm" => bind!(menu::Confirm),
-
-        // Help / cheatsheet
-        "codon_keymap::ShowKeymap" => bind!(crate::ShowKeymap),
-
-        // Welcome page
-        "zed::ShowWelcome" => bind!(workspace::welcome::ShowWelcome),
-
-        // Command palette
-        "command_palette::Toggle" => bind!(zed_actions::command_palette::Toggle),
-        "codon_command_palette::Toggle" => bind!(codon_command_palette::Toggle),
-
-        _ => {
-            log::warn!("Unknown action in keymap: {}", action_name);
+    };
+    let context_predicate = match context {
+        Some(ctx) => match KeyBindingContextPredicate::parse(ctx) {
+            Ok(predicate) => Some(Rc::new(predicate)),
+            Err(err) => {
+                log::warn!(
+                    "codon-keymap: invalid context predicate '{ctx}' for '{action_name}': {err}"
+                );
+                return None;
+            }
+        },
+        None => None,
+    };
+    match KeyBinding::load(
+        keystroke,
+        action,
+        context_predicate,
+        false,
+        None,
+        &DummyKeyboardMapper,
+    ) {
+        Ok(binding) => Some(binding),
+        Err(err) => {
+            log::warn!(
+                "codon-keymap: invalid keystroke '{keystroke}' for '{action_name}': {err}"
+            );
             None
         }
     }
+}
+
+/// Split a TOML action spec into the registered action name and optional
+/// JSON-encoded arguments.
+///
+/// Supports two forms:
+///
+/// * Bare name — `"codon_session::WindowNext"`. Returns `(name, None)`.
+/// * Name with parenthesised args — `"codon_session::WindowGoto(0)"`. The
+///   substring between the outermost matching parens is parsed as JSON
+///   and forwarded to [`gpui::App::build_action`]; serde then deserialises
+///   it into the action's struct (newtype tuple structs like
+///   `WindowGoto(usize)` accept the bare inner value, so `(0)` works).
+///
+/// Errors return a string suitable for `log::warn!`.
+fn parse_action_spec(spec: &str) -> Result<(&str, Option<serde_json::Value>), String> {
+    let Some(open) = spec.find('(') else {
+        return Ok((spec, None));
+    };
+    if !spec.ends_with(')') {
+        return Err(format!("expected closing ')' in action spec '{spec}'"));
+    }
+    let name = &spec[..open];
+    let args = &spec[open + 1..spec.len() - 1];
+    let value: serde_json::Value = serde_json::from_str(args)
+        .map_err(|err| format!("invalid JSON args '{args}': {err}"))?;
+    Ok((name, Some(value)))
 }
