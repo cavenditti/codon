@@ -10,6 +10,7 @@ use gpui::{
     InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, Styled, Subscription, Task,
     WeakEntity, Window, actions, div,
 };
+use crate::scaffold::{ModalModeTag, ModalScaffold};
 use picker::{Picker, PickerDelegate};
 use ui::{
     Color, FluentBuilder as _, HighlightedLabel, Icon, IconName, Label, LabelCommon, LabelSize,
@@ -403,6 +404,7 @@ impl PickerDelegate for DirPickerDelegate {
 }
 
 pub struct DirPickerModal {
+    scaffold: ModalScaffold,
     picker: Entity<Picker<DirPickerDelegate>>,
     multi: bool,
     _subscriptions: Vec<Subscription>,
@@ -421,6 +423,10 @@ impl DirPickerModal {
     where
         F: Fn(PathBuf, &mut Window, &mut App) + 'static,
     {
+        let scaffold = ModalScaffold::new(cx, ModalModeTag::Inert);
+        scaffold.on_open(cx);
+        cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
+            .detach();
         let delegate = DirPickerDelegate::new(start, false);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
@@ -439,6 +445,7 @@ impl DirPickerModal {
             });
 
         Self {
+            scaffold,
             picker,
             multi: false,
             _subscriptions: vec![on_select, on_dismiss],
@@ -460,6 +467,10 @@ impl DirPickerModal {
     where
         F: Fn(Vec<PathBuf>, &mut Window, &mut App) + 'static,
     {
+        let scaffold = ModalScaffold::new(cx, ModalModeTag::Inert);
+        scaffold.on_open(cx);
+        cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
+            .detach();
         let delegate = DirPickerDelegate::new(start, true);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
@@ -478,6 +489,7 @@ impl DirPickerModal {
             });
 
         Self {
+            scaffold,
             picker,
             multi: true,
             _subscriptions: vec![on_select, on_dismiss],

@@ -94,6 +94,15 @@ The codon workspace SHOULD maintain:
   (file-manager, codon-pickers) SHOULD have at least one unit test
   per non-trivial pure function (sort/filter/state-transition logic).
   Rendering does not need coverage; logic does.
+- {#c-modal-scaffolding-shared} the boilerplate every codon modal
+  repeats — owning a `FocusHandle`, implementing `Focusable`,
+  implementing `EventEmitter<DismissEvent>`, and toggling
+  `CodonModeTracker.command_active` while open — SHOULD be expressed
+  once as a shared `ModalScaffold` builder in `codon-pickers`, and
+  each modal SHOULD hold an instance of it by composition rather than
+  re-implementing the dance inline. Modals that do not change the
+  global mode indicator declare that explicitly via an `Inert` tag so
+  the choice stays visible at the callsite.
 :::
 
 ## Implementation

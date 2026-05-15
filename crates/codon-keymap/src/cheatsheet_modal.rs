@@ -19,6 +19,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use codon_pickers::{ModalModeTag, ModalScaffold};
 use gpui::{
     AnyElement, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyBinding as GpuiKeyBinding, KeyContext, KeyDownEvent,
@@ -68,7 +69,7 @@ enum CheatMode {
 }
 
 pub struct KeybindingsCheatsheetModal {
-    focus_handle: FocusHandle,
+    scaffold: ModalScaffold,
     /// Captured at open time so the "This pane" tab can name the pane
     /// kind (e.g. "This pane · Terminal").
     leaf_context_label: Option<SharedString>,
@@ -132,8 +133,8 @@ impl KeybindingsCheatsheetModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
+        let scaffold = ModalScaffold::new(cx, ModalModeTag::Inert);
+        window.focus(scaffold.focus_handle(), cx);
         let leaf_context_label = leaf_context_label(&pane_context_stack);
 
         let curated_actions = curated_action_set();
@@ -151,7 +152,7 @@ impl KeybindingsCheatsheetModal {
 
         let overdraw = px(ROW_HEIGHT_PX * (PAGE_ROWS as f32) * 3.0);
         let mut this = Self {
-            focus_handle,
+            scaffold,
             leaf_context_label,
             local_bindings,
             global_bindings,
@@ -699,7 +700,7 @@ impl Render for KeybindingsCheatsheetModal {
         if self.dismissed {
             return div()
                 .key_context(key_context)
-                .track_focus(&self.focus_handle)
+                .track_focus(self.scaffold.focus_handle())
                 .size_full();
         }
 
@@ -832,7 +833,7 @@ impl Render for KeybindingsCheatsheetModal {
 
         div()
             .key_context(key_context)
-            .track_focus(&self.focus_handle)
+            .track_focus(self.scaffold.focus_handle())
             .on_key_down(cx.listener(Self::handle_key_down))
             .occlude()
             .size_full()
@@ -867,7 +868,7 @@ impl EventEmitter<DismissEvent> for KeybindingsCheatsheetModal {}
 
 impl Focusable for KeybindingsCheatsheetModal {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
+        self.scaffold.focus_handle().clone()
     }
 }
 

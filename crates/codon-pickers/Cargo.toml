@@ -12,6 +12,7 @@ path = "src/codon_pickers.rs"
 
 [dependencies]
 anyhow.workspace = true
+codon-mode.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -20,3 +21,6 @@ picker.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
