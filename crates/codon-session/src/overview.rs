@@ -25,7 +25,6 @@ use workspace::{
 use crate::{
     registry::SessionRegistry,
     session::{Session, SessionId},
-    swap,
     window_indicator::switch_to_window,
 };
 
@@ -67,7 +66,8 @@ impl OverviewModal {
     pub fn new(
         focus: InitialFocus,
         workspace: gpui::WeakEntity<Workspace>,
-        window: &mut Window,
+        live_snapshot: Option<LayoutSnapshot>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let registry = SessionRegistry::global(cx);
@@ -75,16 +75,16 @@ impl OverviewModal {
         sessions.sort_by(|a, b| b.last_attached_ms.cmp(&a.last_attached_ms));
         let active_session_id = registry.active_id();
 
-        // Refresh the active session's active window from the live
-        // workspace center — that's the one piece of metadata that's
-        // routinely stale (layouts are only snapshotted on switch-out).
-        if let (Some(active_id), Some(ws)) = (active_session_id, workspace.upgrade()) {
-            let snapshot = ws.update(cx, |ws, cx| swap::capture(ws, window, cx));
-            if let Some(session) = sessions.iter_mut().find(|s| s.id == active_id)
-                && let Some(active_window) = session.active_mut()
-            {
-                active_window.layout = Some(snapshot);
-            }
+        // The active session's active-window `layout` is routinely stale
+        // (snapshots are only re-taken on switch-out). The caller hands
+        // us a fresh capture taken before `toggle_modal` leased the
+        // workspace — splicing it in must happen here, not inside this
+        // constructor (a nested workspace.update would double-lease).
+        if let (Some(active_id), Some(snapshot)) = (active_session_id, live_snapshot)
+            && let Some(session) = sessions.iter_mut().find(|s| s.id == active_id)
+            && let Some(active_window) = session.active_mut()
+        {
+            active_window.layout = Some(snapshot);
         }
 
         let expanded = vec![true; sessions.len()];

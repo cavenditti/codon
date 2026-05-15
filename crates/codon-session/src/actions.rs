@@ -208,10 +208,16 @@ fn handle_session_overview(
     cx: &mut Context<Workspace>,
 ) {
     let weak = workspace.weak_handle();
+    // Capture before `toggle_modal` leases the workspace — the modal
+    // constructor runs nested inside that lease and can't re-enter.
+    let snapshot = SessionRegistry::global(cx)
+        .active_id()
+        .map(|_| swap::capture(workspace, window, cx));
     workspace.toggle_modal(window, cx, move |window, cx| {
         crate::overview::OverviewModal::new(
             crate::overview::InitialFocus::Session,
             weak,
+            snapshot,
             window,
             cx,
         )
@@ -237,10 +243,14 @@ fn handle_window_overview(
     cx: &mut Context<Workspace>,
 ) {
     let weak = workspace.weak_handle();
+    let snapshot = SessionRegistry::global(cx)
+        .active_id()
+        .map(|_| swap::capture(workspace, window, cx));
     workspace.toggle_modal(window, cx, move |window, cx| {
         crate::overview::OverviewModal::new(
             crate::overview::InitialFocus::Window,
             weak,
+            snapshot,
             window,
             cx,
         )
