@@ -104,3 +104,19 @@ Kinds: `implements`, `refines`, `tests`, `violates`, `touches`
 
 A task can be `accepted` as a document while still being `pending` as
 work to do — that is the common case for newly-written tasks.
+
+## Historical Spec-Ref reconciliation
+
+The phase-5 cleanup renamed several REQ/TASK/TOPIC ids without
+leaving forwards, which broke nine `Spec-Ref:` trailers on historical
+commits and surfaced as `R013` errors under `spec lint`. Phase 14
+(`TASK:phase-14/spec-lint-stale-refs`) chose **Option A**: a mix of
+`.specs/_redirects.toml` entries (for trailers that map cleanly onto
+a still-current id — typo'd `TOPIC:phase-N` forms and clauses that
+gained the `c-` prefix mid-phase) plus minimal placeholder spec
+files marked `wontdo`/`superseded` for ids that were never adopted
+(`REQ:codon/window-chrome`, `REQ:codon/keyboard-only-ui`,
+`REQ:codon/branding`, `TASK:phase-N/terminal-scrollbar`). Each
+placeholder explains the rename and points at the work that actually
+landed. No spec-cli changes, no rewritten history, lint stays at
+zero errors going forward.

@@ -1,0 +1,44 @@
+# Historical spec-id redirects.
+#
+# Each entry maps a deprecated id (left in a historical commit
+# `Spec-Ref:` trailer) onto its current canonical form. The lint
+# resolves through these when checking `R013` (dangling reference),
+# so an old trailer no longer trips the gate as long as the new
+# target exists.
+#
+# Adding an entry here is preferred over rewriting git history; see
+# `.specs/phase-14/spec-lint-stale-refs.spec.md` for the policy.
+
+# Phase 6/7/8 topic refs in commit 763a97e were missing the
+# `topics/` namespace prefix. The canonical TOPIC ids live under
+# `.specs/topics/`.
+[[redirect]]
+from = "TOPIC:phase-6"
+to   = "TOPIC:topics/phase-6"
+
+[[redirect]]
+from = "TOPIC:phase-7"
+to   = "TOPIC:topics/phase-7"
+
+[[redirect]]
+from = "TOPIC:phase-8"
+to   = "TOPIC:topics/phase-8"
+
+# The codon convention for clause anchors is `c-<slug>`. Two
+# pre-convention trailers on REQ:codon/file-manager used the bare
+# slug; the canonical clauses now carry the `c-` prefix.
+[[redirect]]
+from = "REQ:codon/file-manager#ui"
+to   = "REQ:codon/file-manager#c-ui"
+
+[[redirect]]
+from = "REQ:codon/file-manager#esc-semantics"
+to   = "REQ:codon/file-manager#c-esc-semantics"
+
+# Commit cea6ef9 used a literal `phase-N` placeholder where the
+# phase number was meant to be interpolated. The canonical task is
+# parked under phase-5 (where the vendored-Zed terminal defaults
+# were tuned).
+[[redirect]]
+from = "TASK:phase-N/terminal-scrollbar"
+to   = "TASK:phase-5/terminal-scrollbar"

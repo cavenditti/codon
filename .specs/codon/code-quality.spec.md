@@ -94,6 +94,13 @@ The codon workspace SHOULD maintain:
   (file-manager, codon-pickers) SHOULD have at least one unit test
   per non-trivial pure function (sort/filter/state-transition logic).
   Rendering does not need coverage; logic does.
+- {#c-spec-lint-clean} `spec lint` MUST return zero errors on the
+  master tree. Historical commits whose `Spec-Ref:` trailers point
+  at ids renamed or removed during later cleanup are reconciled via
+  `_redirects.toml` (when the old id maps cleanly onto a current one)
+  or via placeholder `wontdo`/`superseded` spec files (when no
+  current id is a fit). Warnings (`R010` "clause has no refining
+  children" on draft REQs) are tolerated; only errors gate the tree.
 :::
 
 ## Implementation
