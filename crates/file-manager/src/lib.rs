@@ -33,4 +33,5 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     openers::init(fs.clone(), cx);
     theme::init(fs, cx);
     tasks::init(cx);
+    codon_mode::register_pane_mode_bridge::<FileManager>(cx);
 }

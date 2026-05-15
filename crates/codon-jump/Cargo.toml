@@ -13,6 +13,12 @@ path = "src/codon_jump.rs"
 [dependencies]
 anyhow.workspace = true
 codon-config.workspace = true
+# Depends on the bridge-trait sub-crate, not on `codon-mode`
+# itself: `codon-mode` pulls in `vim` for its mode-indicator, and
+# `vim` transitively depends on `editor` which depends on
+# `codon-jump`. The bridge trait lives in its own crate to keep
+# this edge cycle-free.
+codon-pane-bridge.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

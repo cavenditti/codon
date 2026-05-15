@@ -354,10 +354,11 @@ impl FileManager {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        // Mode-tracker updates flow through codon-mode's `PaneModeBridge`
+        // dispatcher — see [`PaneModeBridge`] impl below. Local focus
+        // handling stays here only for FM-private housekeeping (git
+        // status refresh + re-render).
         cx.on_focus(&focus_handle, window, |this: &mut Self, _window, cx| {
-            let tracker = cx.global_mut::<CodonModeTracker>();
-            tracker.mode = this.mode;
-            tracker.detail = None;
             this.populate_git_status(cx);
             cx.notify();
         })
@@ -3376,6 +3377,17 @@ impl FileManager {
 impl Focusable for FileManager {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl codon_mode::PaneModeBridge for FileManager {
+    fn pane_mode(&self) -> PaneMode {
+        // The file-manager is a Normal-mode pane: it reads as a
+        // navigable list, not a text-input surface. Per-instance
+        // `self.mode` transitions are an internal concern that the
+        // FM tracks for its own keybinding contexts; the status-bar
+        // mode indicator stays on NORMAL while the FM is focused.
+        PaneMode::Normal
     }
 }
 

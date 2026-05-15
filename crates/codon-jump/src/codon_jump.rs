@@ -1069,6 +1069,19 @@ impl Focusable for JumpOverlay {
     }
 }
 
+impl codon_pane_bridge::PaneModeBridge for JumpOverlay {
+    fn pane_mode(&self) -> codon_pane_bridge::PaneMode {
+        codon_pane_bridge::PaneMode::Normal
+    }
+
+    fn command_active_override(&self) -> Option<bool> {
+        // Jump labels are a command-class modal: while it's open
+        // the user is selecting a label, not editing or navigating
+        // the underlying pane. Status bar shows COMMAND.
+        Some(true)
+    }
+}
+
 impl ModalView for JumpOverlay {
     fn render_bare(&self) -> bool {
         // The overlay paints its own absolute-positioned chips and
@@ -1086,6 +1099,7 @@ impl ModalView for JumpOverlay {
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     cx.set_global(JumpRegistry::new());
     init_jump_config(fs, cx);
+    codon_pane_bridge::register_pane_mode_bridge::<JumpOverlay>(cx);
 }
 
 // `JumpClickable` element wrapper + paint-time registry live in

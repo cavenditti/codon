@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use codon_mode::CodonModeTracker;
+use codon_mode::{CodonModeTracker, PaneMode, PaneModeBridge};
 use command_palette::{humanize_action_name, normalize_action_query};
 use command_palette_hooks::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -36,14 +36,22 @@ use workspace::{ModalView, Workspace};
 
 use crate::completer::{self, CompletionItem, Completer};
 
-fn set_command_active(active: bool, cx: &mut App) {
-    cx.update_global::<CodonModeTracker, _>(|tracker, _| {
-        tracker.command_active = active;
-    });
-}
-
 pub struct CodonPalette {
     picker: Entity<Picker<CodonPaletteDelegate>>,
+}
+
+impl PaneModeBridge for CodonPalette {
+    fn pane_mode(&self) -> PaneMode {
+        // The palette doesn't represent a "normal/insert" mode of its
+        // own — only the COMMAND override below matters. Default the
+        // base mode to Normal so the status bar has something
+        // sensible if anything ever reads `pane_mode()` directly.
+        PaneMode::Normal
+    }
+
+    fn command_active_override(&self) -> Option<bool> {
+        Some(true)
+    }
 }
 
 impl CodonPalette {
@@ -52,13 +60,13 @@ impl CodonPalette {
             return;
         };
         let workspace_handle = cx.weak_entity();
-        // Flip the global Command flag so the status-bar mode indicator
-        // shows CMD while the palette is open. Cleared on entity drop via
-        // `on_release` so we don't have to thread cleanup through every
-        // dismiss / confirm path.
-        set_command_active(true, cx);
+        // The status-bar COMMAND label is driven by the
+        // `PaneModeBridge` dispatcher in codon-mode — see the
+        // `impl PaneModeBridge for CodonPalette` block above. The
+        // tracker's `command_active` flag is set on focus-in and
+        // cleared on the dispatcher's release hook; no inline
+        // tracker mutation is needed here.
         workspace.toggle_modal(window, cx, move |window, cx| {
-            cx.on_release(|_, cx| set_command_active(false, cx)).detach();
             CodonPalette::new(previous_focus_handle, workspace_handle, window, cx)
         });
     }

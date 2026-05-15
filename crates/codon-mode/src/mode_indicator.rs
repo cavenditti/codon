@@ -4,7 +4,7 @@ use gpui::{
 use ui::prelude::*;
 use workspace::{StatusItemView, item::ItemHandle};
 
-use crate::pane_mode::{CodonModeTracker, PaneMode};
+use codon_pane_bridge::{CodonModeTracker, PaneMode};
 use vim::{Vim, VimEvent, state::VimGlobals};
 
 pub struct CodonModeIndicator {

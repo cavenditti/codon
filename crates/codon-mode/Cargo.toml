@@ -8,6 +8,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+codon-pane-bridge.workspace = true
 command_palette_hooks.workspace = true
 gpui.workspace = true
 ui.workspace = true

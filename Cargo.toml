@@ -8,6 +8,7 @@ members = [
     "crates/codon-jump",
     "crates/codon-keymap",
     "crates/codon-mode",
+    "crates/codon-pane-bridge",
     "crates/codon-panes",
     "crates/codon-pickers",
     "crates/codon-session",
@@ -351,6 +352,7 @@ codon-config = { path = "crates/codon-config" }
 codon-jump = { path = "crates/codon-jump", version = "0.1.0" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
+codon-pane-bridge = { path = "crates/codon-pane-bridge" }
 codon-panes = { path = "crates/codon-panes" }
 codon-pickers = { path = "crates/codon-pickers" }
 codon-session = { path = "crates/codon-session" }

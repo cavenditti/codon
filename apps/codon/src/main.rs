@@ -763,9 +763,15 @@ fn main() {
             wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
         });
         codon_mode::init(cx);
+        // Must run before any pane crate's init that registers a
+        // `PaneModeBridge` — the dispatcher's install hook records
+        // that the trait machinery is live so subsequent
+        // `register_pane_mode_bridge::<T>` calls can attach.
+        codon_mode::install_pane_mode_dispatcher(cx);
         codon_agent::init(cx);
         codon_panes::init(cx);
         codon_command_palette::init(cx);
+        codon_keymap::init(cx);
         // codon-config must apply user settings before crates that read
         // settings during their own init (e.g. terminal_view, theme_selector).
         codon_config::init(cx);

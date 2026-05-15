@@ -9,7 +9,7 @@ summary: >
   (terminal, file-manager, agent, jump, command-palette,
   cheatsheet) to update the mode tracker through that trait.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-mode-dispatch-hook
 ---

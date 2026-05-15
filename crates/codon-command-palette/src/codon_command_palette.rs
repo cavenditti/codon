@@ -51,6 +51,7 @@ pub struct OpenFile(pub PathBuf);
 pub fn init(cx: &mut App) {
     completer::register_builtins();
     hide_destructive_actions_from_palette(cx);
+    codon_mode::register_pane_mode_bridge::<CodonPalette>(cx);
 }
 
 /// Hide actions whose only effect is to quit the app or kill the OS window
