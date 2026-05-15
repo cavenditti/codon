@@ -5,6 +5,7 @@ pub(crate) mod goto_completer;
 pub(crate) mod jump_provider;
 pub(crate) mod opener_picker;
 pub(crate) mod openers;
+pub(crate) mod persistence;
 pub(crate) mod prefs;
 pub(crate) mod search;
 pub(crate) mod shell;

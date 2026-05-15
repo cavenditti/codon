@@ -15,7 +15,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::{Icon, IconName};
 use util::ResultExt;
-use workspace::{Item, item::ItemEvent, Workspace};
+use project::Project;
+use workspace::{
+    delete_unloaded_items, item::ItemEvent, register_serializable_item, Item, ItemId,
+    SerializableItem, Workspace, WorkspaceId,
+};
+
+use crate::persistence::FileManagerDb;
 
 actions!(
     file_manager,
@@ -3414,6 +3420,86 @@ impl Item for FileManager {
     }
 }
 
+impl SerializableItem for FileManager {
+    fn serialized_item_kind() -> &'static str {
+        "FileManager"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let db = FileManagerDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "file_managers", &db, cx)
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let current_dir = self.current_dir.clone();
+        let db = FileManagerDb::global(cx);
+        Some(cx.background_spawn(async move {
+            db.save_current_dir(item_id, workspace_id, current_dir).await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(event, FileManagerEvent::PathChanged)
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        let db = FileManagerDb::global(cx);
+        window.spawn(cx, async move |cx| {
+            let stored_dir = db.get_current_dir(item_id, workspace_id).log_err().flatten();
+
+            cx.update(|window, cx| {
+                let workspace_entity = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("workspace was dropped before FileManager could be restored"))?;
+                let (fs, languages, fallback_dir) = workspace_entity.read_with(cx, |workspace, cx| {
+                    let fs = workspace.app_state().fs.clone();
+                    let languages = Some(workspace.app_state().languages.clone());
+                    let fallback_dir = workspace
+                        .project()
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                        .unwrap_or_else(|| {
+                            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+                        });
+                    (fs, languages, fallback_dir)
+                });
+
+                let dir = match stored_dir {
+                    Some(p) if p.is_dir() => p,
+                    _ => fallback_dir,
+                };
+
+                let weak_workspace = workspace_entity.downgrade();
+                Ok(cx.new(|cx| {
+                    FileManager::new(dir, weak_workspace, fs, languages, window, cx)
+                }))
+            })?
+        })
+    }
+}
+
 impl SelectionSource for FileManager {
     fn current_selection(&self) -> Selection {
         if !self.marked.is_empty() {
@@ -4256,6 +4342,7 @@ pub fn init(cx: &mut App) {
     crate::bookmarks::init(cx);
     crate::prefs::init(cx);
     crate::goto_completer::register();
+    register_serializable_item::<FileManager>(cx);
     let registry = cx.global_mut::<codon_mode::ActionAcceptsRegistry>();
     registry.register::<NavigateUp>(&[ObjectKind::File, ObjectKind::Dir]);
     registry.register::<NavigateDown>(&[ObjectKind::File, ObjectKind::Dir]);
