@@ -111,7 +111,7 @@ pub(crate) fn switch_to_window(
         WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
     }
 
-    session.active_window = target_idx;
+    session.set_active_window(target_idx);
     let incoming_window_id = session.windows.get(target_idx).map(|w| w.id);
     let incoming_layout = session.windows.get(target_idx).and_then(|w| w.layout.clone());
     if let Err(err) = registry.upsert(session) {

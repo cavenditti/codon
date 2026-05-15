@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod break_pane;
 pub mod contextual_split;
 pub mod diff_open;
 pub mod goto_or_open;
@@ -12,6 +13,7 @@ pub mod swap;
 pub mod window_indicator;
 pub mod window_overview;
 pub mod window_picker;
+pub mod window_rename;
 
 pub use actions::*;
 pub use picker::SessionSwitchModal;

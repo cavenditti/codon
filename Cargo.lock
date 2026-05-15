@@ -3556,6 +3556,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "log",
+ "menu",
  "parking_lot",
  "picker",
  "project",
