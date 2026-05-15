@@ -18,14 +18,14 @@ use ui::{
     div, h_flex, v_flex,
 };
 use workspace::{
-    ModalView, Workspace,
+    DismissDecision, ModalView, Workspace,
     codon_bridge::{LayoutSnapshot, SnapshotAxis},
 };
 
 use crate::{
     registry::SessionRegistry,
-    session::{Session, SessionId},
-    window_indicator::switch_to_window,
+    session::{Session, SessionId, WindowId},
+    window_indicator::{commit_active_window, preview_switch_to_window, switch_to_window},
 };
 
 const MODAL_W_FRAC: f32 = 0.6;
@@ -54,6 +54,12 @@ pub struct OverviewModal {
     /// captured snapshot so the pane count/shorthand are accurate.
     sessions: Vec<Session>,
     active_session_id: Option<SessionId>,
+    /// Window the workspace was on when the modal opened. Used to
+    /// restore on Esc/dismiss after a backdrop preview.
+    origin_window_id: Option<WindowId>,
+    /// Window currently visible behind the modal due to a preview swap.
+    /// `None` means the workspace still shows `origin_window_id`.
+    previewed_window_id: Option<WindowId>,
     /// Per-session expansion flag, parallel to `sessions`.
     expanded: Vec<bool>,
     /// Flattened list of currently-visible rows. Rebuilt whenever
@@ -90,12 +96,17 @@ impl OverviewModal {
         let expanded = vec![true; sessions.len()];
         let rows = build_rows(&sessions, &expanded);
         let selected = pick_initial(&rows, &sessions, active_session_id, focus);
+        let origin_window_id = active_session_id
+            .and_then(|id| sessions.iter().find(|s| s.id == id))
+            .and_then(|s| s.active().map(|w| w.id));
 
         Self {
             workspace,
             focus: cx.focus_handle(),
             sessions,
             active_session_id,
+            origin_window_id,
+            previewed_window_id: None,
             expanded,
             rows,
             selected,
@@ -143,8 +154,107 @@ impl OverviewModal {
         }
 
         if handled {
+            self.update_preview(window, cx);
             cx.notify();
         }
+    }
+
+    /// The window the workspace *should* be showing for the current
+    /// selection. `None` means "show origin" — same-session session
+    /// rows and cross-session rows both fall back to origin so that
+    /// no cross-session attach happens during navigation.
+    fn desired_preview(&self) -> Option<WindowId> {
+        let Row::Window { session, window } = *self.rows.get(self.selected)? else {
+            return None;
+        };
+        let s = self.sessions.get(session)?;
+        if Some(s.id) != self.active_session_id {
+            return None;
+        }
+        s.windows.get(window).map(|w| w.id)
+    }
+
+    /// Push the workspace's center group toward whatever
+    /// `desired_preview` resolves to, swapping back to origin when
+    /// it returns `None`. No-op if the workspace is already on the
+    /// right window.
+    fn update_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session_id) = self.active_session_id else {
+            return;
+        };
+        let Some(origin) = self.origin_window_id else {
+            return;
+        };
+        let target = self.desired_preview().unwrap_or(origin);
+        let current = self.previewed_window_id.unwrap_or(origin);
+        if target == current {
+            return;
+        }
+
+        let target_layout = self
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .and_then(|s| s.windows.iter().find(|w| w.id == target))
+            .and_then(|w| w.layout.clone());
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let focus = self.focus.clone();
+        workspace.update(cx, |workspace, cx| {
+            preview_switch_to_window(
+                workspace,
+                session_id,
+                current,
+                target,
+                target_layout,
+                focus,
+                window,
+                cx,
+            );
+        });
+
+        self.previewed_window_id = if target == origin { None } else { Some(target) };
+    }
+
+    /// Restore the workspace to `origin_window_id`. Called before
+    /// dismissing so that Esc/click-outside doesn't leave the user on
+    /// a previewed window they never explicitly chose.
+    fn restore_origin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session_id) = self.active_session_id else {
+            return;
+        };
+        let Some(origin) = self.origin_window_id else {
+            return;
+        };
+        let Some(current) = self.previewed_window_id else {
+            return;
+        };
+
+        let target_layout = self
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .and_then(|s| s.windows.iter().find(|w| w.id == origin))
+            .and_then(|w| w.layout.clone());
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            let focus = self.focus.clone();
+            workspace.update(cx, |workspace, cx| {
+                preview_switch_to_window(
+                    workspace,
+                    session_id,
+                    current,
+                    origin,
+                    target_layout,
+                    focus,
+                    window,
+                    cx,
+                );
+            });
+        }
+        self.previewed_window_id = None;
     }
 
     /// `h`: if on a window row, jump to the parent session row. If on
@@ -203,41 +313,62 @@ impl OverviewModal {
 
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.rows.get(self.selected).copied() else {
+            self.restore_origin(window, cx);
             cx.emit(DismissEvent);
             return;
         };
         let registry = SessionRegistry::global(cx);
         match row {
             Row::Session { session } => {
-                let Some(target) = self.sessions.get(session) else {
+                let Some(target_id) = self.sessions.get(session).map(|s| s.id) else {
+                    self.restore_origin(window, cx);
                     cx.emit(DismissEvent);
                     return;
                 };
-                self.attach_session(target.id, None, &registry, window, cx);
-            }
-            Row::Window { session, window: w } => {
-                let Some(target_session) = self.sessions.get(session) else {
-                    cx.emit(DismissEvent);
-                    return;
-                };
-                let Some(target_window) = target_session.windows.get(w) else {
-                    cx.emit(DismissEvent);
-                    return;
-                };
-                let session_id = target_session.id;
-                let window_id = target_window.id;
-                let same_session = Some(session_id) == self.active_session_id;
+                let same_session = Some(target_id) == self.active_session_id;
+                // Restore origin first so cross-session attach captures
+                // the right outgoing state, and same-session no-op
+                // doesn't leave us on a previewed window.
+                self.restore_origin(window, cx);
                 if same_session {
-                    if let Some(workspace) = self.workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            switch_to_window(workspace, window_id, window, cx);
-                        });
-                    }
                     cx.emit(DismissEvent);
                 } else {
-                    // Cross-session: pin the target window as the
-                    // session's active_window before attaching so the
-                    // user lands exactly where they picked.
+                    self.attach_session(target_id, None, &registry, window, cx);
+                }
+            }
+            Row::Window { session, window: w } => {
+                let resolved = self
+                    .sessions
+                    .get(session)
+                    .and_then(|s| s.windows.get(w).map(|win| (s.id, win.id)));
+                let Some((session_id, window_id)) = resolved else {
+                    self.restore_origin(window, cx);
+                    cx.emit(DismissEvent);
+                    return;
+                };
+                let same_session = Some(session_id) == self.active_session_id;
+                if same_session {
+                    // Preview already swapped the workspace to `window_id`.
+                    // Anchoring against the preview state, commit the
+                    // session's active_window so registry/persist match
+                    // what the user sees. No workspace swap needed.
+                    if Some(window_id) != self.origin_window_id {
+                        // Fallback for the case where preview was skipped
+                        // (shouldn't happen — defensive).
+                        if Some(window_id) != self.previewed_window_id
+                            && let Some(workspace) = self.workspace.upgrade()
+                        {
+                            workspace.update(cx, |workspace, cx| {
+                                switch_to_window(workspace, window_id, window, cx);
+                            });
+                        } else {
+                            commit_active_window(w, cx);
+                        }
+                    }
+                    self.previewed_window_id = None;
+                    cx.emit(DismissEvent);
+                } else {
+                    self.restore_origin(window, cx);
                     self.attach_session(session_id, Some(w), &registry, window, cx);
                 }
             }
@@ -272,7 +403,18 @@ impl OverviewModal {
 }
 
 impl EventEmitter<DismissEvent> for OverviewModal {}
-impl ModalView for OverviewModal {}
+impl ModalView for OverviewModal {
+    fn on_before_dismiss(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        // Click-outside / focus-loss path: always restore the origin so
+        // the user never lands on a previewed window they didn't pick.
+        self.restore_origin(window, cx);
+        DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for OverviewModal {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {

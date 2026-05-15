@@ -1,6 +1,6 @@
 use gpui::{
-    Context, ElementId, IntoElement, ParentElement, Render, StatefulInteractiveElement as _,
-    WeakEntity, Window,
+    Context, ElementId, FocusHandle, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement as _, WeakEntity, Window,
 };
 use ui::{
     Label, LabelCommon, LabelSize, Tab, TabBar, TabPosition, Toggleable as _, h_flex,
@@ -11,8 +11,8 @@ use crate::{
     actions::{WindowGoto, persist_async},
     registry::SessionRegistry,
     runtime::{WindowRuntime, WindowRuntimeCache},
-    session::WindowId,
-    swap,
+    session::{SessionId, WindowId},
+    swap::{self, LayoutSnapshot},
 };
 
 /// Windows-in-session indicator, rendered in the center of the status bar
@@ -147,6 +147,77 @@ fn capture_runtime(workspace: &Workspace) -> Option<WindowRuntime> {
     let root = workspace.center().root.clone();
     let active_pane = Some(workspace.active_pane().clone());
     Some(WindowRuntime { root, active_pane })
+}
+
+/// Swap the workspace's center group to `target` *without* mutating the
+/// session registry or kicking off a persistence write. Used by the
+/// overview modal to live-preview the highlighted row as the user
+/// navigates; the actual `session.active_window` is updated only when
+/// the user commits via Enter (see [`commit_active_window`]).
+///
+/// The outgoing pane tree is stashed in `WindowRuntimeCache` under
+/// `current_window_id` so a subsequent restore (Esc) can pull it back.
+pub(crate) fn preview_switch_to_window(
+    workspace: &mut Workspace,
+    session_id: SessionId,
+    current_window_id: WindowId,
+    target_window_id: WindowId,
+    target_layout: Option<LayoutSnapshot>,
+    restore_focus: FocusHandle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if target_window_id == current_window_id {
+        return;
+    }
+
+    if let Some(rt) = capture_runtime(workspace) {
+        WindowRuntimeCache::global(cx).insert(session_id, current_window_id, rt);
+    }
+
+    let cache = WindowRuntimeCache::global(cx);
+    let cached_runtime = cache.take(session_id, target_window_id);
+    if let Some(rt) = cached_runtime {
+        workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+        window.focus(&restore_focus, cx);
+    } else if let Some(layout) = target_layout {
+        let apply_task = swap::apply(workspace, layout, window, cx);
+        // The async snapshot path ends in `cx.focus_self(window)` on the
+        // workspace, which would yank focus off the modal mid-preview.
+        // Chain a refocus so the modal regains focus once the swap settles.
+        cx.spawn_in(window, async move |_, cx| {
+            if let Err(err) = apply_task.await {
+                log::warn!("preview swap failed: {err:?}");
+            }
+            cx.update(|window, cx| window.focus(&restore_focus, cx)).ok();
+        })
+        .detach();
+    } else {
+        workspace.replace_center_with_empty_pane(window, cx);
+        window.focus(&restore_focus, cx);
+    }
+}
+
+/// Record `target_idx` as the session's active window in the registry
+/// and persist the change. Assumes the workspace already *shows* that
+/// window — the overview modal calls this after a preview to commit
+/// the user's Enter selection without doing a redundant swap.
+pub(crate) fn commit_active_window(target_idx: usize, cx: &gpui::App) {
+    let registry = SessionRegistry::global(cx);
+    let Some(active_id) = registry.active_id() else {
+        return;
+    };
+    let Some(mut session) = registry.get(active_id) else {
+        return;
+    };
+    if target_idx >= session.windows.len() || target_idx == session.active_window {
+        return;
+    }
+    session.set_active_window(target_idx);
+    if let Err(err) = registry.upsert(session) {
+        log::warn!("could not commit active window after preview: {err:?}");
+    }
+    persist_async(cx);
 }
 
 /// Wire WindowGoto(usize) action handler that switches to window at index.
