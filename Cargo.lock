@@ -6713,6 +6713,7 @@ dependencies = [
  "codon-config",
  "codon-jump",
  "codon-mode",
+ "db",
  "editor",
  "file_icons",
  "flate2",

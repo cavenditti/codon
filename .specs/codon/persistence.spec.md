@@ -41,4 +41,11 @@ The system MUST provide:
 - {#c-terminal-scrollback} terminal scrollback persistence and
   "Press Enter to respawn" — DEFERRED, requires invasive `terminal_view`
   + alacritty grid serialization changes
+- {#c-fm-restore} file-manager panes survive session capture/restore.
+  Every center-pane item type that codon exposes (terminal, editor,
+  file-manager, future custom panes) MUST implement
+  `SerializableItem` so the `LayoutSnapshot` produced by
+  `codon_bridge::capture_layout` round-trips it. The minimum state
+  is enough to land the item back where it was — e.g. the
+  file-manager's `current_dir`.
 :::
