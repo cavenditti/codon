@@ -264,6 +264,13 @@ pub struct FileManager {
     /// the dimmed context column don't get squeezed by the
     /// fixed-width meta gutter. 0.0 until the first paint.
     pub(crate) parent_col_width: f32,
+    /// Last measured pixel width of the full columns row (the span
+    /// from the leftmost child's left edge to the rightmost
+    /// child's right edge). Drives the responsive column hiding:
+    /// drop the parent column when there isn't enough room for
+    /// three, then drop the preview column too when even two
+    /// would be cramped. 0.0 until the first paint.
+    pub(crate) fm_total_width: f32,
 }
 
 #[derive(Clone)]
@@ -395,6 +402,7 @@ impl FileManager {
             preview_editor: None,
             cmd_only_held: false,
             parent_col_width: 0.0,
+            fm_total_width: 0.0,
         };
         this.reload_entries_sync();
         // Register the jump provider with codon-jump's global registry

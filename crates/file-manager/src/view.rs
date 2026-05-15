@@ -89,12 +89,13 @@ impl FileManager {
 
         h_flex()
             .w_full()
-            .px(px(4.))
+            .pl(px(4.))
+            .pr(px(1.))
             .py(px(1.))
             .gap(px(4.))
             .when(is_selected, |d| d.bg(selected_bg))
             .child(
-                div().w(px(12.)).child(
+                div().w(px(12.)).flex_none().child(
                     Label::new(SharedString::new_static(git_glyph))
                         .size(LabelSize::Small)
                         .color(git_color),
@@ -118,7 +119,7 @@ impl FileManager {
             })
             .when_some(meta, |el, text| {
                 el.child(
-                    div().w(px(META_COLUMN_WIDTH)).child(
+                    div().w(px(META_COLUMN_WIDTH)).flex_none().child(
                         Label::new(SharedString::from(text))
                             .size(LabelSize::Small)
                             .color(Color::Muted)
@@ -283,10 +284,28 @@ impl Render for FileManager {
         // `on_children_prepainted`; 0.0 (first paint) shows meta.
         let parent_show_meta =
             self.parent_col_width == 0.0 || self.parent_col_width >= PARENT_META_MIN_WIDTH;
-        let parent_col = self
-            .render_column_static(&self.parent_entries, true, parent_show_meta, cx)
-            .into_any_element();
-        let preview_col = self.render_preview(window, cx);
+        // Responsive: skip building columns that won't be rendered.
+        // Treat 0.0 (pre-first-paint) as "wide enough" so the
+        // initial layout matches what the user has scrolled into
+        // view, avoiding a one-frame flash of a stripped layout.
+        let total_for_layout = self.fm_total_width;
+        let show_parent_for_build =
+            total_for_layout == 0.0 || total_for_layout >= HIDE_PARENT_BELOW;
+        let show_preview_for_build =
+            total_for_layout == 0.0 || total_for_layout >= HIDE_PREVIEW_BELOW;
+        let parent_col = if show_parent_for_build {
+            Some(
+                self.render_column_static(&self.parent_entries, true, parent_show_meta, cx)
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        let preview_col = if show_preview_for_build {
+            Some(self.render_preview(window, cx))
+        } else {
+            None
+        };
         let input_bar = self.render_input_bar(cx).into_any_element();
 
         let theme = cx.theme();
@@ -464,7 +483,7 @@ impl Render for FileManager {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .pr(px(4.))
+                                    .pr(px(1.))
                                     .py(px(1.))
                                     .gap(px(4.))
                                     .when(is_marked && !is_selected, |d| d.bg(marked_bg))
@@ -486,7 +505,7 @@ impl Render for FileManager {
                                     })
                                     .child(div().w(px(2.)).flex_none())
                                     .child(
-                                        div().w(px(12.)).child(
+                                        div().w(px(12.)).flex_none().child(
                                             Label::new(SharedString::new_static(git_glyph))
                                                 .size(LabelSize::Small)
                                                 .color(git_color),
@@ -513,7 +532,7 @@ impl Render for FileManager {
                                     })
                                     .when_some(meta, |el, text| {
                                         el.child(
-                                            div().w(px(META_COLUMN_WIDTH)).child(
+                                            div().w(px(META_COLUMN_WIDTH)).flex_none().child(
                                                 Label::new(SharedString::from(text))
                                                     .size(LabelSize::Small)
                                                     .color(Color::Muted)
@@ -612,62 +631,100 @@ impl Render for FileManager {
                         ),
                 )
             })
-            .child(
+            .child({
+                // Responsive column visibility: at wide widths show
+                // all three columns; below `HIDE_PARENT_BELOW` drop
+                // the parent (leftmost) column so preview keeps its
+                // space; below `HIDE_PREVIEW_BELOW` drop preview too
+                // and only show the current directory. 0.0 (first
+                // paint, before measurement) is treated as wide so we
+                // don't briefly flash a stripped-down layout.
+                let total = self.fm_total_width;
+                let show_parent = total == 0.0 || total >= HIDE_PARENT_BELOW;
+                let show_preview = total == 0.0 || total >= HIDE_PREVIEW_BELOW;
+
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .on_children_prepainted({
-                        // Capture the actual painted width of the
-                        // parent column so the next render can decide
-                        // whether the 90px meta gutter still fits.
-                        // Only schedule a notify when the width
-                        // crosses a 1px boundary — without the gate,
-                        // every paint would re-enter the entity and
-                        // we'd render in a tight loop.
+                        // Capture two things from the painted column
+                        // row: the parent column width (drives the
+                        // meta-gutter decision in render_entry) and
+                        // the total span (drives the responsive
+                        // hide-column decision above). Only schedule
+                        // a notify when either crosses a 1px boundary
+                        // — without the gate, every paint would
+                        // re-enter the entity and we'd render in a
+                        // tight loop.
                         let entity = cx.entity().downgrade();
-                        let prev = self.parent_col_width;
+                        let prev_parent = self.parent_col_width;
+                        let prev_total = self.fm_total_width;
+                        let show_parent_now = show_parent;
                         move |bounds, _window, cx| {
-                            let Some(parent_bounds) = bounds.first() else {
+                            if bounds.is_empty() {
                                 return;
+                            }
+                            let first = bounds.first().expect("non-empty");
+                            let last = bounds.last().expect("non-empty");
+                            let new_total = f32::from(
+                                last.origin.x + last.size.width - first.origin.x,
+                            );
+                            // When the parent column isn't rendered,
+                            // there's no parent width to capture; keep
+                            // the last measured value so toggling back
+                            // doesn't briefly drop the meta gutter.
+                            let new_parent = if show_parent_now {
+                                f32::from(first.size.width)
+                            } else {
+                                prev_parent
                             };
-                            let new_w = f32::from(parent_bounds.size.width);
-                            if (new_w - prev).abs() < 1.0 {
+                            let parent_changed =
+                                (new_parent - prev_parent).abs() >= 1.0;
+                            let total_changed =
+                                (new_total - prev_total).abs() >= 1.0;
+                            if !parent_changed && !total_changed {
                                 return;
                             }
                             if let Some(entity) = entity.upgrade() {
                                 entity.update(cx, |fm, cx| {
-                                    fm.parent_col_width = new_w;
+                                    fm.parent_col_width = new_parent;
+                                    fm.fm_total_width = new_total;
                                     cx.notify();
                                 });
                             }
                         }
                     })
-                    .child(
-                        div()
-                            .w(relative(parent_fraction(self.preview_fraction)))
-                            .h_full()
-                            .overflow_hidden()
-                            .border_r_1()
-                            .border_color(border_color)
-                            .child(parent_col),
-                    )
+                    .when_some(parent_col, |row, col| {
+                        row.child(
+                            div()
+                                .w(relative(parent_fraction(self.preview_fraction)))
+                                .h_full()
+                                .overflow_hidden()
+                                .border_r_1()
+                                .border_color(border_color)
+                                .child(col),
+                        )
+                    })
                     .child(
                         div()
                             .flex_1()
                             .h_full()
                             .min_h_0()
-                            .border_r_1()
-                            .border_color(border_color)
+                            .when(show_preview, |d| {
+                                d.border_r_1().border_color(border_color)
+                            })
                             .child(current_col),
                     )
-                    .child(
-                        div()
-                            .w(relative(self.preview_fraction))
-                            .h_full()
-                            .overflow_hidden()
-                            .child(preview_col),
-                    ),
-            )
+                    .when_some(preview_col, |row, col| {
+                        row.child(
+                            div()
+                                .w(relative(self.preview_fraction))
+                                .h_full()
+                                .overflow_hidden()
+                                .child(col),
+                        )
+                    })
+            })
             .child(input_bar)
             .when_some(shell_banner, |this, cmd| {
                 let truncated: String = cmd.chars().take(80).collect();
@@ -877,6 +934,21 @@ pub(crate) const META_COLUMN_WIDTH: f32 = 90.0;
 /// + icon + gaps) plus the 90px meta gutter — anything narrower
 /// makes the filename effectively unreadable.
 pub(crate) const PARENT_META_MIN_WIDTH: f32 = 220.0;
+
+/// Minimum FM-row pixel width at which the parent (left) column
+/// still renders. Below this the three-column layout collapses
+/// to two — parent goes, current + preview remain. Picked so the
+/// current column keeps ~250px of usable width at the default
+/// preview fraction (1/3 of total) once parent is gone.
+pub(crate) const HIDE_PARENT_BELOW: f32 = 640.0;
+
+/// Minimum FM-row pixel width at which the preview (right) column
+/// still renders. Below this the layout collapses to a single
+/// column — just the current directory. Below ~360px the preview
+/// has so little room that wrapping/truncation makes it more
+/// noise than signal; ceding the space to the current column is
+/// the better trade.
+pub(crate) const HIDE_PREVIEW_BELOW: f32 = 360.0;
 
 pub(crate) fn entry_meta_label(entry: &DirEntry, mode: LineMode) -> Option<String> {
     match mode {
