@@ -258,6 +258,12 @@ pub struct FileManager {
     /// window. Drives the bottom-bar Cmd-shortcut overlay; updated
     /// via the `on_modifiers_changed` handler.
     pub(crate) cmd_only_held: bool,
+    /// Last measured pixel width of the parent (left) column,
+    /// captured from `on_children_prepainted`. Drives the
+    /// responsive hide-meta-when-narrow behavior so filenames in
+    /// the dimmed context column don't get squeezed by the
+    /// fixed-width meta gutter. 0.0 until the first paint.
+    pub(crate) parent_col_width: f32,
 }
 
 #[derive(Clone)]
@@ -388,6 +394,7 @@ impl FileManager {
             language_registry,
             preview_editor: None,
             cmd_only_held: false,
+            parent_col_width: 0.0,
         };
         this.reload_entries_sync();
         // Register the jump provider with codon-jump's global registry

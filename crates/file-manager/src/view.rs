@@ -26,6 +26,7 @@ impl FileManager {
         selected: Option<usize>,
         dimmed: bool,
         line_mode: LineMode,
+        show_meta: bool,
         cx: &App,
     ) -> impl IntoElement {
         // Marks are intrinsically tied to the current column's index space
@@ -80,7 +81,11 @@ impl FileManager {
         // overlay (or muted-for-dimmed) carries the color.
         let text_color = git_filename_color.unwrap_or(text_color);
 
-        let meta = entry_meta_label(entry, line_mode);
+        let meta = if show_meta {
+            entry_meta_label(entry, line_mode)
+        } else {
+            None
+        };
 
         h_flex()
             .w_full()
@@ -127,6 +132,7 @@ impl FileManager {
         &self,
         entries: &[DirEntry],
         dimmed: bool,
+        show_meta: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let line_mode = self.line_mode;
@@ -138,12 +144,9 @@ impl FileManager {
             .flex_1()
             .overflow_hidden()
             .py(px(2.))
-            .children(
-                entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, entry)| self.render_entry(entry, i, None, dimmed, line_mode, cx)),
-            )
+            .children(entries.iter().enumerate().map(|(i, entry)| {
+                self.render_entry(entry, i, None, dimmed, line_mode, show_meta, cx)
+            }))
     }
 
     fn render_preview(
@@ -163,12 +166,9 @@ impl FileManager {
 
         let body: AnyElement = match snapshot {
             Preview::Directory(entries) => div()
-                .children(
-                    entries
-                        .iter()
-                        .enumerate()
-                        .map(|(i, entry)| self.render_entry(entry, i, None, true, line_mode, cx)),
-                )
+                .children(entries.iter().enumerate().map(|(i, entry)| {
+                    self.render_entry(entry, i, None, true, line_mode, true, cx)
+                }))
                 .into_any_element(),
             Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
             Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
@@ -273,8 +273,18 @@ impl Render for FileManager {
         // `&mut self` methods as borrowing `*self` for the element's
         // entire lifetime, which would otherwise conflict with the
         // `&mut self` borrow needed by `render_preview`.
+        // The parent column is fixed-width on the left and shares a
+        // 90px meta gutter with the rest of the rows. When the column
+        // gets narrow (FM in a small split, or preview-fraction nudged
+        // toward 0.80), that gutter starves the filename. Drop the
+        // gutter once the column can no longer afford it — names
+        // always have priority over subitem-count/size hints in the
+        // dimmed context column. Width is from the previous paint via
+        // `on_children_prepainted`; 0.0 (first paint) shows meta.
+        let parent_show_meta =
+            self.parent_col_width == 0.0 || self.parent_col_width >= PARENT_META_MIN_WIDTH;
         let parent_col = self
-            .render_column_static(&self.parent_entries, true, cx)
+            .render_column_static(&self.parent_entries, true, parent_show_meta, cx)
             .into_any_element();
         let preview_col = self.render_preview(window, cx);
         let input_bar = self.render_input_bar(cx).into_any_element();
@@ -606,6 +616,32 @@ impl Render for FileManager {
                 h_flex()
                     .flex_1()
                     .min_h_0()
+                    .on_children_prepainted({
+                        // Capture the actual painted width of the
+                        // parent column so the next render can decide
+                        // whether the 90px meta gutter still fits.
+                        // Only schedule a notify when the width
+                        // crosses a 1px boundary — without the gate,
+                        // every paint would re-enter the entity and
+                        // we'd render in a tight loop.
+                        let entity = cx.entity().downgrade();
+                        let prev = self.parent_col_width;
+                        move |bounds, _window, cx| {
+                            let Some(parent_bounds) = bounds.first() else {
+                                return;
+                            };
+                            let new_w = f32::from(parent_bounds.size.width);
+                            if (new_w - prev).abs() < 1.0 {
+                                return;
+                            }
+                            if let Some(entity) = entity.upgrade() {
+                                entity.update(cx, |fm, cx| {
+                                    fm.parent_col_width = new_w;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
                     .child(
                         div()
                             .w(relative(parent_fraction(self.preview_fraction)))
@@ -833,6 +869,14 @@ pub(crate) fn parent_fraction(preview_fraction: f32) -> f32 {
 /// "drwxrwxr-x" comfortably (the widest variant) so columns line up
 /// across modes and toggling `M` does not shift the entry text.
 pub(crate) const META_COLUMN_WIDTH: f32 = 90.0;
+
+/// Minimum parent-column pixel width at which the dimmed context
+/// column still shows the meta gutter. Below this, names get priority
+/// and the gutter is dropped. Chosen so the filename has roughly
+/// 90px of room left after fixed chrome (~40px: padding + git glyph
+/// + icon + gaps) plus the 90px meta gutter — anything narrower
+/// makes the filename effectively unreadable.
+pub(crate) const PARENT_META_MIN_WIDTH: f32 = 220.0;
 
 pub(crate) fn entry_meta_label(entry: &DirEntry, mode: LineMode) -> Option<String> {
     match mode {
