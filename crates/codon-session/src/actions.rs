@@ -12,11 +12,13 @@ use workspace::{
 };
 
 use crate::{
+    break_pane,
     picker::SessionSwitchModal,
     registry::SessionRegistry,
     runtime::{WindowRuntime, WindowRuntimeCache},
     session::{Session, SessionId},
     swap,
+    window_rename::WindowRenameModal,
 };
 
 actions!(
@@ -47,8 +49,19 @@ actions!(
         WindowNext,
         /// Move to the previous window in the active session.
         WindowPrev,
-        /// Close the active window in the active session.
+        /// Toggle to the previously-active window in the active session
+        /// (tmux `prefix l`). No-op when no previous window is recorded.
+        WindowLast,
+        /// Close the active window in the active session. Prompts to save
+        /// or discard dirty items before destroying the pane group.
         WindowClose,
+        /// Rename the active window. Opens a single-line text input modal
+        /// seeded with the current name; empty input cancels (tmux
+        /// `prefix ,`).
+        WindowRename,
+        /// Promote the active pane in the current window into a new window
+        /// of its own (tmux `prefix !`).
+        BreakPaneToWindow,
         /// Close the active tab. Falls back to closing the pane, then the
         /// codon-session window, then replacing the center with an empty
         /// pane. Never closes the OS window — that's reserved for
@@ -97,7 +110,10 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_new);
     workspace.register_action(handle_window_next);
     workspace.register_action(handle_window_prev);
+    workspace.register_action(handle_window_last);
     workspace.register_action(handle_window_close);
+    workspace.register_action(handle_window_rename);
+    workspace.register_action(handle_break_pane_to_window);
     workspace.register_action(handle_safe_close_active_item);
     workspace.register_action(handle_hold_quit);
     crate::goto_or_open::register_for_workspace(workspace);
@@ -282,7 +298,7 @@ fn handle_window_new(
 
     session.add_window(None);
     let new_index = session.windows.len() - 1;
-    session.active_window = new_index;
+    session.set_active_window(new_index);
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save new window: {err:?}");
     }
@@ -309,30 +325,219 @@ fn handle_window_prev(
     cycle_window(workspace, -1, window, cx);
 }
 
-fn handle_window_close(
+fn handle_window_last(
     workspace: &mut Workspace,
-    _: &WindowClose,
-    _window: &mut Window,
+    _: &WindowLast,
+    window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let registry = SessionRegistry::global(cx);
     let Some(active_id) = registry.active_id() else {
         return;
     };
+    let Some(session) = registry.get(active_id) else {
+        return;
+    };
+    let Some(prev_idx) = session.previous_window else {
+        log::debug!("WindowLast: no previous window recorded");
+        return;
+    };
+    let Some(target) = session.windows.get(prev_idx).map(|w| w.id) else {
+        log::debug!(
+            "WindowLast: previous_window index {prev_idx} out of range ({} windows)",
+            session.windows.len()
+        );
+        return;
+    };
+    crate::window_indicator::switch_to_window(workspace, target, window, cx);
+}
+
+fn handle_window_close(
+    workspace: &mut Workspace,
+    _: &WindowClose,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let registry = SessionRegistry::global(cx);
+    let Some(active_id) = registry.active_id() else {
+        return;
+    };
+    let Some(session) = registry.get(active_id) else {
+        return;
+    };
+    if session.windows.len() <= 1 {
+        return;
+    }
+
+    // `prompt_to_save_or_discard_dirty_items` short-circuits to Ok(true)
+    // when no items are dirty, so calling it unconditionally costs
+    // nothing on the clean path. When dirty items exist it shows the
+    // upstream save/discard/cancel dialog; only proceed when the user
+    // confirms.
+    let prompt = workspace.prompt_to_save_or_discard_dirty_items(window, cx);
+    cx.spawn_in(window, async move |workspace, cx| {
+        match prompt.await {
+            Ok(true) => {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        finish_window_close(workspace, active_id, window, cx);
+                    })
+                    .ok();
+            }
+            Ok(false) => {
+                log::debug!("WindowClose cancelled by user");
+            }
+            Err(err) => {
+                log::warn!("WindowClose save prompt failed: {err:?}");
+            }
+        }
+    })
+    .detach();
+}
+
+/// Actually remove the active window from the session and switch the
+/// pane tree to the previous (or next) window's layout. Caller has
+/// already cleared any dirty-item save prompts.
+fn finish_window_close(
+    workspace: &mut Workspace,
+    active_id: crate::session::SessionId,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let registry = SessionRegistry::global(cx);
     let Some(mut session) = registry.get(active_id) else {
         return;
     };
     if session.windows.len() <= 1 {
         return;
     }
-    let removed = session.windows[session.active_window].id;
-    session.remove_window(removed);
+
+    let removed_idx = session.active_window;
+    let removed_id = session.windows[removed_idx].id;
+
+    // Pick a target to land on after the removal. Prefer the last-active
+    // window (tmux behavior) when valid; otherwise fall back to the
+    // sibling at the same index (which post-removal points at the next
+    // window) or the new last index if we were closing the tail.
+    let target_after = match session.previous_window {
+        Some(p) if p != removed_idx && p < session.windows.len() => {
+            if p > removed_idx { p - 1 } else { p }
+        }
+        _ => removed_idx.min(session.windows.len().saturating_sub(2)),
+    };
+
+    // Drop the in-memory runtime cache entry for the doomed window so we
+    // don't restore it later by accident.
+    let _ = WindowRuntimeCache::global(cx).take(active_id, removed_id);
+
+    session.remove_window(removed_id);
+    if target_after < session.windows.len() {
+        session.active_window = target_after;
+    }
+    session.previous_window = None;
+
+    let incoming_window_id = session.windows.get(session.active_window).map(|w| w.id);
+    let incoming_layout = session
+        .windows
+        .get(session.active_window)
+        .and_then(|w| w.layout.clone());
+
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save after window close: {err:?}");
     }
     persist_async(cx);
     cx.notify();
-    let _ = workspace;
+
+    // Swap the visible pane tree to whatever the new active window has.
+    let cache = WindowRuntimeCache::global(cx);
+    let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
+    if let Some(rt) = cached_runtime {
+        workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+    } else if let Some(layout) = incoming_layout {
+        let weak = workspace.weak_handle();
+        swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+    } else {
+        workspace.replace_center_with_empty_pane(window, cx);
+    }
+}
+
+fn handle_window_rename(
+    workspace: &mut Workspace,
+    _: &WindowRename,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if SessionRegistry::global(cx).active_id().is_none() {
+        return;
+    }
+    let weak = workspace.weak_handle();
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        WindowRenameModal::new(weak, window, cx)
+    });
+}
+
+fn handle_break_pane_to_window(
+    workspace: &mut Workspace,
+    _: &BreakPaneToWindow,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(active_id) = ensure_active_session(workspace, cx) else {
+        return;
+    };
+    let registry = SessionRegistry::global(cx);
+    let Some(mut session) = registry.get(active_id) else {
+        return;
+    };
+
+    let snapshot = swap::capture(workspace, window, cx);
+    let Some((remaining, broken)) = break_pane::split_off_active(snapshot) else {
+        // Only one pane — `BreakPaneToWindow` is a no-op. Surface a brief
+        // toast so the user knows the chord registered.
+        workspace.show_notification(
+            workspace::notifications::NotificationId::unique::<BreakPaneToWindow>(),
+            cx,
+            |cx| {
+                cx.new(|cx| {
+                    workspace::notifications::simple_message_notification::MessageNotification::new(
+                        "Window already has only one pane.",
+                        cx,
+                    )
+                })
+            },
+        );
+        return;
+    };
+
+    // Stash the remaining layout on the *current* window before we move
+    // off it — same pattern as cycle_window/switch_to_window.
+    if let Some(active) = session.active_mut() {
+        active.layout = Some(remaining.clone());
+    }
+
+    // Append the new window seeded with just the broken pane, and mark
+    // it active. Reuses set_active_window so previous_window is set to
+    // the outgoing index automatically.
+    let new_window_id = session.add_window(None);
+    if let Some(idx) = session.windows.iter().position(|w| w.id == new_window_id) {
+        if let Some(slot) = session.windows.get_mut(idx) {
+            slot.layout = Some(broken.clone());
+        }
+        let outgoing = session.active_window;
+        session.set_active_window(idx);
+        // set_active_window leaves previous_window pointing at the
+        // outgoing window, which is what we want for `WindowLast`.
+        let _ = outgoing;
+    }
+    if let Err(err) = registry.upsert(session) {
+        log::warn!("could not save after break-pane: {err:?}");
+    }
+    persist_async(cx);
+
+    // Apply the broken-pane layout in the visible center. Items
+    // re-hydrate via SerializableItemRegistry.
+    let weak = workspace.weak_handle();
+    swap::apply(workspace, broken, window, cx).detach_and_notify_err(weak, window, cx);
 }
 
 /// Close the active item, falling back through increasingly broad scopes —
@@ -436,7 +641,7 @@ fn cycle_window(
         WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
     }
 
-    session.active_window = new_idx;
+    session.set_active_window(new_idx);
     let incoming_window_id = session.windows.get(new_idx).map(|w| w.id);
     let incoming_layout = session.windows.get(new_idx).and_then(|w| w.layout.clone());
     if let Err(err) = registry.upsert(session) {

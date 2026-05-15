@@ -122,12 +122,38 @@ format_on_save = "on"
 
 # Windows within a session (cmd-k W prefix — capital W; lowercase w
 # is "close active item" above). `ctrl-w` is intentionally left
-# unbound — it's reserved for delete-word in insert mode.
-"cmd-k shift-w n" = "codon_session::WindowNew"
-"cmd-k shift-w l" = "codon_session::WindowNext"
-"cmd-k shift-w h" = "codon_session::WindowPrev"
-"cmd-k shift-w c" = "codon_session::WindowClose"
-"cmd-k shift-w w" = "codon_session::WindowSwitch"
+# unbound — it's reserved for delete-word in insert mode. The
+# `cmd-k shift-w …` block is the discoverable "menu" entry point.
+"cmd-k shift-w n"       = "codon_session::WindowNew"
+"cmd-k shift-w l"       = "codon_session::WindowNext"
+"cmd-k shift-w h"       = "codon_session::WindowPrev"
+"cmd-k shift-w shift-l" = "codon_session::WindowLast"
+"cmd-k shift-w c"       = "codon_session::WindowClose"
+"cmd-k shift-w w"       = "codon_session::WindowSwitch"
+"cmd-k shift-w r"       = "codon_session::WindowRename"
+"cmd-k shift-w !"       = "codon_session::BreakPaneToWindow"
+
+# 2-key window motion — muscle-memory path that mirrors tmux's
+# `prefix n` / `prefix p` / `prefix l`. The 3-key chords above remain
+# the discoverable menu entry.
+"cmd-k n" = "codon_session::WindowNext"
+"cmd-k p" = "codon_session::WindowPrev"
+"cmd-k l" = "codon_session::WindowLast"
+"cmd-k r" = "codon_session::WindowRename"
+"cmd-k !" = "codon_session::BreakPaneToWindow"
+
+# Direct index goto — tmux's `prefix 0-9`. 1-based here to match
+# tmux; the action stores 0-based internally. Out-of-range indices
+# are silent no-ops.
+"cmd-k 1" = "codon_session::WindowGoto(0)"
+"cmd-k 2" = "codon_session::WindowGoto(1)"
+"cmd-k 3" = "codon_session::WindowGoto(2)"
+"cmd-k 4" = "codon_session::WindowGoto(3)"
+"cmd-k 5" = "codon_session::WindowGoto(4)"
+"cmd-k 6" = "codon_session::WindowGoto(5)"
+"cmd-k 7" = "codon_session::WindowGoto(6)"
+"cmd-k 8" = "codon_session::WindowGoto(7)"
+"cmd-k 9" = "codon_session::WindowGoto(8)"
 
 # Agent (cmd-k a prefix). Explain / Summarize / Refactor capture the
 # active selection (text from focused editor or terminal), open the

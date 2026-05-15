@@ -50,6 +50,12 @@ pub struct Session {
     pub cwd: PathBuf,
     pub windows: Vec<Window>,
     pub active_window: usize,
+    /// Index of the previously-active window in `windows`, if any. Used by
+    /// `WindowLast` to implement tmux's `prefix l` toggle. Validated at
+    /// read time — a stale index (e.g. window removed since this was set)
+    /// is treated as `None` by callers.
+    #[serde(default)]
+    pub previous_window: Option<usize>,
     /// Unix epoch millis. Stored as i64 so the persisted format is portable.
     pub last_attached_ms: i64,
 }
@@ -63,8 +69,21 @@ impl Session {
             cwd,
             windows: vec![initial_window],
             active_window: 0,
+            previous_window: None,
             last_attached_ms: now_ms(),
         }
+    }
+
+    /// Set the active window index and shift the prior value into
+    /// `previous_window`. No-op if `new_active` is already active or
+    /// out of range — callers don't want a stale "previous" that
+    /// points at the window we just left.
+    pub fn set_active_window(&mut self, new_active: usize) {
+        if new_active >= self.windows.len() || new_active == self.active_window {
+            return;
+        }
+        self.previous_window = Some(self.active_window);
+        self.active_window = new_active;
     }
 
     pub fn touch(&mut self) {
@@ -103,6 +122,14 @@ impl Session {
             self.active_window = self.windows.len() - 1;
         } else if self.active_window > index {
             self.active_window -= 1;
+        }
+        self.previous_window = match self.previous_window {
+            Some(p) if p == index => None,
+            Some(p) if p > index => Some(p - 1),
+            other => other,
+        };
+        if self.previous_window == Some(self.active_window) {
+            self.previous_window = None;
         }
         true
     }

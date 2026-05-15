@@ -77,10 +77,10 @@ const DEFAULT_KEYMAP: &str = r#"
 
 # Pane navigation (cmd-k h/k/l) — kept for back-compat, equivalent to ctrl-*.
 # `cmd-k j` is repurposed for the jump-hint overlay below; use `ctrl-j` for
-# pane-down navigation under the cmd-k prefix path.
+# pane-down navigation under the cmd-k prefix path. `cmd-k l` is repurposed
+# for WindowLast (tmux `prefix l`); use `ctrl-l` for pane-right.
 "cmd-k h" = "workspace::ActivatePaneLeft"
 "cmd-k k" = "workspace::ActivatePaneUp"
-"cmd-k l" = "workspace::ActivatePaneRight"
 
 # Pane splitting — contextual on the active pane's current path.
 # `\` and `-` open a terminal; `|` and `_` open a file manager. The
@@ -122,9 +122,34 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-w n" = "codon_session::WindowNew"
 "cmd-k shift-w l" = "codon_session::WindowNext"
 "cmd-k shift-w h" = "codon_session::WindowPrev"
+"cmd-k shift-w shift-l" = "codon_session::WindowLast"
 "cmd-k shift-w c" = "codon_session::WindowClose"
 "cmd-k shift-w w" = "codon_session::WindowSwitch"
 "cmd-k shift-w o" = "codon_session::WindowOverview"
+"cmd-k shift-w r" = "codon_session::WindowRename"
+"cmd-k shift-w !" = "codon_session::BreakPaneToWindow"
+
+# 2-key motion (muscle-memory path, mirrors tmux prefix n/p/l). The 3-key
+# `cmd-k shift-w …` chords above remain the discoverable "windows menu"
+# entry point for users browsing the cheatsheet.
+"cmd-k n" = "codon_session::WindowNext"
+"cmd-k p" = "codon_session::WindowPrev"
+"cmd-k l" = "codon_session::WindowLast"
+"cmd-k r" = "codon_session::WindowRename"
+"cmd-k !" = "codon_session::BreakPaneToWindow"
+
+# Direct index goto — tmux's `prefix 0-9`. 1-based on the keymap to
+# match tmux convention, 0-based inside the `WindowGoto(usize)` action.
+# Out-of-range indices are silent no-ops, never a panic.
+"cmd-k 1" = "codon_session::WindowGoto(0)"
+"cmd-k 2" = "codon_session::WindowGoto(1)"
+"cmd-k 3" = "codon_session::WindowGoto(2)"
+"cmd-k 4" = "codon_session::WindowGoto(3)"
+"cmd-k 5" = "codon_session::WindowGoto(4)"
+"cmd-k 6" = "codon_session::WindowGoto(5)"
+"cmd-k 7" = "codon_session::WindowGoto(6)"
+"cmd-k 8" = "codon_session::WindowGoto(7)"
+"cmd-k 9" = "codon_session::WindowGoto(8)"
 
 # `ctrl-w` is intentionally left unbound — it's reserved for
 # delete-word in insert mode. The window-switch picker lives on
@@ -489,7 +514,19 @@ fn resolve_binding(
         "codon_session::WindowNew" => bind!(codon_session::WindowNew),
         "codon_session::WindowNext" => bind!(codon_session::WindowNext),
         "codon_session::WindowPrev" => bind!(codon_session::WindowPrev),
+        "codon_session::WindowLast" => bind!(codon_session::WindowLast),
         "codon_session::WindowClose" => bind!(codon_session::WindowClose),
+        "codon_session::WindowRename" => bind!(codon_session::WindowRename),
+        "codon_session::BreakPaneToWindow" => bind!(codon_session::BreakPaneToWindow),
+        "codon_session::WindowGoto(0)" => bind!(codon_session::WindowGoto(0)),
+        "codon_session::WindowGoto(1)" => bind!(codon_session::WindowGoto(1)),
+        "codon_session::WindowGoto(2)" => bind!(codon_session::WindowGoto(2)),
+        "codon_session::WindowGoto(3)" => bind!(codon_session::WindowGoto(3)),
+        "codon_session::WindowGoto(4)" => bind!(codon_session::WindowGoto(4)),
+        "codon_session::WindowGoto(5)" => bind!(codon_session::WindowGoto(5)),
+        "codon_session::WindowGoto(6)" => bind!(codon_session::WindowGoto(6)),
+        "codon_session::WindowGoto(7)" => bind!(codon_session::WindowGoto(7)),
+        "codon_session::WindowGoto(8)" => bind!(codon_session::WindowGoto(8)),
         "codon_session::SafeCloseActiveItem" => bind!(codon_session::SafeCloseActiveItem),
         "codon_session::HoldQuit" => bind!(codon_session::HoldQuit),
         "codon_session::GotoOrOpenTerminal" => bind!(codon_session::GotoOrOpenTerminal),
