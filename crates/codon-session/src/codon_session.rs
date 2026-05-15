@@ -2,15 +2,14 @@ pub mod actions;
 pub mod contextual_split;
 pub mod diff_open;
 pub mod goto_or_open;
+pub mod overview;
 pub mod picker;
 pub mod registry;
 pub mod runtime;
 pub mod session;
-pub mod session_overview;
 pub mod status_item;
 pub mod swap;
 pub mod window_indicator;
-pub mod window_overview;
 pub mod window_picker;
 
 pub use actions::*;

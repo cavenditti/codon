@@ -34,9 +34,14 @@ The system MUST manage windows-within-session:
   jumping by name across the active session's windows — same picker
   shape as `SessionSwitch` but scoped to the current session
 - {#c-overview} a tmux-style overview action (`WindowOverview`) that
-  renders every window in the active session as a thumbnail tile —
-  name, dominant pane kind, layout preview — with arrow / hjkl
-  navigation and Enter to switch. Mirrors tmux's `prefix w`.
+  opens the same nested session→window tree as
+  [REQ:codon/sessions#c-overview](spec:REQ:codon/sessions#c-overview),
+  pre-positioned on the active window row. Each window row shows
+  index, name, pane count, and a short layout shorthand
+  (`|`/`-`/`≡`/etc. for the dominant split axis). The active
+  window's layout is re-captured from the live workspace on open so
+  pane count and shorthand reflect the current state, not the last
+  switch-out snapshot. Mirrors tmux's `prefix w`.
 :::
 
 ## Implementation
