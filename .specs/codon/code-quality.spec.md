@@ -2,16 +2,24 @@
 id: REQ:codon/code-quality
 type: requirement
 status: draft
-version: 0.0.1
+version: 0.0.2
 level: SHOULD
 summary: >
   Workspace-wide code-quality baseline for the codon crates: clippy
   stays clean, async I/O routes through the Fs trait, monolithic
   modules get decomposed, error paths surface to the user instead of
   being silently logged, and speculative abstractions are tracked
-  until they earn a second consumer.
+  until they earn a second consumer. v0.0.2 (phase 14) adds
+  invariants the codebase had been documenting in CLAUDE.md without
+  enforcing: no `unwrap()` / `expect()` in production codon code, no
+  silent `let _ =`, modal/picker scaffolding shared, mode-tracker
+  updates routed through a single bridge trait, `codon-keymap`
+  decoupled from downstream codon crates, error patterns documented
+  per crate, no silencer functions, `codon_bridge` exposing a
+  single registry, naming consistent across crates, and docs
+  verified at end-of-phase.
 owners: [carlo]
-categorized_under: [TOPIC:topics/phase-5]
+categorized_under: [TOPIC:topics/phase-5, TOPIC:topics/phase-14]
 ---
 
 # Code quality baseline
@@ -94,6 +102,70 @@ The codon workspace SHOULD maintain:
   (file-manager, codon-pickers) SHOULD have at least one unit test
   per non-trivial pure function (sort/filter/state-transition logic).
   Rendering does not need coverage; logic does.
+- {#c-no-unwrap-in-codon} no `unwrap()` / `expect()` outside test
+  code in `apps/codon/src/` and `crates/codon-*` and
+  `crates/file-manager/`, unless paired with a `// SAFETY: <invariant>`
+  one-liner naming an invariant that is structurally enforced (not
+  "should never happen"). Vendored-Zed boilerplate adapted under
+  `apps/codon/src/zed*.rs` is exempt where the pattern matches
+  upstream byte-for-byte; codon-added paths are not.
+- {#c-no-silent-discards} no `let _ = <fallible expression>` outside
+  test code. Either chain `.log_err()`, propagate with `?`, or
+  document at the callsite in a one-line comment why the error is
+  intentionally dropped. Parameter shadowing (`let _ = window;` to
+  silence unused-warnings) does not count and is allowed.
+- {#c-modal-scaffolding-shared} every codon modal and picker is
+  constructed through a single shared scaffold (`codon-pickers`
+  exports it; new home if cleaner). No hand-rolled `focus_handle` +
+  `EventEmitter<DismissEvent>` + `set_command_active` triplet
+  duplicated per crate. The scaffold wraps the codon-specific
+  mode-tracker dance over Zed's existing `picker::Picker` and
+  `workspace::ModalView` primitives.
+- {#c-mode-dispatch-hook} `CodonModeTracker` updates flow through a
+  single `PaneModeBridge` trait (in `codon-mode`). Each codon pane
+  kind (terminal, file-manager, agent, jump, command-palette,
+  cheatsheet) implements the trait; one central focus subscriber
+  picks the active pane and dispatches. No crate updates the
+  tracker directly via `cx.update_global` outside that bridge.
+- {#c-keymap-decoupled} `crates/codon-keymap/Cargo.toml` does NOT
+  depend on `codon-agent`, `codon-command-palette`, `codon-config`,
+  `codon-jump`, or `codon-session`. Action registration lives in
+  each owning crate's `init(cx)` function; keymap parses TOML and
+  resolves actions through the GPUI action registry only.
+- {#c-error-pattern-per-crate} each codon crate documents its error
+  pattern (anyhow with `.context()` vs custom enum) in a one-line
+  comment at the top of its `lib.rs`, and the rest of the crate
+  follows it. Mixing within a single crate is the bug.
+- {#c-no-silencer-functions} no `_silence_unused()` /
+  `_assert_actions(_)` silencer functions in production code.
+  Compile-time action-type assertions move to `#[cfg(test)]`
+  modules; `#[allow(dead_code)]` markers either get removed (delete
+  the dead item) or get a one-line comment naming the live consumer
+  whose absence the allow tolerates.
+- {#c-codon-bridge-single-registry} `workspace::codon_bridge`
+  exposes one registry surface for codon-injected pane / panel
+  kinds — not two. The function-pointer `OnceLock` and the
+  closure `HashMap` patterns collapse into a single
+  `pub fn codon_register_pane_kind(spec)` shape.
+- {#c-naming-consistency} action namespaces follow
+  `codon_<area>::*` (existing namespaces are grandfathered if
+  renaming would break user keymaps; the rule applies to new
+  actions). Per-crate enums are prefixed with the crate's
+  vocabulary (`KeymapCheatTab`, not `CheatTab`). Lib-root source
+  file in each codon crate matches the package name's underscore
+  form (`codon_session.rs` for `codon-session`).
+- {#c-doc-drift-check} CLAUDE.md and `codon-architecture.typ`
+  claims are verified against current code at the end of phase 14.
+  Mismatches get fixed in code or in docs — never left. The
+  "no `unwrap()`" and "no silent `let _ =`" sentences in CLAUDE.md
+  are removed unless `#c-no-unwrap-in-codon` and
+  `#c-no-silent-discards` actually hold on the final tree.
+- {#c-spec-lint-clean} `spec lint` returns zero errors on the
+  codon `.specs/` tree. The 9 historical `R013` errors from
+  phase-5-era renames either get placeholder spec files (option
+  A), a `--since <hash>` cutoff in the spec-cli (option B), or
+  documented acceptance in `.specs/AGENTS.md` (option C). The
+  choice and rationale live in `.specs/AGENTS.md`.
 :::
 
 ## Implementation
@@ -112,6 +184,26 @@ two buckets:
 Beyond phase-5, the gate moves to CI: a `cargo clippy` step that
 fails the build on new diagnostics. That CI work is not in scope for
 this REQ — it's a separate REQ:codon/ci-gates (not yet drafted).
+
+### v0.0.2 implementation (phase 14)
+
+The v0.0.2 clauses split into twelve TASKs under `.specs/phase-14/`:
+
+- **One seam-introducing pair** (must land first because downstream
+  TASKs depend on the seam): `modals-extract-scaffold`,
+  `mode-bridge-trait`.
+- **Two sweeping cleanups** that work file-by-file once the seams are
+  in: `hygiene-kill-unwraps`, `hygiene-kill-silent-discards`.
+- **Two structural moves**: `keymap-decouple`,
+  `codon-bridge-single-registry`.
+- **Four targeted clean-ups**: `error-pattern-per-crate`,
+  `dead-code-purge`, `naming-consistency-sweep`,
+  `test-coverage-floor` (continuation of v0.0.1 ground).
+- **Two end-of-phase passes**: `doc-drift-resolve`,
+  `spec-lint-stale-refs`.
+
+Each TASK is one branch / one merge-from-worktree, with a
+`Spec-Ref:` commit trailer naming the clause it implements.
 
 ## Out of scope
 
