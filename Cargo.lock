@@ -3275,6 +3275,7 @@ dependencies = [
  "codon-jump",
  "codon-keymap",
  "codon-mode",
+ "codon-panes",
  "codon-pickers",
  "codon-session",
  "collab_ui",
@@ -3526,6 +3527,26 @@ dependencies = [
  "gpui",
  "ui",
  "vim",
+ "workspace",
+]
+
+[[package]]
+name = "codon-panes"
+version = "0.1.0"
+dependencies = [
+ "agent_ui",
+ "anyhow",
+ "codon-mode",
+ "debugger_ui",
+ "git_ui",
+ "gpui",
+ "log",
+ "outline_panel",
+ "parking_lot",
+ "project",
+ "serde",
+ "serde_json",
+ "ui",
  "workspace",
 ]
 

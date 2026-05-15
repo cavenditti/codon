@@ -8,7 +8,7 @@ summary: >
   Panel impl as a workspace::Item — the core mechanism Phase 12
   is built on.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-adapter
 ---

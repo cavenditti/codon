@@ -6,7 +6,7 @@ version: 0.1.0
 summary: >
   Convert AgentPanel from impl Panel (sidebar) to impl Item (workspace pane).
 owners: [carlo]
-progress: deferred
+progress: done
 refines:
   - REQ:codon/agent-pane#c-pane-conversion
 ---

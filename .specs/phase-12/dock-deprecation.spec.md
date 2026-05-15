@@ -7,7 +7,7 @@ summary: >
   Stop registering Zed's three docks (left/right/bottom) as panel
   hosts in codon. Peek mode is the only dock surface that ships.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-dock-deprecation
 ---

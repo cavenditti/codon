@@ -7,7 +7,7 @@ summary: >
   Lock in the per-panel verdict (convert / peek-only / drop /
   already-replaced) for each of the seven Zed Panel impls.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-inventory
 ---

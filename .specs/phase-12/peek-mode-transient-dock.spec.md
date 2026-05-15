@@ -8,7 +8,7 @@ summary: >
   of converted panels. Off by default; auto-dismisses on focus-loss
   or esc; never persists.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-peek-mode
 ---

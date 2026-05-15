@@ -8,6 +8,7 @@ members = [
     "crates/codon-jump",
     "crates/codon-keymap",
     "crates/codon-mode",
+    "crates/codon-panes",
     "crates/codon-pickers",
     "crates/codon-session",
     "crates/file-manager",
@@ -350,6 +351,7 @@ codon-config = { path = "crates/codon-config" }
 codon-jump = { path = "crates/codon-jump", version = "0.1.0" }
 codon-keymap = { path = "crates/codon-keymap" }
 codon-mode = { path = "crates/codon-mode" }
+codon-panes = { path = "crates/codon-panes" }
 codon-pickers = { path = "crates/codon-pickers" }
 codon-session = { path = "crates/codon-session" }
 fs = { path = "vendor/zed/crates/fs" }

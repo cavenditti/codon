@@ -7,7 +7,7 @@ summary: >
   Wire GitPanel through PanelItemAdapter — open as a pane by
   default, peek on the left side. Modal-integration patches stay.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-inventory
   - REQ:codon/panes-from-panels#c-keymap-surface

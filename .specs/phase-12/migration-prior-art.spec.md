@@ -8,7 +8,7 @@ summary: >
   git status pane) against the new adapter-driven model — without
   losing the valid pieces of each.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-migration-prior-art
 ---

@@ -1,0 +1,27 @@
+[package]
+name = "codon-panes"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_panes.rs"
+
+[dependencies]
+agent_ui.workspace = true
+anyhow.workspace = true
+codon-mode.workspace = true
+debugger_ui.workspace = true
+git_ui.workspace = true
+gpui.workspace = true
+log.workspace = true
+outline_panel.workspace = true
+parking_lot.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+workspace.workspace = true

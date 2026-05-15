@@ -165,7 +165,24 @@ format_on_save = "on"
 
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
-"cmd-k g s" = "git_panel::ToggleFocus"
+# `cmd-k g s` is rebound by Phase 12 to the codon-panes "open as pane"
+# action. The legacy `git_panel::ToggleFocus` still exists if you prefer
+# the dock toggle — uncomment to restore it.
+"cmd-k g s" = "codon_panes::OpenGit"
+# "cmd-k g s" = "git_panel::ToggleFocus"
+
+# Panes-from-panels (Phase 12). `cmd-k <chord>` opens the panel as a
+# regular workspace pane; `cmd-k shift-<chord>` opens it as a transient
+# peek (auto-toggles on re-invocation, no persistence). See
+# `.specs/codon/panes-from-panels.spec.md` for the contract.
+# "cmd-k a"       = "codon_panes::OpenAgent"     # agent panel as pane
+# "cmd-k shift-a" = "codon_panes::PeekAgent"     # agent panel right peek
+# "cmd-k g"       = "codon_panes::OpenGit"       # git panel as pane
+# "cmd-k shift-g" = "codon_panes::PeekGit"       # git panel left peek
+# "cmd-k o"       = "codon_panes::OpenOutline"   # outline panel as pane
+# "cmd-k shift-o" = "codon_panes::PeekOutline"   # outline panel left peek
+# "cmd-k d"       = "codon_panes::OpenDebug"     # debug panel as pane
+# "cmd-k shift-d" = "codon_panes::PeekDebug"     # debug panel bottom peek
 
 # Help / cheatsheet — full-screen list of every active binding.
 "cmd-k f1" = "codon_keymap::ShowKeymap"

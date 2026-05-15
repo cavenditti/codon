@@ -7,7 +7,7 @@ summary: >
   Adapter-hosted panels round-trip through LayoutSnapshot so they
   restore alongside terminals, editors, and the file manager.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-persistence
 ---

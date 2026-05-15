@@ -7,7 +7,7 @@ summary: >
   Wire DebugPanel through PanelItemAdapter — open as a pane by
   default, peek on the bottom.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-inventory
   - REQ:codon/panes-from-panels#c-keymap-surface

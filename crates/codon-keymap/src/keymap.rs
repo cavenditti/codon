@@ -42,6 +42,8 @@ struct KeymapBindings {
     file_manager: Option<ModeBindings>,
     #[serde(default)]
     git_panel: Option<ModeBindings>,
+    #[serde(default)]
+    peek_dock: Option<ModeBindings>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -156,15 +158,32 @@ const DEFAULT_KEYMAP: &str = r#"
 # `cmd-k shift-w w` above; add a chord here only if it does not
 # stomp `ctrl-w`.
 
-# Agent (cmd-k a prefix)
-"cmd-k a a" = "assistant::FocusAgent"
+# Agent (cmd-k a prefix). `cmd-k a a` falls through to the codon-panes
+# open-as-pane action — `assistant::FocusAgent` only ever worked when the
+# panel was dock-hosted, which Phase 12 retires.
+"cmd-k a a" = "codon_panes::OpenAgent"
 "cmd-k a e" = "codon_agent::AgentExplain"
 "cmd-k a s" = "codon_agent::AgentSummarize"
 "cmd-k a r" = "codon_agent::AgentRefactor"
 
 # Git (cmd-k g prefix)
 "cmd-k g m" = "git::GenerateCommitMessage"
-"cmd-k g s" = "git_panel::ToggleFocus"
+# Phase 12 — `cmd-k g s` used to bind `git_panel::ToggleFocus`; rebound
+# to the codon-panes "open as pane" action so the panel surfaces in the
+# active pane split instead of the (now-empty) left dock.
+"cmd-k g s" = "codon_panes::OpenGit"
+
+# Panes-from-panels (Phase 12, `cmd-k <chord>` opens as a pane,
+# `cmd-k shift-<chord>` peeks the panel in a transient dock surface).
+# See `.specs/codon/panes-from-panels.spec.md` for the design contract.
+"cmd-k a"       = "codon_panes::OpenAgent"
+"cmd-k shift-a" = "codon_panes::PeekAgent"
+"cmd-k g"       = "codon_panes::OpenGit"
+"cmd-k shift-g" = "codon_panes::PeekGit"
+"cmd-k o"       = "codon_panes::OpenOutline"
+"cmd-k shift-o" = "codon_panes::PeekOutline"
+"cmd-k d"       = "codon_panes::OpenDebug"
+"cmd-k shift-d" = "codon_panes::PeekDebug"
 
 # Diff / diagnostics panes (cmd-k d prefix).
 # `cmd-k d d` opens the project diff view (working tree vs HEAD) — thin
@@ -233,6 +252,20 @@ const DEFAULT_KEYMAP: &str = r#"
 # owns Esc at the editor level — if Helix Normal eats this first,
 # rebind to a less-conflicting chord in ~/.config/codon/codon.toml.
 "escape" = "git_panel::FocusChanges"
+
+# Peek dock (Phase 12 transient panel surface).
+#
+# v1 deviation: `PeekDismiss` lives under `[bindings.peek_dock.normal]`
+# so a future iteration can scope it under a focus predicate without a
+# keymap refactor, but codon-panes does not currently publish the
+# `PeekDock && pane_mode == normal` predicate from the peek surface
+# (the peek uses Zed's existing dock focus chain). Until that hook
+# lands, users dismiss peeks by re-invoking the same `Peek<Name>`
+# action (e.g. `cmd-k shift-a` twice). This binding remains as the
+# documented shape; rebinding `escape` here in user codon.toml is the
+# safe escape hatch.
+[bindings.peek_dock.normal]
+"escape" = "codon_panes::PeekDismiss"
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
@@ -354,6 +387,9 @@ fn parse_keymap(content: &str) -> Option<Vec<(String, String, Option<String>)>> 
     }
     if let Some(gp) = &keymap.bindings.git_panel {
         add_mode_bindings(&mut result, "GitPanel", gp);
+    }
+    if let Some(pd) = &keymap.bindings.peek_dock {
+        add_mode_bindings(&mut result, "PeekDock", pd);
     }
 
     Some(result)

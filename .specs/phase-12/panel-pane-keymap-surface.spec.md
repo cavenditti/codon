@@ -8,7 +8,7 @@ summary: >
   (default pane) and Peek<Name> (transient dock) — plus default
   cmd-k chord bindings and example codon.toml entries.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/panes-from-panels#c-keymap-surface
 ---
