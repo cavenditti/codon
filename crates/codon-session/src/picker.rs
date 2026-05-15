@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codon_pickers::{ModalModeTag, ModalScaffold};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -161,6 +162,7 @@ impl PickerDelegate for SessionPickerDelegate {
 }
 
 pub struct SessionSwitchModal {
+    scaffold: ModalScaffold,
     picker: Entity<Picker<SessionPickerDelegate>>,
     _subscriptions: [Subscription; 2],
 }
@@ -171,6 +173,10 @@ impl SessionSwitchModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let scaffold = ModalScaffold::new(cx, ModalModeTag::Inert);
+        scaffold.on_open(cx);
+        cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
+            .detach();
         let delegate = SessionPickerDelegate::new(cx);
         let picker =
             cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
@@ -195,6 +201,7 @@ impl SessionSwitchModal {
             });
 
         Self {
+            scaffold,
             picker,
             _subscriptions: [on_select, on_dismiss],
         }

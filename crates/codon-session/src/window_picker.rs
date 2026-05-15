@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codon_pickers::{ModalModeTag, ModalScaffold};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -177,6 +178,7 @@ impl PickerDelegate for WindowPickerDelegate {
 }
 
 pub struct WindowSwitchModal {
+    scaffold: ModalScaffold,
     picker: Entity<Picker<WindowPickerDelegate>>,
     _subscriptions: [Subscription; 2],
 }
@@ -187,6 +189,10 @@ impl WindowSwitchModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let scaffold = ModalScaffold::new(cx, ModalModeTag::Inert);
+        scaffold.on_open(cx);
+        cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
+            .detach();
         let delegate = WindowPickerDelegate::new(cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
@@ -210,6 +216,7 @@ impl WindowSwitchModal {
             });
 
         Self {
+            scaffold,
             picker,
             _subscriptions: [on_select, on_dismiss],
         }

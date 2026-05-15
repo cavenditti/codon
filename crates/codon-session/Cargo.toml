@@ -13,6 +13,7 @@ path = "src/codon_session.rs"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+codon-pickers.workspace = true
 db.workspace = true
 editor.workspace = true
 file-manager.workspace = true
