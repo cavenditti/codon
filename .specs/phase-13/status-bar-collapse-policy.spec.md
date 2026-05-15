@@ -8,7 +8,7 @@ summary: >
   REQ:codon/status-bar#c-collapse-policy via render-time truncation
   on the file/cwd segment and ordered item rendering.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-collapse-policy
 ---

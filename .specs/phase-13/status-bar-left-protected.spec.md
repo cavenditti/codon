@@ -8,7 +8,7 @@ summary: >
   windows indicators remain fully visible even when centre and
   right zones have collapsed entirely.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-left-protected
 ---

@@ -8,7 +8,7 @@ summary: >
   repo branch, falls back to project primary repo, click opens
   git_ui's branch picker.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-git-branch-item
 ---
