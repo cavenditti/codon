@@ -550,6 +550,8 @@ pub struct JumpOverlay {
     /// strong `Entity<Workspace>` would create a cycle (the overlay
     /// lives *inside* the workspace's modal stack).
     workspace: WeakEntity<Workspace>,
+    // Held purely for its `Drop` lifetime — keeps the workspace
+    // subscription alive while the overlay is mounted.
     #[allow(dead_code)]
     workspace_subscription: Option<Subscription>,
 }
@@ -1580,9 +1582,9 @@ mod tests {
     }
 
     #[test]
-    fn mock_provider_unused_warning_silenced() {
-        // Construct a MockProvider so the `dead_code` lint stays
-        // quiet — and incidentally exercise the trait shape.
+    fn mock_provider_implements_jump_provider_trait() {
+        // Construct a MockProvider and coerce it to `&dyn JumpProvider`
+        // — guards against the trait shape drifting away from the mock.
         let provider = MockProvider {
             seeded: std::cell::RefCell::new(Some(vec![(0.0, 0.0, JumpKind::Word)])),
         };

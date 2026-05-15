@@ -6,10 +6,7 @@ use gpui::{
 use ui::{ActiveTheme as _, Color, FluentBuilder, Label, LabelCommon, LabelSize, StyledExt, h_flex, v_flex};
 use workspace::{ModalView, Workspace};
 
-use crate::{
-    actions::{WindowRename, persist_async},
-    registry::SessionRegistry,
-};
+use crate::{actions::persist_async, registry::SessionRegistry};
 
 pub struct WindowRenameModal {
     editor: Entity<Editor>,
@@ -134,5 +131,13 @@ impl Render for WindowRenameModal {
     }
 }
 
-#[allow(dead_code)]
-fn _assert_actions(_: &WindowRename) {}
+#[cfg(test)]
+mod compile_assertions {
+    use crate::actions::WindowRename;
+
+    // Compile-time assertion: `WindowRename` is the action type the
+    // window-rename modal reacts to. Catches accidental removal of
+    // the action type while the modal still expects it.
+    #[allow(dead_code)]
+    fn assert_window_rename_action(_: &WindowRename) {}
+}

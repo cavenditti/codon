@@ -12,7 +12,6 @@ use ui::{
 use workspace::{ModalView, Workspace};
 
 use crate::{
-    actions,
     registry::SessionRegistry,
     session::{Session, SessionId},
 };
@@ -221,5 +220,13 @@ impl Render for SessionSwitchModal {
     }
 }
 
-#[allow(dead_code)]
-fn _assert_actions(_: &actions::SessionSwitch) {}
+#[cfg(test)]
+mod compile_assertions {
+    use crate::actions;
+
+    // Compile-time assertion: `actions::SessionSwitch` is the action
+    // type the SessionSwitch picker reacts to. Catches accidental
+    // removal of the type while the picker still references it.
+    #[allow(dead_code)]
+    fn assert_session_switch_action(_: &actions::SessionSwitch) {}
+}
