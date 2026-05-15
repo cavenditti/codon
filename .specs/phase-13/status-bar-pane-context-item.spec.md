@@ -7,7 +7,7 @@ summary: >
   New PaneContextLabel status item — renders file path / cwd / agent
   verb depending on the focused pane kind, replacing active_file_name.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-pane-context-item
 ---

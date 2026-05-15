@@ -7,7 +7,7 @@ summary: >
   Grow vendored Zed's StatusBar with a center_items vec, an
   add_center_item constructor, and a three-cell render path.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-vendored-zone-api
   - REQ:codon/status-bar#c-three-zones

@@ -3,7 +3,9 @@ pub mod break_pane;
 pub mod contextual_split;
 pub mod diff_open;
 pub mod goto_or_open;
+pub mod git_branch_indicator;
 pub mod overview;
+pub mod pane_context_label;
 pub mod picker;
 pub mod registry;
 pub mod runtime;
@@ -15,6 +17,8 @@ pub mod window_picker;
 pub mod window_rename;
 
 pub use actions::*;
+pub use git_branch_indicator::GitBranchIndicator;
+pub use pane_context_label::PaneContextLabel;
 pub use picker::SessionSwitchModal;
 pub use registry::{SessionRegistry, SessionRegistryError};
 pub use session::{Session, SessionId, Window, WindowId};

@@ -8,7 +8,7 @@ summary: >
   bar — search is reachable from the keymap and command palette,
   not from a status indicator.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-no-search-button
 ---

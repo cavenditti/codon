@@ -8,7 +8,7 @@ summary: >
   apps/codon/src/zed.rs with the three-zone registration matching
   the modeline diagram in REQ:codon/status-bar.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/status-bar#c-three-zones
   - REQ:codon/status-bar#c-centre-pane-context
