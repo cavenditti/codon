@@ -15,7 +15,7 @@ use crate::{
     picker::SessionSwitchModal,
     registry::SessionRegistry,
     runtime::{WindowRuntime, WindowRuntimeCache},
-    session::Session,
+    session::{Session, SessionId},
     swap,
 };
 
@@ -108,10 +108,20 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
 fn handle_session_new(
     workspace: &mut Workspace,
     _: &SessionNew,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    create_session_for_workspace(workspace, cx);
+    // If a session is already attached, stash its center so the new session
+    // gets a clean slate instead of inheriting the live pane tree (terminals
+    // and all). On first launch — no active session — the existing center
+    // becomes the new session's first window, matching `ensure_active_session`.
+    let had_active = SessionRegistry::global(cx).active_id().is_some();
+    if had_active {
+        stash_outgoing(workspace, window, cx);
+    }
+    if create_session_for_workspace(workspace, cx).is_some() && had_active {
+        workspace.replace_center_with_empty_pane(window, cx);
+    }
 }
 
 /// Create a session anchored at the workspace's first visible worktree (or
@@ -463,6 +473,103 @@ fn capture_runtime(workspace: &Workspace, cx: &App) -> Option<WindowRuntime> {
     let active_pane = Some(workspace.active_pane().clone());
     let _ = cx;
     Some(WindowRuntime { root, active_pane })
+}
+
+/// Capture the workspace's current center as the *currently-active*
+/// session's active-window layout + runtime. Idempotent if there is no
+/// active session. Caller is responsible for flipping the active session
+/// afterwards.
+fn stash_outgoing(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let registry = SessionRegistry::global(cx);
+    let Some(outgoing_session_id) = registry.active_id() else {
+        return;
+    };
+    let Some(mut session) = registry.get(outgoing_session_id) else {
+        return;
+    };
+    let Some(outgoing_window_id) = session.active().map(|w| w.id) else {
+        return;
+    };
+
+    let snapshot = swap::capture(workspace, window, cx);
+    let runtime = capture_runtime(workspace, cx);
+
+    if let Some(active) = session.active_mut() {
+        active.layout = Some(snapshot);
+    }
+    if let Err(err) = registry.upsert(session) {
+        log::warn!("could not stash outgoing session layout: {err:?}");
+    }
+    if let Some(rt) = runtime {
+        WindowRuntimeCache::global(cx).insert(outgoing_session_id, outgoing_window_id, rt);
+    }
+}
+
+/// Restore (or initialize) the workspace center to the active window of
+/// `target_id`. Prefers the in-memory runtime cache, falls back to the
+/// persisted `LayoutSnapshot`, and finally drops in a fresh empty pane.
+fn restore_incoming(
+    workspace: &mut Workspace,
+    target_id: SessionId,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let registry = SessionRegistry::global(cx);
+    let session = registry.get(target_id);
+    let incoming_window_id = session.as_ref().and_then(|s| s.active().map(|w| w.id));
+    let incoming_layout = session.as_ref().and_then(|s| s.active().and_then(|w| w.layout.clone()));
+
+    let cached = incoming_window_id
+        .and_then(|id| WindowRuntimeCache::global(cx).take(target_id, id));
+
+    if let Some(rt) = cached {
+        log::debug!(
+            "attach: restoring session {target_id} window {:?} from runtime cache",
+            incoming_window_id
+        );
+        workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+    } else if let Some(layout) = incoming_layout {
+        log::debug!(
+            "attach: restoring session {target_id} window {:?} from persisted snapshot",
+            incoming_window_id
+        );
+        let weak = workspace.weak_handle();
+        swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+    } else {
+        log::debug!(
+            "attach: no state for session {target_id} window {:?}; opening fresh empty pane",
+            incoming_window_id
+        );
+        workspace.replace_center_with_empty_pane(window, cx);
+    }
+}
+
+/// Switch the workspace over to `target_id`, stashing the current center
+/// under the outgoing session's active window first. No-op if already
+/// attached.
+pub fn attach_session(
+    workspace: &mut Workspace,
+    target_id: SessionId,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let registry = SessionRegistry::global(cx);
+    if registry.active_id() == Some(target_id) {
+        return;
+    }
+    stash_outgoing(workspace, window, cx);
+    if let Err(err) = registry.set_active(target_id) {
+        log::warn!("could not activate session: {err:?}");
+        return;
+    }
+    workspace.set_session_id(Some(target_id.to_string()));
+    restore_incoming(workspace, target_id, window, cx);
+    persist_async(cx);
+    cx.notify();
 }
 
 fn unique_name(base: &str, cx: &App) -> String {
