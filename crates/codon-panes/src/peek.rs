@@ -15,7 +15,7 @@
 //! auto-dismiss can be layered on later by subscribing to workspace
 //! focus changes.
 
-use gpui::{App, Context, Entity, Window};
+use gpui::{Context, Entity, Window};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel},
@@ -114,8 +114,6 @@ pub(crate) fn handle_peek_dismiss(
 }
 
 /// `Focusable` lives behind a different import root in newer GPUI — keep
-/// the import local to this module.
+/// the import local to this module so `.focus_handle()` resolves on the
+/// dock entities above.
 use gpui::Focusable as _;
-
-#[allow(dead_code)]
-fn _silence_unused(_: &App) {}

@@ -9,7 +9,7 @@ summary: >
   assertions into `#[cfg(test)]` modules; delete `_silence_unused`
   / `mock_provider_unused_warning_silenced` style helpers.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-no-silencer-functions
 ---
