@@ -540,10 +540,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             }
         });
 
-        let search_button = cx.new(|_| search::search_status_button::SearchButton::new());
         let diagnostic_summary =
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-        let active_file_name = cx.new(|_| workspace::active_file_name::ActiveFileName::new());
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
             workspace.project().read(cx).languages().clone(),
@@ -578,26 +576,41 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let session_indicator = cx.new(|_| codon_session::SessionStatusItem::new());
         let windows_indicator =
             cx.new(|_| codon_session::WindowsStatusItem::new(workspace.weak_handle()));
+        let git_branch_indicator =
+            cx.new(|cx| codon_session::GitBranchIndicator::new(workspace, cx));
+        let pane_context_label = cx.new(|_| codon_session::PaneContextLabel::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
-            // Mode indicator sits at the leftmost slot — it's the first
-            // thing the user's eye lands on and the highest-frequency
-            // signal in a modal shell.
+            // Three zones, per REQ:codon/status-bar.
+            //
+            // Left — global state. Mode is leftmost (first thing the eye
+            // lands on in a modal shell); session and windows complete the
+            // codon-identity row. These three items MUST stay readable
+            // under any width — see REQ:codon/status-bar#c-left-protected.
             status_bar.add_left_item(vim_mode_indicator, window, cx);
             status_bar.add_left_item(session_indicator, window, cx);
             status_bar.add_left_item(windows_indicator, window, cx);
-            status_bar.add_left_item(search_button, window, cx);
-            status_bar.add_left_item(lsp_button, window, cx);
-            status_bar.add_left_item(diagnostic_summary, window, cx);
-            status_bar.add_left_item(active_file_name, window, cx);
-            status_bar.add_left_item(merge_conflict_indicator, window, cx);
-            status_bar.add_left_item(activity_indicator, window, cx);
+
+            // Centre — focused pane context. Reads left-to-right like a
+            // sentence: on branch X, file Y, language L, at line:col.
+            status_bar.add_center_item(git_branch_indicator, window, cx);
+            status_bar.add_center_item(pane_context_label, window, cx);
+            status_bar.add_center_item(active_buffer_language, window, cx);
+            status_bar.add_center_item(cursor_position, window, cx);
+
+            // Right — meta + dynamic messaging. `right_items` renders with
+            // `.rev()` so the first call here lands rightmost on screen.
+            // `activity_indicator` sits rightmost because background build
+            // progress is the loudest dynamic signal and reads best at the
+            // edge of the eye.
+            status_bar.add_right_item(activity_indicator, window, cx);
+            status_bar.add_right_item(diagnostic_summary, window, cx);
+            status_bar.add_right_item(lsp_button, window, cx);
+            status_bar.add_right_item(merge_conflict_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
-            status_bar.add_right_item(active_buffer_encoding, window, cx);
-            status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
+            status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
-            status_bar.add_left_item(project_info, window, cx);
-            status_bar.add_right_item(cursor_position, window, cx);
+            status_bar.add_right_item(project_info, window, cx);
             status_bar.add_right_item(image_info, window, cx);
         });
 
