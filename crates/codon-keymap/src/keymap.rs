@@ -1,6 +1,22 @@
 use gpui::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate};
 use serde::Deserialize;
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
+
+/// Resolve the codon config directory (`$XDG_CONFIG_HOME/codon` or
+/// `$HOME/.config/codon`).
+///
+/// Inlined here to keep `codon-keymap` free of a Rust-level dep on
+/// `codon-config` — the two crates share the same trivial XDG resolution
+/// rule (see `codon_config::codon_config_dir`), so duplicating the four
+/// lines is cheaper than carrying the dep just for this lookup. If the
+/// resolution rule ever grows complexity, lift it into a shared
+/// `codon-paths` helper crate instead of re-introducing the dep.
+fn codon_config_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(xdg).join("codon"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("codon"))
+}
 
 /// Codon binds plenty of three-keystroke chords (`cmd-k s n`, `cmd-k shift-w n`,
 /// `cmd-k a e`, …). GPUI's default 1-second chord timeout is too aggressive
@@ -285,7 +301,7 @@ pub fn load_codon_keymap(cx: &mut App) {
     }
     apply_raw_bindings(cx);
 
-    let Some(codon_dir) = codon_config::codon_config_dir() else {
+    let Some(codon_dir) = codon_config_dir() else {
         return;
     };
 
@@ -350,7 +366,7 @@ pub fn codon_default_bindings() -> Vec<CuratedBinding> {
 /// change between opens; we re-read on each call so a fresh edit is
 /// reflected without a process restart.
 pub fn codon_user_bindings() -> Vec<CuratedBinding> {
-    let Some(codon_dir) = codon_config::codon_config_dir() else {
+    let Some(codon_dir) = codon_config_dir() else {
         return Vec::new();
     };
     let unified = codon_dir.join("codon.toml");

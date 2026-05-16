@@ -10,7 +10,7 @@ summary: >
   parses TOML and resolves actions through the GPUI action registry
   only.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-keymap-decoupled
 ---

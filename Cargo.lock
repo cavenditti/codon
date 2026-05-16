@@ -3497,13 +3497,8 @@ name = "codon-keymap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "codon-agent",
- "codon-command-palette",
- "codon-config",
- "codon-jump",
  "codon-mode",
  "codon-pickers",
- "codon-session",
  "command_palette",
  "diagnostics",
  "file-manager",
