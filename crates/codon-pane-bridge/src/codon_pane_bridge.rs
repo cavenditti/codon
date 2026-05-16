@@ -1,3 +1,5 @@
+//! Error pattern: no fallible APIs — this crate exposes only infallible bridge registrations and `PaneMode` state.
+//!
 //! Pane → mode-tracker dispatch primitives.
 //!
 //! This crate is the cycle-free home of:

@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+
 pub mod mode_indicator;
 pub mod selection;
 

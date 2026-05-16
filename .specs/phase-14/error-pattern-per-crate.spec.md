@@ -12,7 +12,7 @@ summary: >
   with `.unwrap()` in the same module; `file-manager/` has no
   declared pattern.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-error-pattern-per-crate
 ---

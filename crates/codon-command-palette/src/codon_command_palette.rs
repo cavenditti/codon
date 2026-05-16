@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+//!
 //! Codon command palette.
 //!
 //! Helix-style `:`-triggered palette built as a thin wrapper around Zed's

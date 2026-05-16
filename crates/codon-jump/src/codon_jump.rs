@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+//!
 //! Window-wide jump-hint overlay — the codon answer to Vimium's `f`.
 //!
 //! Two actions (added in follow-up tasks `jump-action-target` and

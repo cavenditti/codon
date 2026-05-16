@@ -1,3 +1,5 @@
+//! Error pattern: `SessionRegistryError` at the `registry` module's public API (boundary errors callers can match on); `anyhow::Result` everywhere else.
+
 pub mod actions;
 pub mod break_pane;
 pub mod contextual_split;

@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+//!
 //! codon-panes — host every Zed `Panel` impl as a workspace `Item` via
 //! `PanelItemAdapter<P>`, with an opt-in transient `peek` placement that
 //! re-uses Zed's dock infrastructure for on-demand sidebar viewing.

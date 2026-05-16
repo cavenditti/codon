@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at `?` boundaries; user-driven failures surface as toasts via the workspace. No custom error types.
+
 pub(crate) mod bookmarks;
 pub(crate) mod bulk_rename_editor;
 pub(crate) mod file_manager;

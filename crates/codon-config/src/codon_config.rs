@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+//!
 //! Unified codon configuration loader.
 //!
 //! Reads `~/.config/codon/codon.toml`. Translates the `[settings]` sub-tree

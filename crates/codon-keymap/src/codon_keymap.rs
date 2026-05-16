@@ -1,3 +1,5 @@
+//! Error pattern: `anyhow::Result` with `.context()` at every `?` boundary. No custom error types.
+
 mod cheatsheet_modal;
 mod keymap;
 
