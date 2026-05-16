@@ -90,6 +90,8 @@ fn registry() -> &'static RwLock<CompleterRegistry> {
 }
 
 pub fn register(completer: Arc<dyn Completer>) {
+    // SAFETY: registry RwLock poisoning means an earlier panic occurred while
+    // holding the write lock — there is no useful recovery; propagate.
     registry()
         .write()
         .expect("completer registry poisoned")
@@ -97,6 +99,7 @@ pub fn register(completer: Arc<dyn Completer>) {
 }
 
 pub fn for_alias(alias: &str) -> Option<Arc<dyn Completer>> {
+    // SAFETY: see `register` — poisoning is unrecoverable for this global.
     registry()
         .read()
         .expect("completer registry poisoned")
@@ -104,6 +107,7 @@ pub fn for_alias(alias: &str) -> Option<Arc<dyn Completer>> {
 }
 
 pub fn for_action_name(name: &str) -> Option<Arc<dyn Completer>> {
+    // SAFETY: see `register` — poisoning is unrecoverable for this global.
     registry()
         .read()
         .expect("completer registry poisoned")

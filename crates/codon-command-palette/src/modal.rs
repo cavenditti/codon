@@ -409,14 +409,13 @@ impl PickerDelegate for CodonPaletteDelegate {
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match &self.mode {
-            Mode::Argument { command_label, completer, .. } => {
+            Mode::Argument { completer, .. } => {
                 // Demote to Command mode instead of closing. Restore the
                 // query to just the verb — *no* trailing space, otherwise
                 // update_matches would immediately re-trigger Argument
                 // mode and Esc would appear to do nothing. Another Esc
                 // from Command mode closes the modal.
                 let restore = completer.aliases()[0].to_string();
-                let _ = command_label; // kept for future use / aside
                 self.mode = Mode::Command;
                 self.selected_ix = 0;
                 self.arg_items.clear();

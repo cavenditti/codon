@@ -664,8 +664,12 @@ impl Render for FileManager {
                             if bounds.is_empty() {
                                 return;
                             }
-                            let first = bounds.first().expect("non-empty");
-                            let last = bounds.last().expect("non-empty");
+                            // SAFETY: bounds.is_empty() returned false above.
+                            let (Some(first), Some(last)) =
+                                (bounds.first(), bounds.last())
+                            else {
+                                return;
+                            };
                             let new_total = f32::from(
                                 last.origin.x + last.size.width - first.origin.x,
                             );

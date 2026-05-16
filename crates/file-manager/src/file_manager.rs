@@ -955,7 +955,10 @@ impl FileManager {
         match matches.len() {
             0 => self.open_paths_default(vec![path], window, cx),
             1 => {
-                let opener = matches.into_iter().next().expect("len == 1");
+                // SAFETY: matches.len() == 1 in this arm, so `next()` is Some.
+                let Some(opener) = matches.into_iter().next() else {
+                    return;
+                };
                 let targets = self.opener_targets();
                 self.run_opener_choice(
                     crate::openers::OpenerChoice::Opener(opener),
@@ -2451,7 +2454,11 @@ impl FileManager {
                 }
             }
             "enter" | "\n" => {
-                let pending = self.pending_input.take().unwrap();
+                // SAFETY: pending_input is Some — guarded by the let-else at
+                // the top of handle_insert_key.
+                let Some(pending) = self.pending_input.take() else {
+                    return;
+                };
                 match pending {
                     PendingInput::CreateFile(name) if !name.is_empty() => {
                         let path = self.current_dir.join(&name);

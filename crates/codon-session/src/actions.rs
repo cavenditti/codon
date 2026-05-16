@@ -437,8 +437,10 @@ fn finish_window_close(
     };
 
     // Drop the in-memory runtime cache entry for the doomed window so we
-    // don't restore it later by accident.
-    let _ = WindowRuntimeCache::global(cx).take(active_id, removed_id);
+    // don't restore it later by accident. `take` returns the evicted
+    // entry (if any) which we intentionally discard — the cache miss is
+    // the desired outcome.
+    let _evicted = WindowRuntimeCache::global(cx).take(active_id, removed_id);
 
     session.remove_window(removed_id);
     if target_after < session.windows.len() {

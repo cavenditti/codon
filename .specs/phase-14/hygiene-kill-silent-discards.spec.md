@@ -10,7 +10,7 @@ summary: >
   shadowing (`let _ = window;` to silence warnings) is allowed and
   not in scope.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-no-silent-discards
 ---

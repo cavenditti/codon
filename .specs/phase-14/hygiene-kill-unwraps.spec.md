@@ -11,7 +11,7 @@ summary: >
   enforced. Vendored-Zed-adapted boilerplate that matches upstream
   byte-for-byte is exempt.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-no-unwrap-in-codon
 ---
