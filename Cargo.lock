@@ -3436,7 +3436,7 @@ name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "codon-pickers",
+ "codon-mode",
  "command_palette",
  "command_palette_hooks",
  "editor",
@@ -3478,6 +3478,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "codon-config",
+ "codon-pane-bridge",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -3499,7 +3500,7 @@ dependencies = [
  "codon-command-palette",
  "codon-config",
  "codon-jump",
- "codon-pickers",
+ "codon-mode",
  "codon-session",
  "command_palette",
  "diagnostics",
@@ -3524,11 +3525,19 @@ dependencies = [
 name = "codon-mode"
 version = "0.1.0"
 dependencies = [
+ "codon-pane-bridge",
  "command_palette_hooks",
  "gpui",
  "ui",
  "vim",
  "workspace",
+]
+
+[[package]]
+name = "codon-pane-bridge"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]
@@ -3556,7 +3565,6 @@ name = "codon-pickers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "codon-mode",
  "fs",
  "fuzzy",
  "gpui",
@@ -3573,7 +3581,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "codon-pickers",
  "db",
  "editor",
  "file-manager",

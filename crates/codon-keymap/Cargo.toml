@@ -13,6 +13,7 @@ codon-agent.workspace = true
 codon-command-palette.workspace = true
 codon-config.workspace = true
 codon-jump.workspace = true
+codon-mode.workspace = true
 codon-pickers.workspace = true
 codon-session.workspace = true
 command_palette.workspace = true

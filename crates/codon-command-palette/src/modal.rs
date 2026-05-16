@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use codon_mode::{PaneMode, PaneModeBridge};
 use codon_pickers::{ModalModeTag, ModalScaffold};
 use command_palette::{humanize_action_name, normalize_action_query};
 use command_palette_hooks::CommandPaletteFilter;
@@ -41,18 +42,33 @@ pub struct CodonPalette {
     picker: Entity<Picker<CodonPaletteDelegate>>,
 }
 
+impl PaneModeBridge for CodonPalette {
+    fn pane_mode(&self) -> PaneMode {
+        // The palette doesn't represent a "normal/insert" mode of its
+        // own — only the COMMAND override below matters. Default the
+        // base mode to Normal so the status bar has something
+        // sensible if anything ever reads `pane_mode()` directly.
+        PaneMode::Normal
+    }
+
+    fn command_active_override(&self) -> Option<bool> {
+        Some(true)
+    }
+}
+
 impl CodonPalette {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
         let workspace_handle = cx.weak_entity();
+        // The status-bar COMMAND flag is set/cleared from two
+        // independent (and idempotent) mechanisms while we're in
+        // phase-14 transition: ModalScaffold's on_open/on_dismiss
+        // hooks AND the PaneModeBridge dispatcher in codon-mode.
+        // Both write the same value; collapsing to a single
+        // mechanism is tracked as a Wave 2 follow-up.
         workspace.toggle_modal(window, cx, move |window, cx| {
-            // Flip the global Command flag so the status-bar mode
-            // indicator shows CMD while the palette is open. The
-            // scaffold's `on_release` hook clears it when the modal
-            // entity drops, so we don't have to thread cleanup through
-            // every dismiss / confirm path.
             CodonPalette::new(previous_focus_handle, workspace_handle, window, cx)
         });
     }

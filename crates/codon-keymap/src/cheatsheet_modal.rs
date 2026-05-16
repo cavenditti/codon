@@ -872,6 +872,21 @@ impl Focusable for KeybindingsCheatsheetModal {
     }
 }
 
+impl codon_mode::PaneModeBridge for KeybindingsCheatsheetModal {
+    fn pane_mode(&self) -> codon_mode::PaneMode {
+        codon_mode::PaneMode::Normal
+    }
+
+    fn command_active_override(&self) -> Option<bool> {
+        // Explicitly clear the COMMAND flag on focus so the
+        // cheatsheet doesn't inherit a still-set `command_active`
+        // from a recently-closed palette underneath. The cheatsheet
+        // is a read-only keybinding browser, not a command-class
+        // modal.
+        Some(false)
+    }
+}
+
 impl ModalView for KeybindingsCheatsheetModal {
     fn render_bare(&self) -> bool {
         true
