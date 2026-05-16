@@ -28,38 +28,54 @@ use gpui::App;
 use outline_panel::OutlinePanel;
 use workspace::{
     Workspace,
-    codon_bridge::{register_item_panel_kind_fn, register_panel_restorer},
+    codon_bridge::{CodonPaneKindSpec, codon_register_pane_kind},
     dock::Panel,
     item::ItemHandle,
 };
 
 /// Wire codon-panes into the workspace lifecycle.
 ///
-/// Registers (a) a codon-bridge hook letting `capture_layout` recognise
-/// adapter-hosted panels by their `persistent_name`, and (b) one
-/// panel-restorer per converted panel so `apply_layout` can rehydrate
-/// them after a window switch or restart.
+/// Registers one [`CodonPaneKindSpec`] per converted panel. The spec
+/// bundles the adapter-detection predicate (used by `capture_layout` to
+/// recognise adapter-hosted panels) with the async factory (used by
+/// `apply_layout` to rehydrate them after a window switch or restart).
 pub fn init(_cx: &mut App) {
-    register_item_panel_kind_fn(detect_panel_kind);
-    register_panel_restorer(AgentPanel::persistent_name(), restorer::restore_agent);
-    register_panel_restorer(GitPanel::persistent_name(), restorer::restore_git);
-    register_panel_restorer(OutlinePanel::persistent_name(), restorer::restore_outline);
-    register_panel_restorer(DebugPanel::persistent_name(), restorer::restore_debug);
+    codon_register_pane_kind(CodonPaneKindSpec {
+        kind: AgentPanel::persistent_name(),
+        matches: is_agent_adapter,
+        restore: restorer::restore_agent,
+    });
+    codon_register_pane_kind(CodonPaneKindSpec {
+        kind: GitPanel::persistent_name(),
+        matches: is_git_adapter,
+        restore: restorer::restore_git,
+    });
+    codon_register_pane_kind(CodonPaneKindSpec {
+        kind: OutlinePanel::persistent_name(),
+        matches: is_outline_adapter,
+        restore: restorer::restore_outline,
+    });
+    codon_register_pane_kind(CodonPaneKindSpec {
+        kind: DebugPanel::persistent_name(),
+        matches: is_debug_adapter,
+        restore: restorer::restore_debug,
+    });
 }
 
-fn detect_panel_kind(handle: &dyn ItemHandle) -> Option<&'static str> {
-    let entity_type = handle.to_any_view().entity_type();
-    if entity_type == std::any::TypeId::of::<PanelItemAdapter<AgentPanel>>() {
-        Some(AgentPanel::persistent_name())
-    } else if entity_type == std::any::TypeId::of::<PanelItemAdapter<GitPanel>>() {
-        Some(GitPanel::persistent_name())
-    } else if entity_type == std::any::TypeId::of::<PanelItemAdapter<OutlinePanel>>() {
-        Some(OutlinePanel::persistent_name())
-    } else if entity_type == std::any::TypeId::of::<PanelItemAdapter<DebugPanel>>() {
-        Some(DebugPanel::persistent_name())
-    } else {
-        None
-    }
+fn is_agent_adapter(handle: &dyn ItemHandle) -> bool {
+    handle.to_any_view().entity_type() == std::any::TypeId::of::<PanelItemAdapter<AgentPanel>>()
+}
+
+fn is_git_adapter(handle: &dyn ItemHandle) -> bool {
+    handle.to_any_view().entity_type() == std::any::TypeId::of::<PanelItemAdapter<GitPanel>>()
+}
+
+fn is_outline_adapter(handle: &dyn ItemHandle) -> bool {
+    handle.to_any_view().entity_type() == std::any::TypeId::of::<PanelItemAdapter<OutlinePanel>>()
+}
+
+fn is_debug_adapter(handle: &dyn ItemHandle) -> bool {
+    handle.to_any_view().entity_type() == std::any::TypeId::of::<PanelItemAdapter<DebugPanel>>()
 }
 
 mod restorer {

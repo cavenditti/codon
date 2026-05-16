@@ -10,7 +10,7 @@ summary: >
   `register_panel_restorer` HashMap of closures) into a single
   `codon_register_pane_kind` surface.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/code-quality#c-codon-bridge-single-registry
 ---
