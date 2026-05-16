@@ -233,6 +233,10 @@ pub struct FileManager {
     pub(crate) entries_unfiltered: Option<Vec<DirEntry>>,
     pub(crate) error_message: Option<String>,
     pub(crate) error_gen: u64,
+    /// Bumped on every directory load so the background `child_count`
+    /// fill task can detect "the listing I was spawned for is gone" and
+    /// drop its result without touching `entries`.
+    pub(crate) listing_gen: u64,
     pub(crate) clipboard: FmClipboard,
     pub(crate) back_stack: VecDeque<PathBuf>,
     pub(crate) forward_stack: VecDeque<PathBuf>,
@@ -392,6 +396,7 @@ impl FileManager {
             entries_unfiltered: None,
             error_message: None,
             error_gen: 0,
+            listing_gen: 0,
             clipboard: FmClipboard::Empty,
             back_stack: VecDeque::new(),
             forward_stack: VecDeque::new(),
@@ -412,6 +417,7 @@ impl FileManager {
             fm_total_width: 0.0,
         };
         this.reload_entries_sync();
+        this.spawn_child_count_fill(cx);
         // Register the jump provider with codon-jump's global registry
         // so `cmd-k j` paints a chip on every visible file-manager row.
         // The provider holds a WeakEntity, so the registry's
@@ -496,6 +502,9 @@ impl FileManager {
         // user navigated, so the original set is gone.
         self.filter_query.clear();
         self.entries_unfiltered = None;
+        // Bump before previewing so any in-flight child-count fill from a
+        // previous listing sees the gen mismatch and drops its result.
+        self.listing_gen = self.listing_gen.wrapping_add(1);
         self.update_preview_sync();
     }
 
@@ -503,8 +512,70 @@ impl FileManager {
         self.reload_entries_sync();
         self.populate_git_status(cx);
         self.ensure_visible();
+        self.spawn_child_count_fill(cx);
         cx.emit(FileManagerEvent::PathChanged);
         cx.notify();
+    }
+
+    /// Populate `child_count` on the current + parent column entries from
+    /// a background task. `read_dir_sync` deliberately leaves them `None`
+    /// — counting children would otherwise cost one extra `read_dir` per
+    /// subdirectory on the foreground thread.
+    ///
+    /// Stale results (user navigated away before the count returned) are
+    /// dropped via the `listing_gen` check.
+    fn spawn_child_count_fill(&self, cx: &mut Context<Self>) {
+        let listing_gen = self.listing_gen;
+        let targets: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .chain(self.parent_entries.iter())
+            .filter(|e| e.is_dir && e.child_count.is_none())
+            .map(|e| e.path.clone())
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let counts: Vec<(PathBuf, usize)> = cx
+                .background_executor()
+                .spawn(async move {
+                    targets
+                        .into_iter()
+                        .filter_map(|p| {
+                            let n = std::fs::read_dir(&p).ok()?.count();
+                            Some((p, n))
+                        })
+                        .collect()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.listing_gen != listing_gen {
+                    return;
+                }
+                // Path-based update so an active filter (which mutates
+                // `entries` in place but doesn't bump the gen) is handled
+                // correctly: missing paths just no-op.
+                let mut map: std::collections::HashMap<PathBuf, usize> =
+                    counts.into_iter().collect();
+                for entry in this
+                    .entries
+                    .iter_mut()
+                    .chain(this.parent_entries.iter_mut())
+                    .chain(this.entries_unfiltered.iter_mut().flat_map(|v| v.iter_mut()))
+                {
+                    if entry.child_count.is_some() {
+                        continue;
+                    }
+                    if let Some(n) = map.remove(&entry.path) {
+                        entry.child_count = Some(n);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn select_entry_by_name(&mut self, name: &str, cx: &mut Context<Self>) {
@@ -3872,11 +3943,10 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
             let (mode, uid, gid) = unix_metadata(&metadata);
             let is_dir = metadata.is_dir();
             let path = e.path();
-            let child_count = if is_dir {
-                std::fs::read_dir(&path).map(|rd| rd.count()).ok()
-            } else {
-                None
-            };
+            // `child_count` is left `None` here and filled in asynchronously
+            // by `spawn_child_count_fill` after the listing paints. Doing it
+            // inline costs one extra `read_dir` per subdirectory, which
+            // dominated the perceived latency of entering populated dirs.
             Some(DirEntry {
                 name,
                 path,
@@ -3890,7 +3960,7 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
                 mode,
                 uid,
                 gid,
-                child_count,
+                child_count: None,
             })
         })
         .collect();
