@@ -75,17 +75,34 @@ const DEFAULT_KEYMAP: &str = r#"
 # Override in ~/.config/codon/keymap.toml
 
 [bindings.global]
-# Pane focus (vim-style)
+# Pane focus (vim-style). `ctrl-{h,j,k,l}` collide with terminal
+# control codes (BS / LF / kill-line / clear) so they're unreachable
+# from a focused terminal pane — the `cmd-k {arrow}` chords below are
+# the universal path that works from every pane kind, terminals
+# included.
 "ctrl-h" = "workspace::ActivatePaneLeft"
 "ctrl-j" = "workspace::ActivatePaneDown"
 "ctrl-k" = "workspace::ActivatePaneUp"
 "ctrl-l" = "workspace::ActivatePaneRight"
 
-# Pane move (swap with adjacent pane)
+# Pane focus (cmd-k + arrow) — terminal-safe alternative to ctrl-hjkl.
+"cmd-k left"  = "workspace::ActivatePaneLeft"
+"cmd-k down"  = "workspace::ActivatePaneDown"
+"cmd-k up"    = "workspace::ActivatePaneUp"
+"cmd-k right" = "workspace::ActivatePaneRight"
+
+# Pane move (swap with adjacent pane).
 "ctrl-shift-h" = "workspace::SwapPaneLeft"
 "ctrl-shift-j" = "workspace::SwapPaneDown"
 "ctrl-shift-k" = "workspace::SwapPaneUp"
 "ctrl-shift-l" = "workspace::SwapPaneRight"
+
+# Pane move (cmd-k + shift-arrow) — terminal-safe alternative to
+# ctrl-shift-hjkl. Mirrors the focus chords above.
+"cmd-k shift-left"  = "workspace::SwapPaneLeft"
+"cmd-k shift-down"  = "workspace::SwapPaneDown"
+"cmd-k shift-up"    = "workspace::SwapPaneUp"
+"cmd-k shift-right" = "workspace::SwapPaneRight"
 
 # Pane resize (cmd-k prefix to avoid conflict)
 "cmd-k shift-h" = "vim::ResizePaneLeft"

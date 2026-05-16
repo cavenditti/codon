@@ -70,17 +70,32 @@ format_on_save = "on"
 
 # ═══ Keybindings — global ════════════════════════════════════════════
 [bindings.global]
-# Pane focus (vim/helix muscle memory)
+# Pane focus (vim/helix muscle memory). ctrl-{h,j,k,l} collide with
+# terminal control codes (BS / LF / kill-line / clear) so the cmd-k
+# arrow chords below are the universal alternative that works from
+# every pane kind, terminals included.
 "ctrl-h" = "workspace::ActivatePaneLeft"
 "ctrl-j" = "workspace::ActivatePaneDown"
 "ctrl-k" = "workspace::ActivatePaneUp"
 "ctrl-l" = "workspace::ActivatePaneRight"
+
+# Pane focus (cmd-k + arrow) — terminal-safe alternative.
+"cmd-k left"  = "workspace::ActivatePaneLeft"
+"cmd-k down"  = "workspace::ActivatePaneDown"
+"cmd-k up"    = "workspace::ActivatePaneUp"
+"cmd-k right" = "workspace::ActivatePaneRight"
 
 # Pane move — swap with neighbour
 "ctrl-shift-h" = "workspace::SwapPaneLeft"
 "ctrl-shift-j" = "workspace::SwapPaneDown"
 "ctrl-shift-k" = "workspace::SwapPaneUp"
 "ctrl-shift-l" = "workspace::SwapPaneRight"
+
+# Pane move (cmd-k + shift-arrow) — terminal-safe alternative.
+"cmd-k shift-left"  = "workspace::SwapPaneLeft"
+"cmd-k shift-down"  = "workspace::SwapPaneDown"
+"cmd-k shift-up"    = "workspace::SwapPaneUp"
+"cmd-k shift-right" = "workspace::SwapPaneRight"
 
 # Pane resize (held under cmd-k to avoid clashing with move)
 "cmd-k shift-h" = "vim::ResizePaneLeft"
