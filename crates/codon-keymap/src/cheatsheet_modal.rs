@@ -41,7 +41,7 @@ actions!(
     ]
 );
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum KeymapCheatTab {
     ThisPane,
     Global,
@@ -914,4 +914,193 @@ pub fn show_keymap(
 
 pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(show_keymap);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding_row(chord: &str, action: &str) -> BindingRow {
+        BindingRow {
+            keystrokes: Rc::from(Vec::<KeybindingKeystroke>::new()),
+            keystrokes_text: SharedString::from(chord.to_string()),
+            action_name: SharedString::from(action.to_string()),
+            raw_action_name: SharedString::from(action.to_string()),
+        }
+    }
+
+    #[test]
+    fn keymap_cheat_tab_next_cycles_two_tabs() {
+        assert_eq!(KeymapCheatTab::ThisPane.next(), KeymapCheatTab::Global);
+        assert_eq!(KeymapCheatTab::Global.next(), KeymapCheatTab::ThisPane);
+        // Idempotent under double-application.
+        assert_eq!(
+            KeymapCheatTab::ThisPane.next().next(),
+            KeymapCheatTab::ThisPane
+        );
+    }
+
+    #[test]
+    fn keymap_cheat_tab_labels_are_user_facing() {
+        assert_eq!(KeymapCheatTab::ThisPane.label(), "This pane");
+        assert_eq!(KeymapCheatTab::Global.label(), "Global");
+    }
+
+    #[test]
+    fn chord_sort_key_counts_whitespace_segments_then_text() {
+        // Single-chord bindings sort before multi-chord ones.
+        let one = chord_sort_key("cmd-k");
+        let two = chord_sort_key("cmd-k a");
+        let three = chord_sort_key("cmd-k a a");
+        assert!(one < two);
+        assert!(two < three);
+        // Ties on length break by text.
+        assert!(chord_sort_key("cmd-a") < chord_sort_key("cmd-b"));
+    }
+
+    #[test]
+    fn chord_sort_key_empty_string_has_zero_segments() {
+        assert_eq!(chord_sort_key(""), (0, String::new()));
+    }
+
+    #[test]
+    fn first_pair_index_skips_empty_hint_rows() {
+        let rows = vec![
+            RowKind::EmptyHint(SharedString::from("nope")),
+            RowKind::Pair {
+                left: binding_row("cmd-a", "act-a"),
+                right: None,
+                striped: false,
+            },
+        ];
+        assert_eq!(first_pair_index(&rows), Some(1));
+    }
+
+    #[test]
+    fn first_pair_index_none_when_only_hints() {
+        let rows = vec![RowKind::EmptyHint(SharedString::from("nope"))];
+        assert_eq!(first_pair_index(&rows), None);
+    }
+
+    #[test]
+    fn first_pair_index_none_on_empty_slice() {
+        assert_eq!(first_pair_index(&[]), None);
+    }
+
+    #[test]
+    fn nearest_pair_returns_target_when_already_pair() {
+        let rows = vec![
+            RowKind::EmptyHint(SharedString::from("hint")),
+            RowKind::Pair {
+                left: binding_row("cmd-a", "a"),
+                right: None,
+                striped: false,
+            },
+            RowKind::Pair {
+                left: binding_row("cmd-b", "b"),
+                right: None,
+                striped: true,
+            },
+        ];
+        assert_eq!(nearest_pair(&rows, 2), Some(2));
+    }
+
+    #[test]
+    fn nearest_pair_searches_outward_from_target() {
+        let rows = vec![
+            RowKind::EmptyHint(SharedString::from("hint")),
+            RowKind::EmptyHint(SharedString::from("hint")),
+            RowKind::Pair {
+                left: binding_row("cmd-a", "a"),
+                right: None,
+                striped: false,
+            },
+        ];
+        // Target index 0 is a hint — the nearest pair is at index 2.
+        assert_eq!(nearest_pair(&rows, 0), Some(2));
+    }
+
+    #[test]
+    fn nearest_pair_none_when_no_pair_anywhere() {
+        let rows = vec![
+            RowKind::EmptyHint(SharedString::from("h1")),
+            RowKind::EmptyHint(SharedString::from("h2")),
+        ];
+        assert_eq!(nearest_pair(&rows, 0), None);
+    }
+
+    #[test]
+    fn append_pairs_top_down_then_right_with_even_count() {
+        let items = vec![
+            binding_row("cmd-a", "A"),
+            binding_row("cmd-b", "B"),
+            binding_row("cmd-c", "C"),
+            binding_row("cmd-d", "D"),
+        ];
+        let mut out = Vec::new();
+        append_pairs(&mut out, &items);
+        assert_eq!(out.len(), 2);
+        // Row 0: left=A, right=C  (top-down then right, split=2).
+        // Row 1: left=B, right=D.
+        match &out[0] {
+            RowKind::Pair { left, right, striped } => {
+                assert_eq!(left.action_name.as_ref(), "A");
+                assert_eq!(right.as_ref().map(|r| r.action_name.as_ref()), Some("C"));
+                assert!(!striped, "first pair is unstriped");
+            }
+            _ => panic!("expected Pair"),
+        }
+        match &out[1] {
+            RowKind::Pair { left, right, striped } => {
+                assert_eq!(left.action_name.as_ref(), "B");
+                assert_eq!(right.as_ref().map(|r| r.action_name.as_ref()), Some("D"));
+                assert!(striped, "second pair is striped");
+            }
+            _ => panic!("expected Pair"),
+        }
+    }
+
+    #[test]
+    fn append_pairs_odd_count_has_none_right_in_last_row() {
+        let items = vec![
+            binding_row("cmd-a", "A"),
+            binding_row("cmd-b", "B"),
+            binding_row("cmd-c", "C"),
+        ];
+        let mut out = Vec::new();
+        append_pairs(&mut out, &items);
+        // split = 2 → row 0: left=A right=C, row 1: left=B right=None
+        assert_eq!(out.len(), 2);
+        match &out[1] {
+            RowKind::Pair { right, .. } => assert!(right.is_none()),
+            _ => panic!("expected Pair"),
+        }
+    }
+
+    #[test]
+    fn append_pairs_empty_input_is_noop() {
+        let mut out = vec![RowKind::EmptyHint(SharedString::from("untouched"))];
+        let pre_len = out.len();
+        append_pairs(&mut out, &[]);
+        assert_eq!(out.len(), pre_len);
+    }
+
+    #[test]
+    fn leaf_context_label_returns_primary_key_of_last_entry() {
+        let mut leaf = KeyContext::new_with_defaults();
+        leaf.add("Terminal");
+        let mut root = KeyContext::new_with_defaults();
+        root.add("Workspace");
+        let stack = vec![root, leaf];
+        assert_eq!(
+            leaf_context_label(&stack).map(|s| s.to_string()),
+            Some("Terminal".to_string())
+        );
+    }
+
+    #[test]
+    fn leaf_context_label_none_on_empty_stack() {
+        let stack: Vec<KeyContext> = Vec::new();
+        assert!(leaf_context_label(&stack).is_none());
+    }
 }

@@ -10,7 +10,7 @@ summary: >
   At least one unit test per non-trivial pure function per the
   v0.0.1 `#c-test-coverage-floor` clause.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-test-coverage-floor
 ---

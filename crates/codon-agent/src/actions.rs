@@ -121,3 +121,48 @@ fn find_adapter_hosted_agent(
                 .or_else(|| item.downcast::<AgentPanel>())
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explain_prefix_ends_with_blank_line_separator() {
+        // The trailing `\n\n` separates the codon-supplied verb from the
+        // user's selected text so the agent reads it as a block, not a
+        // run-on sentence.
+        assert!(EXPLAIN_PREFIX.ends_with("\n\n"));
+        assert!(SUMMARIZE_PREFIX.ends_with("\n\n"));
+        assert!(REFACTOR_PREFIX.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn prefixes_are_distinct() {
+        // Each verb has a distinct prompt — guards against a copy-paste
+        // mistake silently making two verbs identical.
+        assert_ne!(EXPLAIN_PREFIX, SUMMARIZE_PREFIX);
+        assert_ne!(EXPLAIN_PREFIX, REFACTOR_PREFIX);
+        assert_ne!(SUMMARIZE_PREFIX, REFACTOR_PREFIX);
+    }
+
+    #[test]
+    fn refactor_prefix_pins_behavior_invariant() {
+        // Codon's refactor verb explicitly promises the agent will keep
+        // behaviour identical — losing that phrase would change product
+        // semantics, so pin it from a test.
+        assert!(REFACTOR_PREFIX.contains("keeping behavior identical"));
+    }
+
+    #[test]
+    fn selection_object_kinds_cover_expected_objects() {
+        // The agent seed actions accept Text, File, Dir, Hunk, Diagnostic,
+        // and Block selections. Removing one would silently break a
+        // documented cross-pane verb pairing.
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::Text));
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::File));
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::Dir));
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::Hunk));
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::Diagnostic));
+        assert!(SELECTION_OBJECT_KINDS.contains(&ObjectKind::Block));
+    }
+}

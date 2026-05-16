@@ -152,3 +152,55 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     debug::register_for_workspace(workspace);
     workspace.register_action(peek::handle_peek_dismiss);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::any::TypeId;
+
+    /// The adapter-detection predicates are simple `TypeId::of` checks
+    /// against `PanelItemAdapter<P>` for four distinct `P`. The
+    /// load-bearing invariant — and the only piece of pure logic worth
+    /// pinning — is that those four `TypeId`s are pairwise distinct, so
+    /// `is_agent_adapter` never silently agrees that a `GitPanel`
+    /// adapter is the agent panel.
+    #[test]
+    fn adapter_type_ids_are_pairwise_distinct() {
+        let ids = [
+            TypeId::of::<PanelItemAdapter<AgentPanel>>(),
+            TypeId::of::<PanelItemAdapter<GitPanel>>(),
+            TypeId::of::<PanelItemAdapter<OutlinePanel>>(),
+            TypeId::of::<PanelItemAdapter<DebugPanel>>(),
+        ];
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(
+                    ids[i], ids[j],
+                    "adapter TypeIds at indices {i} and {j} collide"
+                );
+            }
+        }
+    }
+
+    /// The `persistent_name()` of each wrapped panel identifies the
+    /// kind for registration with `codon_register_pane_kind`. Two
+    /// panels sharing a name would clobber each other in the global
+    /// registry, so pin that they differ.
+    #[test]
+    fn persistent_names_are_pairwise_distinct() {
+        let names = [
+            AgentPanel::persistent_name(),
+            GitPanel::persistent_name(),
+            OutlinePanel::persistent_name(),
+            DebugPanel::persistent_name(),
+        ];
+        for i in 0..names.len() {
+            for j in (i + 1)..names.len() {
+                assert_ne!(
+                    names[i], names[j],
+                    "persistent_name collision between adapter kinds at indices {i} and {j}"
+                );
+            }
+        }
+    }
+}

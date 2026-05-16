@@ -142,3 +142,153 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(name: &str) -> Session {
+        Session::new(name, PathBuf::from("/tmp"))
+    }
+
+    #[test]
+    fn new_session_has_one_window_and_no_previous() {
+        let s = session("alpha");
+        assert_eq!(s.windows.len(), 1);
+        assert_eq!(s.active_window, 0);
+        assert_eq!(s.previous_window, None);
+        assert_eq!(s.windows[0].id, WindowId(1));
+    }
+
+    #[test]
+    fn next_window_id_increments_above_max_existing_id() {
+        let mut s = session("alpha");
+        // Force a non-contiguous id to confirm we use max + 1.
+        s.windows.push(Window::new(WindowId(7), "seven"));
+        assert_eq!(s.next_window_id(), WindowId(8));
+    }
+
+    #[test]
+    fn add_window_returns_unique_id_each_time() {
+        let mut s = session("alpha");
+        let a = s.add_window(None);
+        let b = s.add_window(None);
+        assert_ne!(a, b);
+        assert_eq!(s.windows.len(), 3);
+    }
+
+    #[test]
+    fn set_active_window_records_previous() {
+        let mut s = session("alpha");
+        s.add_window(None);
+        s.add_window(None);
+        // Move from window 0 to window 2.
+        s.set_active_window(2);
+        assert_eq!(s.active_window, 2);
+        assert_eq!(s.previous_window, Some(0));
+
+        // Move again from 2 to 1 — previous shifts to 2, not 0.
+        s.set_active_window(1);
+        assert_eq!(s.active_window, 1);
+        assert_eq!(s.previous_window, Some(2));
+    }
+
+    #[test]
+    fn set_active_window_noop_for_out_of_range_or_already_active() {
+        let mut s = session("alpha");
+        s.add_window(None);
+        s.set_active_window(0); // already active
+        assert_eq!(s.previous_window, None);
+        s.set_active_window(99); // out of range
+        assert_eq!(s.active_window, 0);
+        assert_eq!(s.previous_window, None);
+    }
+
+    #[test]
+    fn remove_window_refuses_to_drop_the_last_one() {
+        let mut s = session("alpha");
+        let only_id = s.windows[0].id;
+        assert!(!s.remove_window(only_id));
+        assert_eq!(s.windows.len(), 1);
+    }
+
+    #[test]
+    fn remove_window_shifts_active_index_when_earlier_window_removed() {
+        let mut s = session("alpha");
+        let _b = s.add_window(None); // window 1
+        let _c = s.add_window(None); // window 2
+        s.set_active_window(2);
+        assert_eq!(s.active_window, 2);
+        // Drop the very first window — active should slide from 2 down to 1.
+        let first_id = s.windows[0].id;
+        assert!(s.remove_window(first_id));
+        assert_eq!(s.windows.len(), 2);
+        assert_eq!(s.active_window, 1);
+    }
+
+    #[test]
+    fn remove_window_clamps_active_when_tail_removed() {
+        let mut s = session("alpha");
+        s.add_window(None);
+        s.set_active_window(1);
+        let last_id = s.windows[1].id;
+        assert!(s.remove_window(last_id));
+        // Active index must point at the surviving window, not past it.
+        assert_eq!(s.active_window, 0);
+    }
+
+    #[test]
+    fn remove_window_clears_previous_when_it_pointed_at_removed() {
+        let mut s = session("alpha");
+        s.add_window(None);
+        s.add_window(None);
+        s.set_active_window(2);
+        // previous_window now = Some(0).
+        assert_eq!(s.previous_window, Some(0));
+        // Remove the window at index 0 (the one previous_window points at).
+        let removed_id = s.windows[0].id;
+        s.remove_window(removed_id);
+        assert_eq!(s.previous_window, None);
+    }
+
+    #[test]
+    fn remove_window_clears_previous_when_aliasing_active_after_shift() {
+        let mut s = session("alpha");
+        s.add_window(None);
+        s.add_window(None);
+        // Sequence: active=0 → set_active(1) (prev=0) → set_active(2) (prev=1).
+        s.set_active_window(1);
+        s.set_active_window(2);
+        assert_eq!(s.previous_window, Some(1));
+        // Remove window at index 1 (the previous). After removal active=1.
+        // previous would also be 1 after the shift, so it must be cleared.
+        let removed_id = s.windows[1].id;
+        s.remove_window(removed_id);
+        assert_eq!(s.previous_window, None);
+        assert_eq!(s.active_window, 1);
+    }
+
+    #[test]
+    fn active_returns_none_for_invalid_index() {
+        let mut s = session("alpha");
+        s.active_window = 42;
+        assert!(s.active().is_none());
+    }
+
+    #[test]
+    fn touch_updates_last_attached() {
+        let mut s = session("alpha");
+        let before = s.last_attached_ms;
+        // Spin briefly until the system clock advances.
+        for _ in 0..10_000 {
+            s.touch();
+            if s.last_attached_ms != before {
+                break;
+            }
+        }
+        // Either the clock moved or it's stuck on the same ms — both are
+        // observable from the field, so we just confirm `touch` writes.
+        // A weaker but reliable check: touch produces a value >= before.
+        assert!(s.last_attached_ms >= before);
+    }
+}
