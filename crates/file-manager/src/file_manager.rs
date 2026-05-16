@@ -2750,7 +2750,7 @@ impl FileManager {
         }
 
         if self.visual_anchor.is_some() {
-            let extends = matches!(key, "j" | "k") && !shift && !ctrl;
+            let extends = matches!(key, "j" | "k" | "down" | "up") && !shift && !ctrl;
             let commits = matches!(key, "escape" | "enter" | "\n");
             if !extends && !commits {
                 self.visual_anchor = None;
@@ -2758,14 +2758,15 @@ impl FileManager {
         }
 
         let handled = match key {
-            // Navigation
-            "j" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
-            "k" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
+            // Navigation. Arrow keys mirror hjkl so users who haven't
+            // internalized the Vim/Helix row can still drive the panel.
+            "j" | "down" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
+            "k" | "up" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
             // Bare `l` arms a short-window chord: if `n` lands next
             // we make symlinks; if any other key (or the timeout)
             // fires first we commit `enter_directory` instead. See
             // `arm_l_chord` for the timer logic.
-            "l" if !shift && !ctrl => { self.arm_l_chord(window, cx); true }
+            "l" | "right" if !shift && !ctrl => { self.arm_l_chord(window, cx); true }
             // `L` (shift-l) is the chord starter for hardlinks: `Ln`
             // calls `make_hardlinks`. Unlike bare `l` there is no
             // enter-directory fallback, so a plain `pending_chord`
@@ -2784,7 +2785,7 @@ impl FileManager {
                 true
             }
             "enter" | "\n" => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "h" if !shift && !ctrl => { self.parent_directory(&ParentDirectory, window, cx); true }
+            "h" | "left" if !shift && !ctrl => { self.parent_directory(&ParentDirectory, window, cx); true }
             "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
             "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
             // Scrolling
