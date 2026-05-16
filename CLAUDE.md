@@ -46,10 +46,16 @@ Rust toolchain is pinned in `rust-toolchain.toml` (currently 1.95.0).
 ```
 apps/codon/             entry binary; main.rs replaces Zed's main with codon's init order
 crates/
-  codon-mode/           PaneMode (Normal/Insert/Command) + Selection trait, force-on Helix mode
+  codon-pane-bridge/    PaneMode enum + CodonModeTracker global + PaneModeBridge trait (cycle-free base)
+  codon-mode/           re-exports pane-bridge + mode_indicator that translates vim::state to PaneMode
   codon-keymap/         TOML keymap loader + cmd-k F1 cheatsheet modal + chord-timeout setter
   codon-session/        tmux-style sessions + windows + in-memory pane stash for switching
+  codon-panes/          adapts agent/git/outline/debug/peek panels into pane-kind splits (phase 12)
+  codon-pickers/        shared ModalScaffold for codon modals/pickers (focus/dismiss/mode triplet)
+  codon-command-palette/ Helix-style `:` palette over Zed's command registry
+  codon-jump/           Vimium-style jump-hint overlay (cmd-k j / cmd-k u)
   codon-agent/          cross-pane agent verbs (Explain/Summarize/Refactor) seeded from selections
+  codon-config/         unified ~/.config/codon/codon.toml loader + writeback (toml_edit)
   file-manager/         yazi-style three-column file manager (its own Item, not Zed's project_panel)
 vendor/zed/             git submodule, branch `codon` — all upstream changes committed here
 vendor/forge-spec/      git submodule — spec-cli for `.specs/` tracking
@@ -63,20 +69,20 @@ The workspace `Cargo.toml` enumerates every vendored Zed crate as a workspace me
 
 ## Architecture — the bits that span files
 
-**Modal layer.** `codon-mode` defines `PaneMode { Normal, Insert, Command }` and a global `CodonModeTracker`. Each codon pane (terminal, file-manager, agent) updates the tracker on focus; the status bar reads from it. The pane-mode model coexists with Vim mode — Helix mode is force-enabled in `vim` by default.
+**Modal layer.** `codon-pane-bridge` owns the `PaneMode { Normal, Insert, Command }` enum, the global `CodonModeTracker`, and the `PaneModeBridge` trait every codon pane / modal implements. A single focus subscriber installed via `install_pane_mode_dispatcher` picks the focused entity, calls its bridge impl, and writes the tracker — no crate updates the tracker directly. `codon-mode` re-exports the types and hosts `mode_indicator`, which translates `vim::state` per-pane into a `PaneMode` for the status bar. The pane-mode model coexists with Vim mode — Helix mode is force-enabled in `vim` by default.
 
-**Sessions + windows.** Codon is a single-OS-window multiplexer. Sessions are persisted to the global KVP (key `codon_sessions_v1`). Window-switching uses an **in-memory pane stash** (`WindowRuntimeCache` in `crates/codon-session/src/runtime.rs`) — cloned `Member` trees + active pane handles keep panes (and their workspace subscriptions) alive across switches. The persisted JSON `LayoutSnapshot` is the fallback for cross-restart restoration only. The `workspace::codon_bridge` module (in vendored Zed) exposes `capture_layout` / `apply_layout` / `replace_center_with_empty_pane` / `restore_center_root` to support this.
+**Sessions + windows.** Codon is a single-OS-window multiplexer. Sessions are persisted to the global KVP (key `codon_sessions_v1`). Window-switching uses an **in-memory pane stash** (`WindowRuntimeCache` in `crates/codon-session/src/runtime.rs`) — cloned `Member` trees + active pane handles keep panes (and their workspace subscriptions) alive across switches. The persisted JSON `LayoutSnapshot` is the fallback for cross-restart restoration only. The `workspace::codon_bridge` module (in vendored Zed) exposes `capture_layout` / `apply_layout` / `replace_center_with_empty_pane` / `restore_center_root` to support this, plus a single unified registry surface — `codon_register_pane_kind(spec)` / `codon_pane_kind_spec(kind)` — that codon crates use to teach Zed how to serialize, restore, and seed their pane kinds. The previous two-shape registry (function-pointer `OnceLock` + closure `HashMap`) collapsed into that single API in phase 14.
 
 **Vendored helpers.** Several codon features required small public surfaces added to vendored Zed crates rather than full forks. Key examples:
 
-- `vendor/zed/crates/workspace/src/codon_bridge.rs` — `LayoutSnapshot` types + capture/apply.
+- `vendor/zed/crates/workspace/src/codon_bridge.rs` — `LayoutSnapshot` types + capture/apply, plus the unified `codon_register_pane_kind` / `codon_pane_kind_spec` registry for codon-injected pane kinds (one shape, not two).
 - `Workspace::replace_center_with_empty_pane`, `restore_center_root`, `serialize_workspace_now` — pane-tree manipulation primitives.
 - `AgentPanel::seed_explain_with_selection` — entry point for cross-pane agent verbs.
 - `gpui::set_keystroke_chord_timeout` — process-wide chord-timeout override; codon sets 5 s for multi-key chords.
 
 When editing inside `vendor/zed/`, follow the upstream conventions in `vendor/zed/CLAUDE.md` (no `unwrap()`; no silent `let _ =`; never `mod.rs`; prefer additive changes to existing files; use `./script/clippy`).
 
-**Keymap.** Default bindings are an embedded TOML string in `crates/codon-keymap/src/keymap.rs`. User overrides go to `~/.config/codon/keymap.toml`. Bindings are codon's only entry point for actions — every cross-cutting verb (`codon_session::*`, `codon_agent::*`, `codon_keymap::ShowKeymap`, etc.) is registered via TOML, not via Zed's JSON keymap files. `assets/config/keymap.example.toml` is the user-facing template.
+**Keymap.** Default bindings are an embedded TOML string in `crates/codon-keymap/src/keymap.rs`. User overrides live in `~/.config/codon/codon.toml` (the unified config file; legacy `~/.config/codon/keymap.toml` is still read with a deprecation hint). Bindings are codon's only entry point for actions — every cross-cutting verb (`codon_session::*`, `codon_agent::*`, `codon_keymap::ShowKeymap`, etc.) is registered via TOML, not via Zed's JSON keymap files. `codon-keymap` itself does NOT depend on any downstream codon crate; each owning crate registers its own GPUI actions from its own `init(cx)` (called in turn from `apps/codon/src/main.rs`), and the keymap resolves names through the global action registry only. `assets/config/codon.example.toml` is the user-facing template (the old `keymap.example.toml` is now a one-release-cycle redirect stub).
 
 ## Workflow conventions
 

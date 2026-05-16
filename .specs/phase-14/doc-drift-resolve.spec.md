@@ -8,7 +8,7 @@ summary: >
   assets/config/keymap.example.toml against the now-cleaner code.
   Mismatches get fixed in code or in docs — never left.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-doc-drift-check
 ---
