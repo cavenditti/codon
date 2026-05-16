@@ -10,6 +10,7 @@ pub mod overview;
 pub mod pane_context_label;
 pub mod picker;
 pub mod registry;
+pub mod resize_sticky;
 pub mod runtime;
 pub mod session;
 pub mod status_item;

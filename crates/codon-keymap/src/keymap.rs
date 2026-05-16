@@ -104,11 +104,15 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-k shift-up"    = "workspace::SwapPaneUp"
 "cmd-k shift-right" = "workspace::SwapPaneRight"
 
-# Pane resize (cmd-k prefix to avoid conflict)
-"cmd-k shift-h" = "vim::ResizePaneLeft"
-"cmd-k shift-j" = "vim::ResizePaneDown"
-"cmd-k shift-k" = "vim::ResizePaneUp"
-"cmd-k shift-l" = "vim::ResizePaneRight"
+# Pane resize (cmd-k prefix to avoid conflict). The codon_session
+# wrappers nudge the pane via vim::ResizePane* and arm a short sticky
+# window — see `crates/codon-session/src/resize_sticky.rs`. During
+# that window, bare h/j/k/l keep resizing without the prefix; esc /
+# any other key / timeout exits.
+"cmd-k shift-h" = "codon_session::ResizePaneLeft"
+"cmd-k shift-j" = "codon_session::ResizePaneDown"
+"cmd-k shift-k" = "codon_session::ResizePaneUp"
+"cmd-k shift-l" = "codon_session::ResizePaneRight"
 
 # Pane navigation (cmd-k h/k/l) — kept for back-compat, equivalent to ctrl-*.
 # `cmd-k j` is repurposed for the jump-hint overlay below; use `ctrl-j` for

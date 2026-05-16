@@ -15,6 +15,7 @@ use crate::{
     break_pane,
     picker::SessionSwitchModal,
     registry::SessionRegistry,
+    resize_sticky::{ResizeDir, ResizeStickyOverlay},
     runtime::{WindowRuntime, WindowRuntimeCache},
     session::{Session, SessionId},
     swap,
@@ -87,6 +88,16 @@ actions!(
         /// file-vs-file diffs are deferred until the phase-4 codon diff
         /// pane lands. See `diff_open.rs`.
         DiffOpen,
+        /// Resize the active pane leftward by one cell and arm the
+        /// sticky-resize overlay so bare `h/j/k/l` keep resizing for
+        /// `STICKY_TIMEOUT` after the chord. See `resize_sticky.rs`.
+        ResizePaneLeft,
+        /// Resize the active pane downward and arm the sticky overlay.
+        ResizePaneDown,
+        /// Resize the active pane upward and arm the sticky overlay.
+        ResizePaneUp,
+        /// Resize the active pane rightward and arm the sticky overlay.
+        ResizePaneRight,
     ]
 );
 
@@ -116,9 +127,49 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_break_pane_to_window);
     workspace.register_action(handle_safe_close_active_item);
     workspace.register_action(handle_hold_quit);
+    workspace.register_action(handle_resize_pane_left);
+    workspace.register_action(handle_resize_pane_down);
+    workspace.register_action(handle_resize_pane_up);
+    workspace.register_action(handle_resize_pane_right);
     crate::goto_or_open::register_for_workspace(workspace);
     crate::diff_open::register_for_workspace(workspace);
     crate::contextual_split::register_for_workspace(workspace);
+}
+
+fn handle_resize_pane_left(
+    workspace: &mut Workspace,
+    _: &ResizePaneLeft,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    ResizeStickyOverlay::arm(ResizeDir::Left, workspace, window, cx);
+}
+
+fn handle_resize_pane_down(
+    workspace: &mut Workspace,
+    _: &ResizePaneDown,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    ResizeStickyOverlay::arm(ResizeDir::Down, workspace, window, cx);
+}
+
+fn handle_resize_pane_up(
+    workspace: &mut Workspace,
+    _: &ResizePaneUp,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    ResizeStickyOverlay::arm(ResizeDir::Up, workspace, window, cx);
+}
+
+fn handle_resize_pane_right(
+    workspace: &mut Workspace,
+    _: &ResizePaneRight,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    ResizeStickyOverlay::arm(ResizeDir::Right, workspace, window, cx);
 }
 
 fn handle_session_new(

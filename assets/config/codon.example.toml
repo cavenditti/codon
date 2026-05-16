@@ -97,11 +97,14 @@ format_on_save = "on"
 "cmd-k shift-up"    = "workspace::SwapPaneUp"
 "cmd-k shift-right" = "workspace::SwapPaneRight"
 
-# Pane resize (held under cmd-k to avoid clashing with move)
-"cmd-k shift-h" = "vim::ResizePaneLeft"
-"cmd-k shift-j" = "vim::ResizePaneDown"
-"cmd-k shift-k" = "vim::ResizePaneUp"
-"cmd-k shift-l" = "vim::ResizePaneRight"
+# Pane resize (held under cmd-k to avoid clashing with move). The
+# codon_session wrappers nudge the pane and arm a 1.5s sticky window:
+# during it, bare h/j/k/l keep resizing without the prefix; esc / any
+# other key / timeout exits.
+"cmd-k shift-h" = "codon_session::ResizePaneLeft"
+"cmd-k shift-j" = "codon_session::ResizePaneDown"
+"cmd-k shift-k" = "codon_session::ResizePaneUp"
+"cmd-k shift-l" = "codon_session::ResizePaneRight"
 
 # Pane splitting (tmux-flavoured)
 "cmd-k |"  = "pane::SplitRight"
