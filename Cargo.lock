@@ -3437,6 +3437,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "codon-mode",
+ "codon-pickers",
  "command_palette",
  "command_palette_hooks",
  "editor",
@@ -3501,6 +3502,7 @@ dependencies = [
  "codon-config",
  "codon-jump",
  "codon-mode",
+ "codon-pickers",
  "codon-session",
  "command_palette",
  "diagnostics",
@@ -3565,6 +3567,7 @@ name = "codon-pickers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-mode",
  "fs",
  "fuzzy",
  "gpui",
@@ -3581,6 +3584,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "codon-pickers",
  "db",
  "editor",
  "file-manager",

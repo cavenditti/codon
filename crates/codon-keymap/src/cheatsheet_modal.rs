@@ -42,28 +42,28 @@ actions!(
 );
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CheatTab {
+enum KeymapCheatTab {
     ThisPane,
     Global,
 }
 
-impl CheatTab {
+impl KeymapCheatTab {
     fn label(self) -> &'static str {
         match self {
-            CheatTab::ThisPane => "This pane",
-            CheatTab::Global => "Global",
+            KeymapCheatTab::ThisPane => "This pane",
+            KeymapCheatTab::Global => "Global",
         }
     }
     fn next(self) -> Self {
         match self {
-            CheatTab::ThisPane => CheatTab::Global,
-            CheatTab::Global => CheatTab::ThisPane,
+            KeymapCheatTab::ThisPane => KeymapCheatTab::Global,
+            KeymapCheatTab::Global => KeymapCheatTab::ThisPane,
         }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CheatMode {
+enum KeymapCheatMode {
     Browse,
     Filter,
 }
@@ -75,8 +75,8 @@ pub struct KeybindingsCheatsheetModal {
     leaf_context_label: Option<SharedString>,
     local_bindings: Vec<BindingRow>,
     global_bindings: Vec<BindingRow>,
-    tab: CheatTab,
-    mode: CheatMode,
+    tab: KeymapCheatTab,
+    mode: KeymapCheatMode,
     filter: String,
     /// Visible rows after tab + filter — interleaved pair rows / empty
     /// hints. `gpui::list` virtualizes against this slice.
@@ -145,9 +145,9 @@ impl KeybindingsCheatsheetModal {
         // current pane has no context-local bindings, jump straight to
         // Global instead of greeting the user with an empty page.
         let tab = if local_bindings.is_empty() {
-            CheatTab::Global
+            KeymapCheatTab::Global
         } else {
-            CheatTab::ThisPane
+            KeymapCheatTab::ThisPane
         };
 
         let overdraw = px(ROW_HEIGHT_PX * (PAGE_ROWS as f32) * 3.0);
@@ -157,7 +157,7 @@ impl KeybindingsCheatsheetModal {
             local_bindings,
             global_bindings,
             tab,
-            mode: CheatMode::Browse,
+            mode: KeymapCheatMode::Browse,
             filter: String::new(),
             rows: Rc::from(Vec::<RowKind>::new()),
             list_state: ListState::new(0, ListAlignment::Top, overdraw),
@@ -170,8 +170,8 @@ impl KeybindingsCheatsheetModal {
 
     fn rebuild_rows(&mut self) {
         let source: &[BindingRow] = match self.tab {
-            CheatTab::ThisPane => &self.local_bindings,
-            CheatTab::Global => &self.global_bindings,
+            KeymapCheatTab::ThisPane => &self.local_bindings,
+            KeymapCheatTab::Global => &self.global_bindings,
         };
         let filtered: Vec<BindingRow> = if self.filter.is_empty() {
             source.to_vec()
@@ -192,7 +192,7 @@ impl KeybindingsCheatsheetModal {
         if filtered.is_empty() {
             let hint = if !self.filter.is_empty() {
                 SharedString::from(format!("No bindings match `{}`", self.filter))
-            } else if matches!(self.tab, CheatTab::ThisPane) {
+            } else if matches!(self.tab, KeymapCheatTab::ThisPane) {
                 SharedString::from("No bindings specific to this pane")
             } else {
                 SharedString::from("No bindings configured")
@@ -216,11 +216,11 @@ impl KeybindingsCheatsheetModal {
     }
 
     fn enter_filter(&mut self) {
-        self.mode = CheatMode::Filter;
+        self.mode = KeymapCheatMode::Filter;
     }
 
     fn exit_filter(&mut self, clear: bool) {
-        self.mode = CheatMode::Browse;
+        self.mode = KeymapCheatMode::Browse;
         if clear && !self.filter.is_empty() {
             self.filter.clear();
             self.rebuild_rows();
@@ -257,8 +257,8 @@ impl KeybindingsCheatsheetModal {
         let cmd = event.keystroke.modifiers.platform;
 
         match self.mode {
-            CheatMode::Browse => self.handle_browse_key(event, key, shift, ctrl, window, cx),
-            CheatMode::Filter => {
+            KeymapCheatMode::Browse => self.handle_browse_key(event, key, shift, ctrl, window, cx),
+            KeymapCheatMode::Filter => {
                 self.handle_filter_key(event, key, shift, ctrl, alt, cmd, cx);
             }
         }
@@ -537,7 +537,7 @@ fn render_empty_hint(text: SharedString) -> AnyElement {
 
 /// Render the two-tab pill bar with a count badge per tab.
 fn render_tabs(
-    active: CheatTab,
+    active: KeymapCheatTab,
     leaf_label: Option<&SharedString>,
     local_count: usize,
     global_count: usize,
@@ -546,7 +546,7 @@ fn render_tabs(
 ) -> AnyElement {
     let this_pane_label = match leaf_label {
         Some(leaf) => SharedString::from(format!("This pane · {leaf}")),
-        None => SharedString::from(CheatTab::ThisPane.label()),
+        None => SharedString::from(KeymapCheatTab::ThisPane.label()),
     };
 
     let tab = |label: SharedString, count: usize, is_active: bool| {
@@ -582,12 +582,12 @@ fn render_tabs(
         .child(tab(
             this_pane_label,
             local_count,
-            matches!(active, CheatTab::ThisPane),
+            matches!(active, KeymapCheatTab::ThisPane),
         ))
         .child(tab(
-            SharedString::from(CheatTab::Global.label()),
+            SharedString::from(KeymapCheatTab::Global.label()),
             global_count,
-            matches!(active, CheatTab::Global),
+            matches!(active, KeymapCheatTab::Global),
         ))
         .into_any_element()
 }
@@ -714,8 +714,8 @@ impl Render for KeybindingsCheatsheetModal {
             })
             .sum();
         let total_in_tab = match self.tab {
-            CheatTab::ThisPane => self.local_bindings.len(),
-            CheatTab::Global => self.global_bindings.len(),
+            KeymapCheatTab::ThisPane => self.local_bindings.len(),
+            KeymapCheatTab::Global => self.global_bindings.len(),
         };
         let count_text = if self.filter.is_empty() {
             format!("{visible_count} bindings")
@@ -724,8 +724,8 @@ impl Render for KeybindingsCheatsheetModal {
         };
 
         let help_text = match self.mode {
-            CheatMode::Browse => "Tab switch · / filter · j/k move · Enter run · Esc dismiss",
-            CheatMode::Filter => "type to filter · ↑/↓ move · Enter confirm · Esc clear filter",
+            KeymapCheatMode::Browse => "Tab switch · / filter · j/k move · Enter run · Esc dismiss",
+            KeymapCheatMode::Filter => "type to filter · ↑/↓ move · Enter confirm · Esc clear filter",
         };
 
         let title_block = v_flex()
@@ -793,7 +793,7 @@ impl Render for KeybindingsCheatsheetModal {
         )
         .flex_grow();
 
-        let filter_bar = if matches!(self.mode, CheatMode::Filter) || !self.filter.is_empty() {
+        let filter_bar = if matches!(self.mode, KeymapCheatMode::Filter) || !self.filter.is_empty() {
             let prompt = h_flex()
                 .items_center()
                 .gap_2()
@@ -802,7 +802,7 @@ impl Render for KeybindingsCheatsheetModal {
                 .rounded_md()
                 .bg(theme.colors().editor_background)
                 .border_1()
-                .border_color(if matches!(self.mode, CheatMode::Filter) {
+                .border_color(if matches!(self.mode, KeymapCheatMode::Filter) {
                     accent
                 } else {
                     divider
@@ -817,7 +817,7 @@ impl Render for KeybindingsCheatsheetModal {
                         .color(Color::Default)
                         .size(LabelSize::Default),
                 )
-                .when(matches!(self.mode, CheatMode::Filter), |el| {
+                .when(matches!(self.mode, KeymapCheatMode::Filter), |el| {
                     // Visual cursor: a thin accent bar after the typed
                     // text. Static (no blink) — the modal already conveys
                     // enough state.

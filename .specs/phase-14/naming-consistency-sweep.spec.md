@@ -11,7 +11,7 @@ summary: >
   crate's lib-root source file matches the underscored package
   name.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-naming-consistency
 ---

@@ -97,6 +97,12 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 
 **Code quality**: Always prefer clarity over cleverness. Use descriptive names, break complex functions into smaller ones, and add comments where necessary to explain non-obvious logic. Follow Rust's idiomatic practices and leverage the type system to prevent bugs. Always use `cargo clippy` (or `vendor/zed/script/clippy` when editing Zed) to catch common mistakes and enforce code quality standards. Write tests for new features and bug fixes to ensure reliability and maintainability.
 
+**Naming conventions.** Three rules; existing names are grandfathered when a rename would break user keymaps.
+
+- **Action names.** New actions follow `codon_<area>::<Verb>` (matching the GPUI `actions!` macro form). The action registry is keyed on the typed name, so existing namespaces stay as they are — the rule applies to actions added from here on.
+- **Enum / struct names.** Types exported from a codon crate carry the crate's vocabulary in the name (`KeymapCheatTab`, not `CheatTab`; `JumpKind`, not `Kind`). Crate-private types are exempt but benefit from the same prefix once they appear in more than one file.
+- **Lib-root file.** Each codon crate's lib-root source file matches the Cargo package's underscored form — `crates/codon-session/src/codon_session.rs` for package `codon-session`. New crates follow the same shape; `lib.rs` is a hold-over.
+
 ## When in doubt
 
 - Reach for an existing codon crate before adding a new one — `codon-session` has the picker pattern, `codon-keymap` has the modal pattern, `codon-mode` has the selection/focus pattern.
