@@ -225,8 +225,13 @@ impl FileManager {
                 .into_any_element(),
         };
 
+        // `size_full` (not `flex_1`) — the preview is mounted inside a
+        // `div().w(...).h_full()` which is NOT a flex parent, so
+        // `flex_1` would be a no-op and a `uniform_list` body (which
+        // measures its viewport from its own bounds) would collapse to
+        // zero rows.
         v_flex()
-            .flex_1()
+            .size_full()
             .overflow_hidden()
             .py(px(2.))
             .child(body)

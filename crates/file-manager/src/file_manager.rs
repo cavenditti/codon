@@ -1132,6 +1132,38 @@ impl FileManager {
         if entry.is_dir {
             self.push_history_back(self.current_dir.clone());
             self.forward_stack.clear();
+            // Fast path: the preview pane has already loaded this dir's
+            // listing (the user paused on it long enough for the 40 ms
+            // debounce to fire, or the DirCache hit synchronously).
+            // Promote it to `entries` directly and reuse the old `entries`
+            // as `parent_entries` — both are in memory already, so we
+            // skip the background `read_dir` round-trip that's the bulk
+            // of the perceived latency when entering a populated dir.
+            //
+            // Falls through to `reload_entries` when the preview hasn't
+            // landed yet (rapid `j j j Enter`), is a non-directory
+            // variant, or was loaded for a different path.
+            let preview_matches = matches!(&self.preview, Preview::Directory(_))
+                && self.preview_target.as_ref() == Some(&entry.path);
+            if preview_matches {
+                let Preview::Directory(children) = std::mem::replace(&mut self.preview, Preview::Empty)
+                else {
+                    unreachable!("preview_matches guard checks this variant");
+                };
+                let new_parent_entries = std::mem::take(&mut self.entries);
+                self.prepare_reload();
+                self.current_dir = entry.path;
+                self.selected_index = 0;
+                self.entries = children;
+                self.parent_entries = new_parent_entries;
+                self.populate_git_status(cx);
+                self.ensure_visible();
+                self.spawn_child_count_fill(cx);
+                self.request_preview_update(cx);
+                cx.emit(FileManagerEvent::PathChanged);
+                cx.notify();
+                return;
+            }
             self.current_dir = entry.path;
             self.selected_index = 0;
             self.reload_entries(window, cx);
