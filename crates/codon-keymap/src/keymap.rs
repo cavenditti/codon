@@ -209,6 +209,19 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix 8" = "codon_session::WindowGoto(7)"
 "prefix 9" = "codon_session::WindowGoto(8)"
 
+# Direct pane→window move — tmux's `join-pane -t :N`. Same 1-based-to-
+# 0-based mapping. Closes the source window if its last pane moves
+# away. Out-of-range indices surface a toast instead of panicking.
+"prefix shift-1" = "codon_session::MovePaneToWindow(0)"
+"prefix shift-2" = "codon_session::MovePaneToWindow(1)"
+"prefix shift-3" = "codon_session::MovePaneToWindow(2)"
+"prefix shift-4" = "codon_session::MovePaneToWindow(3)"
+"prefix shift-5" = "codon_session::MovePaneToWindow(4)"
+"prefix shift-6" = "codon_session::MovePaneToWindow(5)"
+"prefix shift-7" = "codon_session::MovePaneToWindow(6)"
+"prefix shift-8" = "codon_session::MovePaneToWindow(7)"
+"prefix shift-9" = "codon_session::MovePaneToWindow(8)"
+
 # `ctrl-w` is intentionally left unbound — it's reserved for
 # delete-word in insert mode. The window-switch picker lives on
 # `cmd-k shift-w w` above; add a chord here only if it does not
@@ -256,6 +269,12 @@ const DEFAULT_KEYMAP: &str = r#"
 # the system clipboard with a toast.
 "prefix j" = "codon_jump::JumpToTarget"
 "prefix u" = "codon_jump::JumpToUrl"
+
+# Double-prefix passthrough — tmux `send-prefix`. Tapping the
+# configured prefix twice writes the literal prefix keystroke into the
+# focused terminal's PTY (so an inner vim/emacs/tmux can receive it).
+# Silent no-op outside terminals. See `passthrough.rs`.
+"prefix prefix" = "codon_keymap::SendPrefixToFocus"
 
 # Help / cheatsheet
 "prefix f1" = "codon_keymap::ShowKeymap"

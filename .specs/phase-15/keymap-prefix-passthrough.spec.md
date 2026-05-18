@@ -8,7 +8,7 @@ summary: >
   literal prefix keystroke to the focused terminal pane's PTY
   (tmux `send-prefix`). Silent no-op outside terminals.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap#c-prefix-passthrough
 ---

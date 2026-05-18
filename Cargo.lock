@@ -3511,6 +3511,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "terminal",
+ "terminal_view",
  "toml 0.8.23",
  "ui",
  "vim",

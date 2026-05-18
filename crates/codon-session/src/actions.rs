@@ -107,6 +107,19 @@ actions!(
 #[serde(deny_unknown_fields)]
 pub struct WindowGoto(pub usize);
 
+/// Move the active pane into the existing window at the given zero-based
+/// index within the active session (mirrors tmux `join-pane -t :N`). The
+/// pane is grafted onto the target window's layout as a new horizontal
+/// split. Out-of-range or self-target invocations are silent no-ops
+/// (with a toast on out-of-range). If moving the only pane out of the
+/// source window leaves it empty, the source window is closed —
+/// promoting the next window to active, same fallback that
+/// `WindowClose` uses.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = codon_session)]
+#[serde(deny_unknown_fields)]
+pub struct MovePaneToWindow(pub usize);
+
 pub fn register(_cx: &mut App) {}
 
 /// Wire workspace-scoped action handlers. Call from the workspace
@@ -125,6 +138,7 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_close);
     workspace.register_action(handle_window_rename);
     workspace.register_action(handle_break_pane_to_window);
+    workspace.register_action(handle_move_pane_to_window);
     workspace.register_action(handle_safe_close_active_item);
     workspace.register_action(handle_hold_quit);
     workspace.register_action(handle_resize_pane_left);
@@ -601,6 +615,130 @@ fn handle_break_pane_to_window(
     // re-hydrate via SerializableItemRegistry.
     let weak = workspace.weak_handle();
     swap::apply(workspace, broken, window, cx).detach_and_notify_err(weak, window, cx);
+}
+
+/// Move the active pane into the existing window at the given index
+/// (tmux `join-pane -t :N`). Grafts the detached pane onto the target
+/// window's layout as a new horizontal split. If the source window is
+/// left empty by the move, it is closed and the session promotes the
+/// target to active.
+fn handle_move_pane_to_window(
+    workspace: &mut Workspace,
+    action: &MovePaneToWindow,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let target_idx = action.0;
+
+    let Some(active_id) = ensure_active_session(workspace, cx) else {
+        return;
+    };
+    let registry = SessionRegistry::global(cx);
+    let Some(mut session) = registry.get(active_id) else {
+        return;
+    };
+
+    if target_idx == session.active_window {
+        log::trace!("MovePaneToWindow: target index {target_idx} == active, no-op");
+        return;
+    }
+    if target_idx >= session.windows.len() {
+        workspace.show_notification(
+            workspace::notifications::NotificationId::unique::<MovePaneToWindow>(),
+            cx,
+            move |cx| {
+                cx.new(|cx| {
+                    workspace::notifications::simple_message_notification::MessageNotification::new(
+                        format!(
+                            "Window {} does not exist (active session has {}).",
+                            target_idx + 1,
+                            registry_window_count(cx, active_id),
+                        ),
+                        cx,
+                    )
+                })
+            },
+        );
+        return;
+    }
+
+    let snapshot = swap::capture(workspace, window, cx);
+    let source_idx = session.active_window;
+    let source_window_id = session.windows[source_idx].id;
+    let target_window_id = session.windows[target_idx].id;
+    let target_layout = session.windows[target_idx].layout.clone();
+
+    // Detach the active pane from the source layout. `split_off_active`
+    // returns None when the source has only one pane — in that case the
+    // whole snapshot *is* the pane to move, and the source window will
+    // be closed once the move lands.
+    let (broken, source_remaining) = match break_pane::split_off_active(snapshot.clone()) {
+        Some((remaining, broken)) => (broken, Some(remaining)),
+        None => {
+            let mut moved = snapshot;
+            if let workspace::codon_bridge::LayoutSnapshot::Pane(p) = &mut moved {
+                p.active = true;
+            }
+            (moved, None)
+        }
+    };
+
+    let merged = break_pane::attach_pane_horizontally(target_layout, broken);
+    if let Some(slot) = session.windows.get_mut(target_idx) {
+        slot.layout = Some(merged.clone());
+    }
+
+    let cache = WindowRuntimeCache::global(cx);
+    // Both windows' cached runtimes are now stale — drop them so the
+    // persisted layouts are the source of truth on this switch.
+    let _ = cache.take(active_id, target_window_id);
+    let _ = cache.take(active_id, source_window_id);
+
+    if let Some(remaining) = source_remaining {
+        // Multi-pane source survives — update its layout and switch.
+        // We can't use `switch_to_window` here because it would
+        // re-capture the visible workspace (which still contains the
+        // broken pane until we apply the new target layout below) and
+        // clobber our `remaining` write. Inline the switch instead,
+        // mirroring `finish_window_close`'s structure.
+        if let Some(slot) = session.windows.get_mut(source_idx) {
+            slot.layout = Some(remaining);
+        }
+        session.set_active_window(target_idx);
+        if let Err(err) = registry.upsert(session) {
+            log::warn!("could not save after move-pane: {err:?}");
+        }
+        persist_async(cx);
+        cx.notify();
+
+        let weak = workspace.weak_handle();
+        swap::apply(workspace, merged, window, cx).detach_and_notify_err(weak, window, cx);
+        return;
+    }
+
+    // Single-pane source — close it. `remove_window` shifts indexes
+    // for us; resolve the target's new position by id afterwards.
+    session.remove_window(source_window_id);
+    if let Some(new_target_idx) = session.windows.iter().position(|w| w.id == target_window_id) {
+        session.set_active_window(new_target_idx);
+    }
+    session.previous_window = None;
+
+    if let Err(err) = registry.upsert(session) {
+        log::warn!("could not save after move-pane (single-pane source): {err:?}");
+    }
+    persist_async(cx);
+    cx.notify();
+
+    let weak = workspace.weak_handle();
+    swap::apply(workspace, merged, window, cx).detach_and_notify_err(weak, window, cx);
+}
+
+fn registry_window_count(cx: &gpui::App, active_id: crate::session::SessionId) -> usize {
+    SessionRegistry::global(cx)
+        .get(active_id)
+        .map(|s| s.windows.len())
+        .unwrap_or(0)
 }
 
 /// Close the active item, falling back through increasingly broad scopes —

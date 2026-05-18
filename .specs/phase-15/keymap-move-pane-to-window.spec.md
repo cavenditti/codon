@@ -9,7 +9,7 @@ summary: >
   focus. Bind `prefix shift-<N>` for N=1..9 in defaults. Mirrors
   tmux `join-pane -t :N`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap#c-move-pane-to-window
 ---
