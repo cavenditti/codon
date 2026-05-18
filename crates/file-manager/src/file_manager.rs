@@ -161,6 +161,18 @@ pub(crate) struct DirEntry {
     /// closures only clone an `Arc` instead of allocating a new
     /// `String` per visible row per frame.
     pub(crate) labels: EntryLabels,
+    /// Resolved icon path for this entry, populated on the foreground
+    /// once after `read_dir_sync` (which has no `cx`). `Some(None)` means
+    /// the icon registry has no specific match (renders use the default
+    /// File/Folder icon); `None` means the entry hasn't been populated
+    /// yet (transient — the apply closure runs immediately after the
+    /// background read). See `populate_icon_paths`.
+    ///
+    /// Caches away `FileIcons::get_icon`, which does suffix-split +
+    /// multi-stage hashmap lookups on every call. With ~30 visible rows
+    /// × 3 columns this used to fire ~90 times per repaint; now it's
+    /// one Arc clone per row.
+    pub(crate) icon_path: Option<Option<gpui::SharedString>>,
 }
 
 /// Cached render text for a `DirEntry`. `name` is the entry name as a
@@ -600,6 +612,8 @@ impl FileManager {
                 }
                 this.entries = entries;
                 this.parent_entries = parent_entries;
+                crate::view::populate_icon_paths(&mut this.entries, cx);
+                crate::view::populate_icon_paths(&mut this.parent_entries, cx);
                 if let Some(name) = select_after.as_deref() {
                     this.selected_index = this
                         .entries
@@ -1016,9 +1030,10 @@ impl FileManager {
         // reload path, not the preview path.
         if entry.is_dir
             && let Ok(cache_guard) = cache.lock()
-            && let Some(children) = cache_guard.peek(&entry.path, opts)
+            && let Some(mut children) = cache_guard.peek(&entry.path, opts)
         {
             drop(cache_guard);
+            crate::view::populate_icon_paths(&mut children, cx);
             self.preview = Preview::Directory(children);
             cx.notify();
             return;
@@ -1045,6 +1060,10 @@ impl FileManager {
             this.update(cx, |this, cx| {
                 if this.preview_gen != preview_gen {
                     return;
+                }
+                let mut new_preview = new_preview;
+                if let Preview::Directory(children) = &mut new_preview {
+                    crate::view::populate_icon_paths(children, cx);
                 }
                 this.preview = new_preview;
                 // `preview_editor` is keyed on the previewed path; the
@@ -4300,6 +4319,7 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
                 gid,
                 child_count: None,
                 labels: EntryLabels::default(),
+                icon_path: None,
             };
             entry.labels = build_entry_labels(&entry);
             Some(entry)
@@ -4970,6 +4990,7 @@ mod tests {
             gid: None,
             child_count: None,
             labels: Default::default(),
+            icon_path: None,
         }];
         cache.store(path.clone(), mtime, opts, entries.clone());
         let hit = cache.lookup(&path, mtime, opts);

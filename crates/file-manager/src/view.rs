@@ -54,30 +54,24 @@ fn render_entry_row(
             filetype_color(entry, cx)
         };
 
-        let icon_element = if entry.is_dir {
-            let folder_icon = file_icons::FileIcons::get_folder_icon(false, &entry.path, cx);
-            match folder_icon {
-                Some(icon_path) => Icon::from_path(icon_path)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .into_any_element(),
-                None => Icon::new(IconName::Folder)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .into_any_element(),
-            }
-        } else {
-            let file_icon = file_icons::FileIcons::get_icon(&entry.path, cx);
-            match file_icon {
-                Some(icon_path) => Icon::from_path(icon_path)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .into_any_element(),
-                None => Icon::new(IconName::File)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .into_any_element(),
-            }
+        // `icon_path` is populated by `populate_icon_paths` on the
+        // foreground after every listing arrives. The outer Option
+        // distinguishes "not yet populated" (renders fallback) from
+        // "populated with no specific icon" (`Some(None)`, also renders
+        // fallback) — without the cache this used to call
+        // `FileIcons::get_icon` per row per paint, doing suffix-split +
+        // multi-stage hashmap lookups every time.
+        let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
+        let fallback = if entry.is_dir { IconName::Folder } else { IconName::File };
+        let icon_element = match resolved_icon {
+            Some(icon_path) => Icon::from_path(icon_path)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+            None => Icon::new(fallback)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
         };
 
         let symlink_indicator = entry.is_symlink;
@@ -136,6 +130,26 @@ fn render_entry_row(
                 )
             })
             .into_any_element()
+}
+
+/// Resolve and cache the icon path for each not-yet-populated entry.
+/// `FileIcons::get_icon` needs `&App`, so this must run on the
+/// foreground — but the cost is amortized to once per listing-load
+/// rather than per row per paint. Idempotent: entries with a cached
+/// value are skipped, so callers can re-invoke freely after partial
+/// updates (e.g. `spawn_child_count_fill`).
+pub(crate) fn populate_icon_paths(entries: &mut [DirEntry], cx: &App) {
+    for entry in entries {
+        if entry.icon_path.is_some() {
+            continue;
+        }
+        let resolved = if entry.is_dir {
+            file_icons::FileIcons::get_folder_icon(false, &entry.path, cx)
+        } else {
+            file_icons::FileIcons::get_icon(&entry.path, cx)
+        };
+        entry.icon_path = Some(resolved);
+    }
 }
 
 impl FileManager {
@@ -483,28 +497,19 @@ impl Render for FileManager {
                             filetype_color(entry, cx)
                         };
 
-                        let icon_element = if entry.is_dir {
-                            match file_icons::FileIcons::get_folder_icon(false, &entry.path, cx) {
-                                Some(p) => Icon::from_path(p)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                                None => Icon::new(IconName::Folder)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                            }
-                        } else {
-                            match file_icons::FileIcons::get_icon(&entry.path, cx) {
-                                Some(p) => Icon::from_path(p)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                                None => Icon::new(IconName::File)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                            }
+                        // Cached by `populate_icon_paths`; see `render_entry_row`
+                        // for the cache semantics.
+                        let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
+                        let fallback = if entry.is_dir { IconName::Folder } else { IconName::File };
+                        let icon_element = match resolved_icon {
+                            Some(p) => Icon::from_path(p)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .into_any_element(),
+                            None => Icon::new(fallback)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .into_any_element(),
                         };
 
                         let marked_bg = theme.colors().ghost_element_hover;
@@ -1735,6 +1740,7 @@ mod tests {
             gid: None,
             child_count: None,
             labels: Default::default(),
+            icon_path: None,
         }
     }
 
@@ -1764,6 +1770,7 @@ mod tests {
             gid: Some(20),
             child_count: None,
             labels: Default::default(),
+            icon_path: None,
         };
         assert_eq!(entry_meta_label(&entry, LineMode::None), None);
         assert_eq!(entry_meta_label(&entry, LineMode::Size).as_deref(), Some("100 B"));
@@ -1791,6 +1798,7 @@ mod tests {
             gid: None,
             child_count: Some(3),
             labels: Default::default(),
+            icon_path: None,
         };
         assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("3 items"));
         dir.child_count = Some(1);

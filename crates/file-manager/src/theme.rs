@@ -410,6 +410,7 @@ mod tests {
             gid: None,
             child_count: None,
             labels: Default::default(),
+            icon_path: None,
         }
     }
 
