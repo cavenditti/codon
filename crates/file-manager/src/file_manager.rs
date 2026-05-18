@@ -1006,6 +1006,24 @@ impl FileManager {
         let opts = self.read_dir_options();
         let cache = Arc::clone(&self.dir_cache);
 
+        // Synchronous fast-path: for directories already in `DirCache`
+        // (visited at least once this session — back/forward navigation,
+        // cursor bouncing between siblings) fill the preview right now
+        // and skip both the 40 ms debounce and the background spawn.
+        // This is what makes the right column feel instant under `j`/`k`
+        // once the user has scrolled past a few entries — yazi-style.
+        // `peek` is mtime-blind; cache freshness is enforced by the
+        // reload path, not the preview path.
+        if entry.is_dir
+            && let Ok(cache_guard) = cache.lock()
+            && let Some(children) = cache_guard.peek(&entry.path, opts)
+        {
+            drop(cache_guard);
+            self.preview = Preview::Directory(children);
+            cx.notify();
+            return;
+        }
+
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(PREVIEW_DEBOUNCE_MS))
@@ -4158,6 +4176,20 @@ impl DirCache {
         while self.inner.len() > DIR_CACHE_CAP {
             self.inner.pop_back();
         }
+    }
+
+    /// Skip the stat — used by the foreground preview fast-path on every
+    /// cursor move. Trades freshness (a directory modified by another
+    /// pane since the cache write won't be picked up until the next
+    /// full reload) for zero filesystem syscalls per keypress, which is
+    /// the latency we're chasing. The full `lookup` path used by
+    /// `read_dir_cached` does mtime validation, so anything that
+    /// actually reloads the listing remains correct.
+    fn peek(&self, path: &Path, opts: ReadDirOptions) -> Option<Vec<DirEntry>> {
+        self.inner
+            .iter()
+            .find(|(p, e)| p == path && e.opts == opts)
+            .map(|(_, e)| e.entries.clone())
     }
 }
 
