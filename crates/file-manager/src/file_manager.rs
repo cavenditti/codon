@@ -22,6 +22,7 @@ use workspace::{
 };
 
 use crate::persistence::FileManagerDb;
+use crate::prefs::LineMode;
 
 actions!(
     file_manager,
@@ -154,6 +155,24 @@ pub(crate) struct DirEntry {
     /// Number of immediate children when `is_dir`; `None` for files or
     /// when the directory could not be opened (permission denied, etc).
     pub(crate) child_count: Option<usize>,
+    /// Precomputed render labels — see `EntryLabels::build`. Filled
+    /// at construction time in `read_dir_sync` (or when `child_count`
+    /// gets backfilled, via `recompute_labels`) so the hot-path render
+    /// closures only clone an `Arc` instead of allocating a new
+    /// `String` per visible row per frame.
+    pub(crate) labels: EntryLabels,
+}
+
+/// Cached render text for a `DirEntry`. `name` is the entry name as a
+/// `SharedString` (cheap `Arc` clone on render); `meta` holds one
+/// precomputed `SharedString` per `LineMode` variant, indexed by
+/// `LineMode::idx`. `None` slots mean "this mode renders no meta cell
+/// for this entry" (e.g. directories with no `child_count` filled yet,
+/// `LineMode::None` always).
+#[derive(Clone, Default)]
+pub(crate) struct EntryLabels {
+    pub(crate) name: gpui::SharedString,
+    pub(crate) meta: [Option<gpui::SharedString>; LineMode::COUNT],
 }
 
 #[derive(Clone)]
@@ -655,6 +674,12 @@ impl FileManager {
                     }
                     if let Some(n) = map.remove(&entry.path) {
                         entry.child_count = Some(n);
+                        // Refresh the cached `LineMode::Size` label so the
+                        // newly-known count actually renders. Without this,
+                        // the `Size`-mode meta cell would keep showing
+                        // blank (the slot was `None` when labels were first
+                        // built at `child_count: None`).
+                        entry.labels = build_entry_labels(entry);
                     }
                 }
                 cx.notify();
@@ -4193,7 +4218,10 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
             // by `spawn_child_count_fill` after the listing paints. Doing it
             // inline costs one extra `read_dir` per subdirectory, which
             // dominated the perceived latency of entering populated dirs.
-            Some(DirEntry {
+            // `labels` is built once the rest of `entry` is populated; the
+            // `LineMode::Size` slot stays `None` for directories until the
+            // backfill task refreshes labels for that entry.
+            let mut entry = DirEntry {
                 name,
                 path,
                 is_dir,
@@ -4207,12 +4235,40 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
                 uid,
                 gid,
                 child_count: None,
-            })
+                labels: EntryLabels::default(),
+            };
+            entry.labels = build_entry_labels(&entry);
+            Some(entry)
         })
         .collect();
 
     sort_entries(&mut entries, options.sort, options.reverse);
     entries
+}
+
+/// Precompute the per-`LineMode` meta `SharedString`s for `entry`,
+/// plus the `name` label, in one pass. Called by `read_dir_sync`
+/// (initial population) and `DirEntry::refresh_labels` (re-run when
+/// `child_count` is backfilled by an async fill task on master).
+///
+/// One `SharedString` allocation per non-`None` slot, then four
+/// `Arc::clone`s per row per frame instead of four `format!` + four
+/// `SharedString::from(String)` allocations.
+pub(crate) fn build_entry_labels(entry: &DirEntry) -> EntryLabels {
+    let mut meta: [Option<gpui::SharedString>; LineMode::COUNT] = Default::default();
+    for mode in [
+        LineMode::None,
+        LineMode::Size,
+        LineMode::Mtime,
+        LineMode::Permissions,
+        LineMode::Owner,
+    ] {
+        meta[mode.idx()] = crate::view::entry_meta_label(entry, mode).map(Into::into);
+    }
+    EntryLabels {
+        name: entry.name.clone().into(),
+        meta,
+    }
 }
 
 #[cfg(unix)]
@@ -4849,6 +4905,7 @@ mod tests {
             uid: None,
             gid: None,
             child_count: None,
+            labels: Default::default(),
         }];
         cache.store(path.clone(), mtime, opts, entries.clone());
         let hit = cache.lookup(&path, mtime, opts);

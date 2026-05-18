@@ -51,6 +51,21 @@ impl LineMode {
             LineMode::Owner => LineMode::None,
         }
     }
+
+    /// Stable index into a per-variant array. Used by the entry-label
+    /// cache to look up the precomputed `SharedString` for whichever
+    /// mode is active without a match-on-every-render.
+    pub fn idx(self) -> usize {
+        match self {
+            LineMode::None => 0,
+            LineMode::Size => 1,
+            LineMode::Mtime => 2,
+            LineMode::Permissions => 3,
+            LineMode::Owner => 4,
+        }
+    }
+
+    pub const COUNT: usize = 5;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

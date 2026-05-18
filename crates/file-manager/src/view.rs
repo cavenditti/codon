@@ -87,8 +87,10 @@ fn render_entry_row(
         // overlay (or muted-for-dimmed) carries the color.
         let text_color = git_filename_color.unwrap_or(text_color);
 
+        // Precomputed at DirEntry construction (see `build_entry_labels`)
+        // — clones an `Arc` rather than formatting fresh on every paint.
         let meta = if show_meta {
-            entry_meta_label(entry, line_mode)
+            entry.labels.meta[line_mode.idx()].clone()
         } else {
             None
         };
@@ -110,7 +112,7 @@ fn render_entry_row(
             .child(icon_element)
             .child(
                 div().flex_1().min_w_0().child(
-                    Label::new(entry.name.clone())
+                    Label::new(entry.labels.name.clone())
                         .size(LabelSize::Small)
                         .color(text_color)
                         .single_line(),
@@ -126,7 +128,7 @@ fn render_entry_row(
             .when_some(meta, |el, text| {
                 el.child(
                     div().w(px(META_COLUMN_WIDTH)).flex_none().child(
-                        Label::new(SharedString::from(text))
+                        Label::new(text)
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .single_line(),
@@ -161,7 +163,7 @@ impl FileManager {
                 })
                 .collect()
         })
-        .flex_1()
+        .size_full()
         .py(px(2.))
     }
 
@@ -205,7 +207,7 @@ impl FileManager {
                             .collect()
                     },
                 )
-                .flex_1()
+                .size_full()
                 .into_any_element()
             }
             Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
@@ -513,7 +515,9 @@ impl Render for FileManager {
                         } else {
                             git_filename_color.unwrap_or(text_color)
                         };
-                        let meta = entry_meta_label(entry, line_mode);
+                        // Precomputed at DirEntry construction; clone is a
+                        // cheap `Arc` bump rather than a fresh format.
+                        let meta = entry.labels.meta[line_mode.idx()].clone();
 
                         // Marked rows get a 2px left-edge stripe in
                         // the accent color in addition to the bg tint.
@@ -557,7 +561,7 @@ impl Render for FileManager {
                                     .child(icon_element)
                                     .child(
                                         div().flex_1().min_w_0().child(
-                                            Label::new(entry.name.clone())
+                                            Label::new(entry.labels.name.clone())
                                                 .size(LabelSize::Small)
                                                 .color(text_color)
                                                 .when(is_selected, |l| {
@@ -576,7 +580,7 @@ impl Render for FileManager {
                                     .when_some(meta, |el, text| {
                                         el.child(
                                             div().w(px(META_COLUMN_WIDTH)).flex_none().child(
-                                                Label::new(SharedString::from(text))
+                                                Label::new(text)
                                                     .size(LabelSize::Small)
                                                     .color(Color::Muted)
                                                     .single_line(),
@@ -1725,6 +1729,7 @@ mod tests {
             uid: None,
             gid: None,
             child_count: None,
+            labels: Default::default(),
         }
     }
 
@@ -1753,6 +1758,7 @@ mod tests {
             uid: Some(501),
             gid: Some(20),
             child_count: None,
+            labels: Default::default(),
         };
         assert_eq!(entry_meta_label(&entry, LineMode::None), None);
         assert_eq!(entry_meta_label(&entry, LineMode::Size).as_deref(), Some("100 B"));
@@ -1779,6 +1785,7 @@ mod tests {
             uid: None,
             gid: None,
             child_count: Some(3),
+            labels: Default::default(),
         };
         assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("3 items"));
         dir.child_count = Some(1);

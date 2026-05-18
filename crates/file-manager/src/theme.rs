@@ -409,6 +409,7 @@ mod tests {
             uid: None,
             gid: None,
             child_count: None,
+            labels: Default::default(),
         }
     }
 
