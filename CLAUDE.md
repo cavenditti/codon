@@ -48,12 +48,12 @@ apps/codon/             entry binary; main.rs replaces Zed's main with codon's i
 crates/
   codon-pane-bridge/    PaneMode enum + CodonModeTracker global + PaneModeBridge trait (cycle-free base)
   codon-mode/           re-exports pane-bridge + mode_indicator that translates vim::state to PaneMode
-  codon-keymap/         TOML keymap loader + cmd-k F1 cheatsheet modal + chord-timeout setter
+  codon-keymap/         TOML keymap loader + cheatsheet modal + configurable chord prefix + chord-timeout setter
   codon-session/        tmux-style sessions + windows + in-memory pane stash for switching
   codon-panes/          adapts agent/git/outline/debug/peek panels into pane-kind splits (phase 12)
   codon-pickers/        shared ModalScaffold for codon modals/pickers (focus/dismiss/mode triplet)
   codon-command-palette/ Helix-style `:` palette over Zed's command registry
-  codon-jump/           Vimium-style jump-hint overlay (cmd-k j / cmd-k u)
+  codon-jump/           Vimium-style jump-hint overlay (`prefix j` / `prefix u`)
   codon-agent/          cross-pane agent verbs (Explain/Summarize/Refactor) seeded from selections
   codon-config/         unified ~/.config/codon/codon.toml loader + writeback (toml_edit)
   file-manager/         yazi-style three-column file manager (its own Item, not Zed's project_panel)
@@ -82,7 +82,7 @@ The workspace `Cargo.toml` enumerates every vendored Zed crate as a workspace me
 
 When editing inside `vendor/zed/`, follow the upstream conventions in `vendor/zed/CLAUDE.md` (no `unwrap()`; no silent `let _ =`; never `mod.rs`; prefer additive changes to existing files; use `./script/clippy`).
 
-**Keymap.** Default bindings are an embedded TOML string in `crates/codon-keymap/src/keymap.rs`. User overrides live in `~/.config/codon/codon.toml` (the unified config file; legacy `~/.config/codon/keymap.toml` is still read with a deprecation hint). Bindings are codon's only entry point for actions — every cross-cutting verb (`codon_session::*`, `codon_agent::*`, `codon_keymap::ShowKeymap`, etc.) is registered via TOML, not via Zed's JSON keymap files. `codon-keymap` itself does NOT depend on any downstream codon crate; each owning crate registers its own GPUI actions from its own `init(cx)` (called in turn from `apps/codon/src/main.rs`), and the keymap resolves names through the global action registry only. `assets/config/codon.example.toml` is the user-facing template (the old `keymap.example.toml` is now a one-release-cycle redirect stub).
+**Keymap.** Default bindings are an embedded TOML string in `crates/codon-keymap/src/keymap.rs`. User overrides live in `~/.config/codon/codon.toml` (the unified config file; legacy `~/.config/codon/keymap.toml` is still read with a deprecation hint). The tmux-style chord prefix is configurable via `[keymap] prefix = "<chord>"` in `codon.toml` (default `cmd-k`); the loader expands the literal sentinel `prefix` in every keystroke string (defaults *and* user bindings) to the resolved value at bind time — so `"prefix s s"` in the embedded defaults binds as `"cmd-k s s"` out of the box and as `"ctrl-x s s"` once the user sets `prefix = "ctrl-x"`. Bindings are codon's only entry point for actions — every cross-cutting verb (`codon_session::*`, `codon_agent::*`, `codon_keymap::ShowKeymap`, etc.) is registered via TOML, not via Zed's JSON keymap files. `codon-keymap` itself does NOT depend on any downstream codon crate; each owning crate registers its own GPUI actions from its own `init(cx)` (called in turn from `apps/codon/src/main.rs`), and the keymap resolves names through the global action registry only. `assets/config/codon.example.toml` is the user-facing template (the old `keymap.example.toml` is now a one-release-cycle redirect stub).
 
 ## Workflow conventions
 

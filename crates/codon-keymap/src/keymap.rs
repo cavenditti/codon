@@ -31,8 +31,8 @@ const CHORD_TIMEOUT: Duration = Duration::from_secs(5);
 /// Example:
 /// ```toml
 /// [bindings.global]
-/// "cmd-k h" = "workspace::ActivatePaneLeft"
-/// "cmd-k t" = "workspace::NewTerminal"
+/// "prefix h" = "workspace::ActivatePaneLeft"
+/// "prefix t" = "workspace::NewTerminal"
 ///
 /// [bindings.file_manager.normal]
 /// "j" = "file_manager::NavigateDown"
@@ -44,7 +44,26 @@ const CHORD_TIMEOUT: Duration = Duration::from_secs(5);
 struct CodonKeymap {
     #[serde(default)]
     bindings: KeymapBindings,
+    #[serde(default)]
+    keymap: KeymapTopLevel,
 }
+
+/// Top-level `[keymap]` table in `codon.toml`. Currently carries
+/// only the chord prefix override; new keymap-wide settings should
+/// land here rather than under `[bindings.*]`.
+#[derive(Debug, Deserialize, Default)]
+struct KeymapTopLevel {
+    /// Override the embedded defaults' chord prefix. Any chord in
+    /// `DEFAULT_KEYMAP` (or in user `[bindings.*]`) whose keystroke
+    /// starts with the literal token `prefix` is rebound under this
+    /// chord instead. Defaults to [`DEFAULT_PREFIX`] when absent.
+    prefix: Option<String>,
+}
+
+/// Fallback chord prefix when no `[keymap] prefix = "..."` is set
+/// in the user config — kept on `cmd-k` so existing installs see no
+/// change after phase 15 lands.
+const DEFAULT_PREFIX: &str = "cmd-k";
 
 #[derive(Debug, Deserialize, Default)]
 struct KeymapBindings {
@@ -86,10 +105,10 @@ const DEFAULT_KEYMAP: &str = r#"
 "ctrl-l" = "workspace::ActivatePaneRight"
 
 # Pane focus (cmd-k + arrow) — terminal-safe alternative to ctrl-hjkl.
-"cmd-k left"  = "workspace::ActivatePaneLeft"
-"cmd-k down"  = "workspace::ActivatePaneDown"
-"cmd-k up"    = "workspace::ActivatePaneUp"
-"cmd-k right" = "workspace::ActivatePaneRight"
+"prefix left"  = "workspace::ActivatePaneLeft"
+"prefix down"  = "workspace::ActivatePaneDown"
+"prefix up"    = "workspace::ActivatePaneUp"
+"prefix right" = "workspace::ActivatePaneRight"
 
 # Pane move (swap with adjacent pane).
 "ctrl-shift-h" = "workspace::SwapPaneLeft"
@@ -99,41 +118,41 @@ const DEFAULT_KEYMAP: &str = r#"
 
 # Pane move (cmd-k + shift-arrow) — terminal-safe alternative to
 # ctrl-shift-hjkl. Mirrors the focus chords above.
-"cmd-k shift-left"  = "workspace::SwapPaneLeft"
-"cmd-k shift-down"  = "workspace::SwapPaneDown"
-"cmd-k shift-up"    = "workspace::SwapPaneUp"
-"cmd-k shift-right" = "workspace::SwapPaneRight"
+"prefix shift-left"  = "workspace::SwapPaneLeft"
+"prefix shift-down"  = "workspace::SwapPaneDown"
+"prefix shift-up"    = "workspace::SwapPaneUp"
+"prefix shift-right" = "workspace::SwapPaneRight"
 
 # Pane resize (cmd-k prefix to avoid conflict). The codon_session
 # wrappers nudge the pane via vim::ResizePane* and arm a short sticky
 # window — see `crates/codon-session/src/resize_sticky.rs`. During
 # that window, bare h/j/k/l keep resizing without the prefix; esc /
 # any other key / timeout exits.
-"cmd-k shift-h" = "codon_session::ResizePaneLeft"
-"cmd-k shift-j" = "codon_session::ResizePaneDown"
-"cmd-k shift-k" = "codon_session::ResizePaneUp"
-"cmd-k shift-l" = "codon_session::ResizePaneRight"
+"prefix shift-h" = "codon_session::ResizePaneLeft"
+"prefix shift-j" = "codon_session::ResizePaneDown"
+"prefix shift-k" = "codon_session::ResizePaneUp"
+"prefix shift-l" = "codon_session::ResizePaneRight"
 
 # Pane navigation (cmd-k h/k/l) — kept for back-compat, equivalent to ctrl-*.
 # `cmd-k j` is repurposed for the jump-hint overlay below; use `ctrl-j` for
 # pane-down navigation under the cmd-k prefix path. `cmd-k l` is repurposed
 # for WindowLast (tmux `prefix l`); use `ctrl-l` for pane-right.
-"cmd-k h" = "workspace::ActivatePaneLeft"
-"cmd-k k" = "workspace::ActivatePaneUp"
+"prefix h" = "workspace::ActivatePaneLeft"
+"prefix k" = "workspace::ActivatePaneUp"
 
 # Pane splitting — contextual on the active pane's current path.
 # `\` and `-` open a terminal; `|` and `_` open a file manager. The
 # new pane is seeded to the active terminal's shell cwd, the active
 # file manager's `current_dir`, or the project's first worktree if
 # the active item exposes no path.
-"cmd-k \\" = "codon_session::SplitTerminalRight"
-"cmd-k |"  = "codon_session::SplitFileManagerRight"
-"cmd-k -"  = "codon_session::SplitTerminalDown"
-"cmd-k _"  = "codon_session::SplitFileManagerDown"
+"prefix \\" = "codon_session::SplitTerminalRight"
+"prefix |"  = "codon_session::SplitFileManagerRight"
+"prefix -"  = "codon_session::SplitTerminalDown"
+"prefix _"  = "codon_session::SplitFileManagerDown"
 
 # Pane management
-"cmd-k t" = "workspace::NewTerminal"
-"cmd-k e" = "file_manager::Open"
+"prefix t" = "workspace::NewTerminal"
+"prefix e" = "file_manager::Open"
 
 # Goto-or-open: single chord lands on the most-recently-active pane of
 # the requested kind, or opens one in the active pane if none exists.
@@ -144,7 +163,7 @@ const DEFAULT_KEYMAP: &str = r#"
 # item -> close pane -> close session window -> empty pane). The OS
 # window is only ever closed by cmd-shift-w or cmd-shift-q.
 "cmd-w"   = "codon_session::SafeCloseActiveItem"
-"cmd-k w" = "codon_session::SafeCloseActiveItem"
+"prefix w" = "codon_session::SafeCloseActiveItem"
 
 # Hold cmd-q to quit (Chrome-style). cmd-shift-q is the unconditional
 # escape hatch — keep it on hand the first time a process is wedged.
@@ -152,43 +171,43 @@ const DEFAULT_KEYMAP: &str = r#"
 "cmd-shift-q" = "zed::Quit"
 
 # Sessions (cmd-k s prefix)
-"cmd-k s n" = "codon_session::SessionNew"
-"cmd-k s s" = "codon_session::SessionSwitch"
-"cmd-k s o" = "codon_session::SessionOverview"
-"cmd-k s c" = "codon_session::SessionClose"
+"prefix s n" = "codon_session::SessionNew"
+"prefix s s" = "codon_session::SessionSwitch"
+"prefix s o" = "codon_session::SessionOverview"
+"prefix s c" = "codon_session::SessionClose"
 
 # Windows (cmd-k W prefix — capital W, lowercase w is "close active item")
-"cmd-k shift-w n" = "codon_session::WindowNew"
-"cmd-k shift-w l" = "codon_session::WindowNext"
-"cmd-k shift-w h" = "codon_session::WindowPrev"
-"cmd-k shift-w shift-l" = "codon_session::WindowLast"
-"cmd-k shift-w c" = "codon_session::WindowClose"
-"cmd-k shift-w w" = "codon_session::WindowSwitch"
-"cmd-k shift-w o" = "codon_session::WindowOverview"
-"cmd-k shift-w r" = "codon_session::WindowRename"
-"cmd-k shift-w !" = "codon_session::BreakPaneToWindow"
+"prefix shift-w n" = "codon_session::WindowNew"
+"prefix shift-w l" = "codon_session::WindowNext"
+"prefix shift-w h" = "codon_session::WindowPrev"
+"prefix shift-w shift-l" = "codon_session::WindowLast"
+"prefix shift-w c" = "codon_session::WindowClose"
+"prefix shift-w w" = "codon_session::WindowSwitch"
+"prefix shift-w o" = "codon_session::WindowOverview"
+"prefix shift-w r" = "codon_session::WindowRename"
+"prefix shift-w !" = "codon_session::BreakPaneToWindow"
 
 # 2-key motion (muscle-memory path, mirrors tmux prefix n/p/l). The 3-key
 # `cmd-k shift-w …` chords above remain the discoverable "windows menu"
 # entry point for users browsing the cheatsheet.
-"cmd-k n" = "codon_session::WindowNext"
-"cmd-k p" = "codon_session::WindowPrev"
-"cmd-k l" = "codon_session::WindowLast"
-"cmd-k r" = "codon_session::WindowRename"
-"cmd-k !" = "codon_session::BreakPaneToWindow"
+"prefix n" = "codon_session::WindowNext"
+"prefix p" = "codon_session::WindowPrev"
+"prefix l" = "codon_session::WindowLast"
+"prefix r" = "codon_session::WindowRename"
+"prefix !" = "codon_session::BreakPaneToWindow"
 
 # Direct index goto — tmux's `prefix 0-9`. 1-based on the keymap to
 # match tmux convention, 0-based inside the `WindowGoto(usize)` action.
 # Out-of-range indices are silent no-ops, never a panic.
-"cmd-k 1" = "codon_session::WindowGoto(0)"
-"cmd-k 2" = "codon_session::WindowGoto(1)"
-"cmd-k 3" = "codon_session::WindowGoto(2)"
-"cmd-k 4" = "codon_session::WindowGoto(3)"
-"cmd-k 5" = "codon_session::WindowGoto(4)"
-"cmd-k 6" = "codon_session::WindowGoto(5)"
-"cmd-k 7" = "codon_session::WindowGoto(6)"
-"cmd-k 8" = "codon_session::WindowGoto(7)"
-"cmd-k 9" = "codon_session::WindowGoto(8)"
+"prefix 1" = "codon_session::WindowGoto(0)"
+"prefix 2" = "codon_session::WindowGoto(1)"
+"prefix 3" = "codon_session::WindowGoto(2)"
+"prefix 4" = "codon_session::WindowGoto(3)"
+"prefix 5" = "codon_session::WindowGoto(4)"
+"prefix 6" = "codon_session::WindowGoto(5)"
+"prefix 7" = "codon_session::WindowGoto(6)"
+"prefix 8" = "codon_session::WindowGoto(7)"
+"prefix 9" = "codon_session::WindowGoto(8)"
 
 # `ctrl-w` is intentionally left unbound — it's reserved for
 # delete-word in insert mode. The window-switch picker lives on
@@ -198,29 +217,29 @@ const DEFAULT_KEYMAP: &str = r#"
 # Agent (cmd-k a prefix). `cmd-k a a` falls through to the codon-panes
 # open-as-pane action — `assistant::FocusAgent` only ever worked when the
 # panel was dock-hosted, which Phase 12 retires.
-"cmd-k a a" = "codon_panes::OpenAgent"
-"cmd-k a e" = "codon_agent::AgentExplain"
-"cmd-k a s" = "codon_agent::AgentSummarize"
-"cmd-k a r" = "codon_agent::AgentRefactor"
+"prefix a a" = "codon_panes::OpenAgent"
+"prefix a e" = "codon_agent::AgentExplain"
+"prefix a s" = "codon_agent::AgentSummarize"
+"prefix a r" = "codon_agent::AgentRefactor"
 
 # Git (cmd-k g prefix)
-"cmd-k g m" = "git::GenerateCommitMessage"
+"prefix g m" = "git::GenerateCommitMessage"
 # Phase 12 — `cmd-k g s` used to bind `git_panel::ToggleFocus`; rebound
 # to the codon-panes "open as pane" action so the panel surfaces in the
 # active pane split instead of the (now-empty) left dock.
-"cmd-k g s" = "codon_panes::OpenGit"
+"prefix g s" = "codon_panes::OpenGit"
 
 # Panes-from-panels (Phase 12, `cmd-k <chord>` opens as a pane,
 # `cmd-k shift-<chord>` peeks the panel in a transient dock surface).
 # See `.specs/codon/panes-from-panels.spec.md` for the design contract.
-"cmd-k a"       = "codon_panes::OpenAgent"
-"cmd-k shift-a" = "codon_panes::PeekAgent"
-"cmd-k g"       = "codon_panes::OpenGit"
-"cmd-k shift-g" = "codon_panes::PeekGit"
-"cmd-k o"       = "codon_panes::OpenOutline"
-"cmd-k shift-o" = "codon_panes::PeekOutline"
-"cmd-k d"       = "codon_panes::OpenDebug"
-"cmd-k shift-d" = "codon_panes::PeekDebug"
+"prefix a"       = "codon_panes::OpenAgent"
+"prefix shift-a" = "codon_panes::PeekAgent"
+"prefix g"       = "codon_panes::OpenGit"
+"prefix shift-g" = "codon_panes::PeekGit"
+"prefix o"       = "codon_panes::OpenOutline"
+"prefix shift-o" = "codon_panes::PeekOutline"
+"prefix d"       = "codon_panes::OpenDebug"
+"prefix shift-d" = "codon_panes::PeekDebug"
 
 # Diff / diagnostics panes (cmd-k d prefix).
 # `cmd-k d d` opens the project diff view (working tree vs HEAD) — thin
@@ -228,21 +247,21 @@ const DEFAULT_KEYMAP: &str = r#"
 # deferred to phase-4/git-diff-pane.
 # `cmd-k d g` opens Zed's project diagnostics view (`g` for "diagnostics"
 # leaves `d` itself reserved for the diff viewer above).
-"cmd-k d d" = "codon_session::DiffOpen"
-"cmd-k d g" = "diagnostics::Deploy"
+"prefix d d" = "codon_session::DiffOpen"
+"prefix d g" = "diagnostics::Deploy"
 
 # Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
 # covers every visible word / URL / clickable; the URL-only variant
 # `cmd-k u` filters to URL candidates and copies the matched one to
 # the system clipboard with a toast.
-"cmd-k j" = "codon_jump::JumpToTarget"
-"cmd-k u" = "codon_jump::JumpToUrl"
+"prefix j" = "codon_jump::JumpToTarget"
+"prefix u" = "codon_jump::JumpToUrl"
 
 # Help / cheatsheet
-"cmd-k f1" = "codon_keymap::ShowKeymap"
+"prefix f1" = "codon_keymap::ShowKeymap"
 
 # Welcome page
-"cmd-k f2" = "zed::ShowWelcome"
+"prefix f2" = "zed::ShowWelcome"
 
 # Command palette
 "cmd-shift-p" = "codon_command_palette::Toggle"
@@ -317,8 +336,10 @@ const DEFAULT_KEYMAP: &str = r#"
 pub fn load_codon_keymap(cx: &mut App) {
     gpui::set_keystroke_chord_timeout(CHORD_TIMEOUT);
 
+    let prefix = resolve_prefix();
+
     if let Some(bindings) = parse_keymap(DEFAULT_KEYMAP) {
-        apply_bindings(bindings, cx);
+        apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx);
     }
     apply_raw_bindings(cx);
 
@@ -330,7 +351,9 @@ pub fn load_codon_keymap(cx: &mut App) {
     if unified.exists() {
         match std::fs::read_to_string(&unified) {
             Ok(content) => match parse_keymap(&content) {
-                Some(bindings) => apply_bindings(bindings, cx),
+                Some(bindings) => {
+                    apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx)
+                }
                 None => log::warn!(
                     "codon-keymap: failed to parse [bindings.*] in {}",
                     unified.display()
@@ -352,7 +375,9 @@ pub fn load_codon_keymap(cx: &mut App) {
         );
         match std::fs::read_to_string(&legacy) {
             Ok(content) => match parse_keymap(&content) {
-                Some(bindings) => apply_bindings(bindings, cx),
+                Some(bindings) => {
+                    apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx)
+                }
                 None => log::warn!("codon-keymap: failed to parse {}", legacy.display()),
             },
             Err(err) => log::warn!(
@@ -363,8 +388,70 @@ pub fn load_codon_keymap(cx: &mut App) {
     }
 }
 
+/// Resolve the chord prefix to use when expanding the `prefix` sentinel
+/// in `DEFAULT_KEYMAP` and user `[bindings.*]` chords.
+///
+/// Order: user `codon.toml` `[keymap] prefix` → legacy `keymap.toml`
+/// `[keymap] prefix` → [`DEFAULT_PREFIX`]. An empty string in either
+/// file is treated as "unset" and falls back to the default.
+///
+/// Kept pub(crate) rather than `pub` because the only consumers today
+/// live in this crate (loader + curated-binding accessors); promote
+/// to `pub` once a downstream crate needs the resolved value
+/// (e.g. the passthrough handler in
+/// `TASK:phase-15/keymap-prefix-passthrough`).
+pub(crate) fn resolve_prefix() -> String {
+    let Some(codon_dir) = codon_config_dir() else {
+        return DEFAULT_PREFIX.to_string();
+    };
+    for filename in ["codon.toml", "keymap.toml"] {
+        let path = codon_dir.join(filename);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<CodonKeymap>(&content) else {
+            continue;
+        };
+        if let Some(prefix) = parsed.keymap.prefix.filter(|s| !s.is_empty()) {
+            return prefix;
+        }
+    }
+    DEFAULT_PREFIX.to_string()
+}
+
+/// Expand the leading `prefix` token in every keystroke string.
+///
+/// `"prefix c"` becomes `"<prefix> c"` (e.g. `"cmd-k c"` or
+/// `"ctrl-x c"`). The bare keystroke `"prefix"` — used by
+/// `TASK:phase-15/keymap-prefix-passthrough` for the `prefix prefix`
+/// double-tap — expands to `"<prefix>"`. Any keystroke whose first
+/// space-delimited token is not exactly `prefix` passes through
+/// unchanged (so a literal `"alt-prefix"` chord or a user binding
+/// like `"cmd-shift-s"` is unaffected).
+fn expand_prefix_in_bindings(
+    bindings: Vec<(String, String, Option<String>)>,
+    prefix: &str,
+) -> Vec<(String, String, Option<String>)> {
+    bindings
+        .into_iter()
+        .map(|(keystroke, action, context)| (expand_prefix(&keystroke, prefix), action, context))
+        .collect()
+}
+
+fn expand_prefix(keystroke: &str, prefix: &str) -> String {
+    match keystroke.split_once(' ') {
+        Some(("prefix", rest)) => format!("{prefix} {rest}"),
+        Some(_) => keystroke.to_string(),
+        None if keystroke == "prefix" => prefix.to_string(),
+        None => keystroke.to_string(),
+    }
+}
+
 /// One entry in the curated codon-keymap surface: a chord string
-/// (`"cmd-k s o"`), an action name (`"codon_session::SessionOverview"`),
+/// (`"prefix s o"`), an action name (`"codon_session::SessionOverview"`),
 /// and an optional context predicate the binding fires under.
 ///
 /// Exported so the cheatsheet can filter the global GPUI binding registry
@@ -374,18 +461,22 @@ pub fn load_codon_keymap(cx: &mut App) {
 pub type CuratedBinding = (String, String, Option<String>);
 
 /// Curated codon defaults — every `[bindings.*]` entry in the embedded
-/// `DEFAULT_KEYMAP`. Returns an empty vec if the embedded TOML fails to
-/// parse (which would be a build-time bug; we still don't panic).
+/// `DEFAULT_KEYMAP`, with the `prefix` sentinel expanded using the
+/// user's resolved chord prefix. Returns an empty vec if the embedded
+/// TOML fails to parse (which would be a build-time bug; we still
+/// don't panic).
 pub fn codon_default_bindings() -> Vec<CuratedBinding> {
-    parse_keymap(DEFAULT_KEYMAP).unwrap_or_default()
+    let prefix = resolve_prefix();
+    expand_prefix_in_bindings(parse_keymap(DEFAULT_KEYMAP).unwrap_or_default(), &prefix)
 }
 
 /// Curated user overrides — every `[bindings.*]` entry in the user's
-/// `~/.config/codon/codon.toml` (with legacy `keymap.toml` as a fallback).
-/// Returns an empty vec if no user file exists or the file is unparsable.
-/// Stable across cheatsheet invocations as long as the file doesn't
-/// change between opens; we re-read on each call so a fresh edit is
-/// reflected without a process restart.
+/// `~/.config/codon/codon.toml` (with legacy `keymap.toml` as a fallback),
+/// with the `prefix` sentinel expanded using the user's resolved chord
+/// prefix. Returns an empty vec if no user file exists or the file is
+/// unparsable. Stable across cheatsheet invocations as long as the
+/// file doesn't change between opens; we re-read on each call so a
+/// fresh edit is reflected without a process restart.
 pub fn codon_user_bindings() -> Vec<CuratedBinding> {
     let Some(codon_dir) = codon_config_dir() else {
         return Vec::new();
@@ -402,7 +493,8 @@ pub fn codon_user_bindings() -> Vec<CuratedBinding> {
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
-    parse_keymap(&content).unwrap_or_default()
+    let prefix = resolve_prefix();
+    expand_prefix_in_bindings(parse_keymap(&content).unwrap_or_default(), &prefix)
 }
 
 fn parse_keymap(content: &str) -> Option<Vec<(String, String, Option<String>)>> {
@@ -597,4 +689,115 @@ fn parse_action_spec(spec: &str) -> Result<(&str, Option<serde_json::Value>), St
     let value: serde_json::Value = serde_json::from_str(args)
         .map_err(|err| format!("invalid JSON args '{args}': {err}"))?;
     Ok((name, Some(value)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `prefix c` under the fallback prefix expands to `cmd-k c` — the
+    /// `c-prefix-configurable` invariant that existing installs see no
+    /// change.
+    #[test]
+    fn prefix_default_substitutes_cmd_k() {
+        let bindings = expand_prefix_in_bindings(
+            vec![("prefix c".to_string(), "codon_session::WindowNew".to_string(), None)],
+            DEFAULT_PREFIX,
+        );
+        assert_eq!(bindings[0].0, "cmd-k c");
+    }
+
+    /// With a user override the same sentinel re-keys atomically.
+    #[test]
+    fn prefix_override_rekeys_defaults() {
+        let bindings = expand_prefix_in_bindings(
+            vec![
+                ("prefix c".to_string(), "codon_session::WindowNew".to_string(), None),
+                ("prefix shift-w n".to_string(), "codon_session::WindowNew".to_string(), None),
+                ("prefix \\".to_string(), "codon_session::SplitTerminalRight".to_string(), None),
+            ],
+            "ctrl-x",
+        );
+        assert_eq!(bindings[0].0, "ctrl-x c");
+        assert_eq!(bindings[1].0, "ctrl-x shift-w n");
+        assert_eq!(bindings[2].0, "ctrl-x \\");
+    }
+
+    /// User bindings use the same expansion as the defaults.
+    #[test]
+    fn prefix_substitutes_in_user_bindings() {
+        let toml = r#"
+            [keymap]
+            prefix = "ctrl-x"
+
+            [bindings.global]
+            "prefix t" = "workspace::NewTerminal"
+        "#;
+        let parsed = parse_keymap(toml).expect("parses");
+        let expanded = expand_prefix_in_bindings(parsed, "ctrl-x");
+        assert!(
+            expanded.iter().any(|(k, _, _)| k == "ctrl-x t"),
+            "user binding should expand to 'ctrl-x t', got {expanded:?}"
+        );
+    }
+
+    /// Non-`prefix` chords pass through untouched.
+    #[test]
+    fn non_prefix_chord_unchanged() {
+        let bindings = expand_prefix_in_bindings(
+            vec![
+                ("cmd-shift-s".to_string(), "codon_session::SessionSwitch".to_string(), None),
+                ("ctrl-l".to_string(), "workspace::ActivatePaneRight".to_string(), None),
+                // Hypothetical chord that *contains* the literal token
+                // `prefix` but not as the leading word.
+                ("alt-prefix".to_string(), "noop".to_string(), None),
+            ],
+            "ctrl-x",
+        );
+        assert_eq!(bindings[0].0, "cmd-shift-s");
+        assert_eq!(bindings[1].0, "ctrl-l");
+        assert_eq!(bindings[2].0, "alt-prefix");
+    }
+
+    /// Bare `"prefix"` (used by the double-tap passthrough in the sibling
+    /// `c-prefix-passthrough` task) expands to the resolved prefix chord
+    /// without a trailing space.
+    #[test]
+    fn prefix_bare_token_expands() {
+        let bindings = expand_prefix_in_bindings(
+            vec![("prefix".to_string(), "codon_keymap::SendPrefixToFocus".to_string(), None)],
+            "ctrl-x",
+        );
+        assert_eq!(bindings[0].0, "ctrl-x");
+    }
+
+    /// The `[keymap]` table parses cleanly alongside `[bindings.*]`.
+    #[test]
+    fn keymap_table_parses_with_bindings() {
+        let toml = r#"
+            [keymap]
+            prefix = "ctrl-x"
+
+            [bindings.global]
+            "cmd-shift-s" = "codon_session::SessionSwitch"
+        "#;
+        let parsed: CodonKeymap = toml::from_str(toml).expect("parses");
+        assert_eq!(parsed.keymap.prefix.as_deref(), Some("ctrl-x"));
+        assert_eq!(parsed.bindings.global.len(), 1);
+    }
+
+    /// An empty `prefix = ""` falls back to the default — guards against
+    /// a misconfigured file silently disabling every chord.
+    #[test]
+    fn empty_prefix_falls_back_to_default() {
+        let toml = r#"
+            [keymap]
+            prefix = ""
+        "#;
+        let parsed: CodonKeymap = toml::from_str(toml).expect("parses");
+        assert_eq!(parsed.keymap.prefix.as_deref(), Some(""));
+        // resolve_prefix would filter this; emulate that contract:
+        let resolved = parsed.keymap.prefix.filter(|s| !s.is_empty());
+        assert!(resolved.is_none());
+    }
 }

@@ -6,13 +6,16 @@
 # default behaviour. Live-reload is on — saves take effect without a
 # restart.
 #
-# Two top-level sections:
+# Three top-level sections:
 #
 #   [settings.*]   — Zed-equivalent settings (theme, fonts, editor,
 #                    terminal, language overrides). Mirrors Zed's
 #                    SettingsContent struct shape; see
 #                    crates/codon-config/README.md for the full
 #                    mapping rules.
+#
+#   [keymap]       — keymap-wide settings (currently just the chord
+#                    prefix used by the embedded defaults).
 #
 #   [bindings.*]   — codon keybindings, grouped by context. Three
 #                    pane-scoped sub-tables (editor / terminal /
@@ -21,7 +24,8 @@
 #
 # Action names use Zed's namespaced format
 # (`codon_session::SessionNew`, `workspace::ActivatePaneLeft`, …).
-# Press `cmd-k F1` from inside codon to see every active binding.
+# Press `prefix F1` from inside codon (default: `cmd-k F1`) to see
+# every active binding.
 
 # ═══ Settings ════════════════════════════════════════════════════════
 [settings]
@@ -55,6 +59,20 @@ format_on_save = "on"
 # [settings.languages."c++"]
 # formatter = { external = { command = "clang-format" } }
 
+# ═══ Keymap — chord prefix ══════════════════════════════════════════
+# Codon's embedded defaults wire ~40 tmux-style chords under a single
+# prefix: window/session lifecycle, splits, panes-from-panels, agent
+# verbs, jumps, palette, cheatsheet. The prefix below is substituted
+# into every chord whose keystroke starts with the literal token
+# `prefix` (in defaults *and* in your own bindings below). Default is
+# `cmd-k`; set to `ctrl-x` / `ctrl-b` / `ctrl-a` etc. to match a tmux
+# config.
+#
+# Single-keystroke chord only (e.g. "ctrl-x", "cmd-k"); empty string
+# falls back to the default. Reloads atomically on save.
+[keymap]
+# prefix = "ctrl-x"
+
 # ═══ Window chrome ═══════════════════════════════════════════════════
 # Codon-only knobs that don't map to Zed settings; read at startup and
 # applied to the title-bar renderer.
@@ -71,7 +89,7 @@ format_on_save = "on"
 # ═══ Keybindings — global ════════════════════════════════════════════
 [bindings.global]
 # Pane focus (vim/helix muscle memory). ctrl-{h,j,k,l} collide with
-# terminal control codes (BS / LF / kill-line / clear) so the cmd-k
+# terminal control codes (BS / LF / kill-line / clear) so the prefix
 # arrow chords below are the universal alternative that works from
 # every pane kind, terminals included.
 "ctrl-h" = "workspace::ActivatePaneLeft"
@@ -79,11 +97,11 @@ format_on_save = "on"
 "ctrl-k" = "workspace::ActivatePaneUp"
 "ctrl-l" = "workspace::ActivatePaneRight"
 
-# Pane focus (cmd-k + arrow) — terminal-safe alternative.
-"cmd-k left"  = "workspace::ActivatePaneLeft"
-"cmd-k down"  = "workspace::ActivatePaneDown"
-"cmd-k up"    = "workspace::ActivatePaneUp"
-"cmd-k right" = "workspace::ActivatePaneRight"
+# Pane focus (prefix + arrow) — terminal-safe alternative.
+"prefix left"  = "workspace::ActivatePaneLeft"
+"prefix down"  = "workspace::ActivatePaneDown"
+"prefix up"    = "workspace::ActivatePaneUp"
+"prefix right" = "workspace::ActivatePaneRight"
 
 # Pane move — swap with neighbour
 "ctrl-shift-h" = "workspace::SwapPaneLeft"
@@ -91,34 +109,34 @@ format_on_save = "on"
 "ctrl-shift-k" = "workspace::SwapPaneUp"
 "ctrl-shift-l" = "workspace::SwapPaneRight"
 
-# Pane move (cmd-k + shift-arrow) — terminal-safe alternative.
-"cmd-k shift-left"  = "workspace::SwapPaneLeft"
-"cmd-k shift-down"  = "workspace::SwapPaneDown"
-"cmd-k shift-up"    = "workspace::SwapPaneUp"
-"cmd-k shift-right" = "workspace::SwapPaneRight"
+# Pane move (prefix + shift-arrow) — terminal-safe alternative.
+"prefix shift-left"  = "workspace::SwapPaneLeft"
+"prefix shift-down"  = "workspace::SwapPaneDown"
+"prefix shift-up"    = "workspace::SwapPaneUp"
+"prefix shift-right" = "workspace::SwapPaneRight"
 
-# Pane resize (held under cmd-k to avoid clashing with move). The
+# Pane resize (held under prefix to avoid clashing with move). The
 # codon_session wrappers nudge the pane and arm a 1.5s sticky window:
 # during it, bare h/j/k/l keep resizing without the prefix; esc / any
 # other key / timeout exits.
-"cmd-k shift-h" = "codon_session::ResizePaneLeft"
-"cmd-k shift-j" = "codon_session::ResizePaneDown"
-"cmd-k shift-k" = "codon_session::ResizePaneUp"
-"cmd-k shift-l" = "codon_session::ResizePaneRight"
+"prefix shift-h" = "codon_session::ResizePaneLeft"
+"prefix shift-j" = "codon_session::ResizePaneDown"
+"prefix shift-k" = "codon_session::ResizePaneUp"
+"prefix shift-l" = "codon_session::ResizePaneRight"
 
 # Pane splitting (tmux-flavoured)
-"cmd-k |"  = "pane::SplitRight"
-"cmd-k -"  = "pane::SplitDown"
-"cmd-k \\" = "pane::SplitRight"
+"prefix |"  = "pane::SplitRight"
+"prefix -"  = "pane::SplitDown"
+"prefix \\" = "pane::SplitRight"
 
-# Pane lifecycle. Both cmd-w and cmd-k w fall through codon's safe
+# Pane lifecycle. Both cmd-w and prefix w fall through codon's safe
 # close cascade (close item → close pane → close session window →
 # empty pane reset). The OS window is only ever closed via
 # `cmd-shift-w` or `cmd-shift-q`.
-"cmd-k t" = "workspace::NewTerminal"
-"cmd-k e" = "file_manager::Open"
+"prefix t" = "workspace::NewTerminal"
+"prefix e" = "file_manager::Open"
 "cmd-w"   = "codon_session::SafeCloseActiveItem"
-"cmd-k w" = "codon_session::SafeCloseActiveItem"
+"prefix w" = "codon_session::SafeCloseActiveItem"
 
 # Goto-or-open: single chord lands on the most-recently-active pane of
 # the requested kind, or opens one in the active pane if none exists.
@@ -133,80 +151,80 @@ format_on_save = "on"
 "cmd-q"       = "codon_session::HoldQuit"
 "cmd-shift-q" = "zed::Quit"
 
-# Sessions (cmd-k s prefix)
-"cmd-k s n" = "codon_session::SessionNew"
-"cmd-k s s" = "codon_session::SessionSwitch"
-"cmd-k s c" = "codon_session::SessionClose"
+# Sessions (`prefix s …` family)
+"prefix s n" = "codon_session::SessionNew"
+"prefix s s" = "codon_session::SessionSwitch"
+"prefix s c" = "codon_session::SessionClose"
 
-# Windows within a session (cmd-k W prefix — capital W; lowercase w
-# is "close active item" above). `ctrl-w` is intentionally left
-# unbound — it's reserved for delete-word in insert mode. The
-# `cmd-k shift-w …` block is the discoverable "menu" entry point.
-"cmd-k shift-w n"       = "codon_session::WindowNew"
-"cmd-k shift-w l"       = "codon_session::WindowNext"
-"cmd-k shift-w h"       = "codon_session::WindowPrev"
-"cmd-k shift-w shift-l" = "codon_session::WindowLast"
-"cmd-k shift-w c"       = "codon_session::WindowClose"
-"cmd-k shift-w w"       = "codon_session::WindowSwitch"
-"cmd-k shift-w r"       = "codon_session::WindowRename"
-"cmd-k shift-w !"       = "codon_session::BreakPaneToWindow"
+# Windows within a session (`prefix shift-w …` family — capital W;
+# lowercase w is "close active item" above). `ctrl-w` is intentionally
+# left unbound — it's reserved for delete-word in insert mode. The
+# `prefix shift-w …` block is the discoverable "menu" entry point.
+"prefix shift-w n"       = "codon_session::WindowNew"
+"prefix shift-w l"       = "codon_session::WindowNext"
+"prefix shift-w h"       = "codon_session::WindowPrev"
+"prefix shift-w shift-l" = "codon_session::WindowLast"
+"prefix shift-w c"       = "codon_session::WindowClose"
+"prefix shift-w w"       = "codon_session::WindowSwitch"
+"prefix shift-w r"       = "codon_session::WindowRename"
+"prefix shift-w !"       = "codon_session::BreakPaneToWindow"
 
 # 2-key window motion — muscle-memory path that mirrors tmux's
 # `prefix n` / `prefix p` / `prefix l`. The 3-key chords above remain
 # the discoverable menu entry.
-"cmd-k n" = "codon_session::WindowNext"
-"cmd-k p" = "codon_session::WindowPrev"
-"cmd-k l" = "codon_session::WindowLast"
-"cmd-k r" = "codon_session::WindowRename"
-"cmd-k !" = "codon_session::BreakPaneToWindow"
+"prefix n" = "codon_session::WindowNext"
+"prefix p" = "codon_session::WindowPrev"
+"prefix l" = "codon_session::WindowLast"
+"prefix r" = "codon_session::WindowRename"
+"prefix !" = "codon_session::BreakPaneToWindow"
 
 # Direct index goto — tmux's `prefix 0-9`. 1-based here to match
 # tmux; the action stores 0-based internally. Out-of-range indices
 # are silent no-ops.
-"cmd-k 1" = "codon_session::WindowGoto(0)"
-"cmd-k 2" = "codon_session::WindowGoto(1)"
-"cmd-k 3" = "codon_session::WindowGoto(2)"
-"cmd-k 4" = "codon_session::WindowGoto(3)"
-"cmd-k 5" = "codon_session::WindowGoto(4)"
-"cmd-k 6" = "codon_session::WindowGoto(5)"
-"cmd-k 7" = "codon_session::WindowGoto(6)"
-"cmd-k 8" = "codon_session::WindowGoto(7)"
-"cmd-k 9" = "codon_session::WindowGoto(8)"
+"prefix 1" = "codon_session::WindowGoto(0)"
+"prefix 2" = "codon_session::WindowGoto(1)"
+"prefix 3" = "codon_session::WindowGoto(2)"
+"prefix 4" = "codon_session::WindowGoto(3)"
+"prefix 5" = "codon_session::WindowGoto(4)"
+"prefix 6" = "codon_session::WindowGoto(5)"
+"prefix 7" = "codon_session::WindowGoto(6)"
+"prefix 8" = "codon_session::WindowGoto(7)"
+"prefix 9" = "codon_session::WindowGoto(8)"
 
-# Agent (cmd-k a prefix). Explain / Summarize / Refactor capture the
+# Agent (`prefix a …` family). Explain / Summarize / Refactor capture the
 # active selection (text from focused editor or terminal), open the
 # agent panel, and seed the message editor with a prompt prefix.
-"cmd-k a a" = "assistant::FocusAgent"
-"cmd-k a e" = "codon_agent::AgentExplain"
-"cmd-k a s" = "codon_agent::AgentSummarize"
-"cmd-k a r" = "codon_agent::AgentRefactor"
+"prefix a a" = "assistant::FocusAgent"
+"prefix a e" = "codon_agent::AgentExplain"
+"prefix a s" = "codon_agent::AgentSummarize"
+"prefix a r" = "codon_agent::AgentRefactor"
 
-# Git (cmd-k g prefix)
-"cmd-k g m" = "git::GenerateCommitMessage"
-# `cmd-k g s` is rebound by Phase 12 to the codon-panes "open as pane"
+# Git (`prefix g …` family)
+"prefix g m" = "git::GenerateCommitMessage"
+# `prefix g s` is rebound by Phase 12 to the codon-panes "open as pane"
 # action. The legacy `git_panel::ToggleFocus` still exists if you prefer
 # the dock toggle — uncomment to restore it.
-"cmd-k g s" = "codon_panes::OpenGit"
-# "cmd-k g s" = "git_panel::ToggleFocus"
+"prefix g s" = "codon_panes::OpenGit"
+# "prefix g s" = "git_panel::ToggleFocus"
 
-# Panes-from-panels (Phase 12). `cmd-k <chord>` opens the panel as a
-# regular workspace pane; `cmd-k shift-<chord>` opens it as a transient
+# Panes-from-panels (Phase 12). `prefix <chord>` opens the panel as a
+# regular workspace pane; `prefix shift-<chord>` opens it as a transient
 # peek (auto-toggles on re-invocation, no persistence). See
 # `.specs/codon/panes-from-panels.spec.md` for the contract.
-# "cmd-k a"       = "codon_panes::OpenAgent"     # agent panel as pane
-# "cmd-k shift-a" = "codon_panes::PeekAgent"     # agent panel right peek
-# "cmd-k g"       = "codon_panes::OpenGit"       # git panel as pane
-# "cmd-k shift-g" = "codon_panes::PeekGit"       # git panel left peek
-# "cmd-k o"       = "codon_panes::OpenOutline"   # outline panel as pane
-# "cmd-k shift-o" = "codon_panes::PeekOutline"   # outline panel left peek
-# "cmd-k d"       = "codon_panes::OpenDebug"     # debug panel as pane
-# "cmd-k shift-d" = "codon_panes::PeekDebug"     # debug panel bottom peek
+# "prefix a"       = "codon_panes::OpenAgent"     # agent panel as pane
+# "prefix shift-a" = "codon_panes::PeekAgent"     # agent panel right peek
+# "prefix g"       = "codon_panes::OpenGit"       # git panel as pane
+# "prefix shift-g" = "codon_panes::PeekGit"       # git panel left peek
+# "prefix o"       = "codon_panes::OpenOutline"   # outline panel as pane
+# "prefix shift-o" = "codon_panes::PeekOutline"   # outline panel left peek
+# "prefix d"       = "codon_panes::OpenDebug"     # debug panel as pane
+# "prefix shift-d" = "codon_panes::PeekDebug"     # debug panel bottom peek
 
 # Help / cheatsheet — full-screen list of every active binding.
-"cmd-k f1" = "codon_keymap::ShowKeymap"
+"prefix f1" = "codon_keymap::ShowKeymap"
 
 # Welcome page
-"cmd-k f2" = "zed::ShowWelcome"
+"prefix f2" = "zed::ShowWelcome"
 
 # Command palette (Helix-style `:` plus the platform-native chord)
 "cmd-shift-p" = "codon_command_palette::Toggle"
@@ -257,5 +275,5 @@ format_on_save = "on"
 [bindings.git_panel.insert]
 # Active while the commit-message editor is focused. Esc returns to
 # the changes list (modulo vim's own Esc handling at the editor
-# level — if that wins, rebind below to a chord like `cmd-k q`).
+# level — if that wins, rebind below to a chord like `prefix q`).
 # "escape" = "git_panel::FocusChanges"
