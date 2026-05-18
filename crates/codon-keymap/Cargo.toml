@@ -30,4 +30,6 @@ ui.workspace = true
 vim.workspace = true
 workspace.workspace = true
 file-manager.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
 zed_actions.workspace = true
