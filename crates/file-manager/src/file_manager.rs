@@ -624,7 +624,7 @@ impl FileManager {
                     this.selected_index =
                         cmp::min(want_index, this.entries.len().saturating_sub(1));
                 }
-                this.populate_git_status(cx);
+                this.spawn_git_status_fill(cx);
                 this.ensure_visible();
                 this.spawn_child_count_fill(cx);
                 this.request_preview_update(cx);
@@ -839,6 +839,36 @@ impl FileManager {
             self.select_entry_by_name(&name, cx);
         }
         let _ = window;
+    }
+
+    /// Defer the git-status pass to the next foreground tick. The
+    /// apply closure that just installed new entries returns first
+    /// (so the listing paints immediately), and the populate runs
+    /// once the render has flushed.
+    ///
+    /// `populate_git_status` is O(entries.len()) on the foreground —
+    /// for entries outside the project's known worktrees it walks
+    /// every git repo in scope and does a `abs_path_to_repo_path` +
+    /// `status_for_path` per entry. On a 1000-entry directory that
+    /// pass was ~tens of milliseconds blocking the first paint after
+    /// `Enter`. Deferring makes the listing render instantly; git
+    /// indicators fill in a frame or two later.
+    ///
+    /// Stale-listing guard via `listing_gen`, same pattern as
+    /// `spawn_child_count_fill`.
+    fn spawn_git_status_fill(&self, cx: &mut Context<Self>) {
+        let listing_gen = self.listing_gen;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, cx| {
+                if this.listing_gen != listing_gen {
+                    return;
+                }
+                this.populate_git_status(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn populate_git_status(&mut self, cx: &App) {
@@ -1193,7 +1223,7 @@ impl FileManager {
                 self.selected_index = 0;
                 self.entries = children;
                 self.parent_entries = new_parent_entries;
-                self.populate_git_status(cx);
+                self.spawn_git_status_fill(cx);
                 self.ensure_visible();
                 self.spawn_child_count_fill(cx);
                 self.request_preview_update(cx);
