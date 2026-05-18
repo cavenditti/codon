@@ -548,7 +548,7 @@ impl Render for FileManager {
                                     focus.focus(window, cx);
                                     this.update(cx, |fm, cx| {
                                         fm.selected_index = i;
-                                        fm.update_preview_sync();
+                                        fm.request_preview_update(cx);
                                         cx.notify();
                                     })
                                     .ok();
@@ -558,7 +558,7 @@ impl Render for FileManager {
                                 focus.focus(window, cx);
                                 this.update(cx, |fm, cx| {
                                     fm.selected_index = i;
-                                    fm.update_preview_sync();
+                                    fm.request_preview_update(cx);
                                     cx.notify();
                                 })
                                 .ok();

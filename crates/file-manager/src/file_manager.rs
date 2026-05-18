@@ -101,6 +101,19 @@ const SYMLINK_DEPTH_CAP: usize = 16;
 /// for an action key that doubles as a chord starter.
 const L_CHORD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(220);
 
+/// Time the preview load waits after a selection change before doing
+/// any filesystem work. Short enough that a single deliberate `j` feels
+/// instant, long enough that holding `j` down (~16 ms/keystroke under
+/// auto-repeat) coalesces every keystroke except the last into a single
+/// preview read.
+const PREVIEW_DEBOUNCE_MS: u64 = 40;
+
+/// How many recently-visited directories `DirCache` retains. Tuned for
+/// the back/forward + parent-and-back navigation cycle: 8 covers a few
+/// rounds of "into a subdir, back out, into a sibling" without evicting
+/// the dirs the user is bouncing between.
+const DIR_CACHE_CAP: usize = 8;
+
 /// In-memory clipboard for codon's file manager. Distinct from the OS
 /// clipboard so the user can `y` paths here and still paste text into a
 /// terminal pane from the system clipboard.
@@ -237,6 +250,17 @@ pub struct FileManager {
     /// fill task can detect "the listing I was spawned for is gone" and
     /// drop its result without touching `entries`.
     pub(crate) listing_gen: u64,
+    /// Bumped on every preview request so a debounced/in-flight load
+    /// that's been superseded can drop its result silently. See
+    /// `request_preview_update`.
+    pub(crate) preview_gen: u64,
+    /// Path the most recent `request_preview_update` is loading (or has
+    /// already loaded). A repeat request for the same path is a no-op,
+    /// which coalesces rapid `j`/`k` traffic on the same selection.
+    pub(crate) preview_target: Option<PathBuf>,
+    /// LRU of recently-visited directory listings — see `DirCache`.
+    /// Shared with background listing tasks behind a `Mutex`.
+    pub(crate) dir_cache: Arc<std::sync::Mutex<DirCache>>,
     pub(crate) clipboard: FmClipboard,
     pub(crate) back_stack: VecDeque<PathBuf>,
     pub(crate) forward_stack: VecDeque<PathBuf>,
@@ -397,6 +421,9 @@ impl FileManager {
             error_message: None,
             error_gen: 0,
             listing_gen: 0,
+            preview_gen: 0,
+            preview_target: None,
+            dir_cache: Arc::new(std::sync::Mutex::new(DirCache::default())),
             clipboard: FmClipboard::Empty,
             back_stack: VecDeque::new(),
             forward_stack: VecDeque::new(),
@@ -416,8 +443,11 @@ impl FileManager {
             parent_col_width: 0.0,
             fm_total_width: 0.0,
         };
-        this.reload_entries_sync();
-        this.spawn_child_count_fill(cx);
+        // Kick off the initial listing via the same async path that
+        // navigation uses — the FM renders briefly empty (one frame at
+        // worst) before the read_dir lands, which is the right trade
+        // for keeping one code path.
+        this.reload_entries(window, cx);
         // Register the jump provider with codon-jump's global registry
         // so `cmd-k j` paints a chip on every visible file-manager row.
         // The provider holds a WeakEntity, so the registry's
@@ -485,36 +515,92 @@ impl FileManager {
         context
     }
 
-    fn reload_entries_sync(&mut self) {
-        let opts = self.read_dir_options();
-        self.entries = read_dir_sync(&self.current_dir, opts);
-        self.parent_entries = self
-            .current_dir
-            .parent()
-            .map(|p| read_dir_sync(p, opts))
-            .unwrap_or_default();
-        self.selected_index = cmp::min(
-            self.selected_index,
-            self.entries.len().saturating_sub(1),
-        );
+    /// Clear listing-derived state ahead of a reload. Marks/filter belong
+    /// to the *old* listing — keeping them visible against the upcoming
+    /// (different) entries would be wrong. They're cleared synchronously
+    /// at spawn time so the screen never shows mismatched mark indices,
+    /// even though the new entries themselves arrive asynchronously from
+    /// `reload_entries_with`.
+    fn prepare_reload(&mut self) {
         self.marked.clear();
         // A fresh directory listing invalidates any active filter — the
         // user navigated, so the original set is gone.
         self.filter_query.clear();
         self.entries_unfiltered = None;
-        // Bump before previewing so any in-flight child-count fill from a
-        // previous listing sees the gen mismatch and drops its result.
+        // Bump so any in-flight child-count fill / preview / listing task
+        // from a previous reload sees the gen mismatch and drops its
+        // result without mutating `self`.
         self.listing_gen = self.listing_gen.wrapping_add(1);
-        self.update_preview_sync();
+        // Invalidate the preview target so a navigation back to the same
+        // selected path still triggers a fresh preview load.
+        self.preview_target = None;
     }
 
     fn reload_entries(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.reload_entries_sync();
-        self.populate_git_status(cx);
-        self.ensure_visible();
-        self.spawn_child_count_fill(cx);
-        cx.emit(FileManagerEvent::PathChanged);
-        cx.notify();
+        self.reload_entries_with(None, cx);
+    }
+
+    /// Read the current directory + its parent on the background
+    /// executor, then install the result on the foreground. The previous
+    /// `entries` keep rendering until the new ones arrive (no flicker).
+    ///
+    /// `select_after`, if `Some`, is the entry name to focus once the
+    /// new listing lands — used by `parent_directory` (jump back to the
+    /// child folder we just came out of) and by `reveal_path`. With
+    /// `None`, the selection is clamped to the new list length.
+    fn reload_entries_with(
+        &mut self,
+        select_after: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.prepare_reload();
+        let listing_gen = self.listing_gen;
+        let current_dir = self.current_dir.clone();
+        let opts = self.read_dir_options();
+        let want_index = self.selected_index;
+        let cache = Arc::clone(&self.dir_cache);
+
+        cx.spawn(async move |this, cx| {
+            let parent_path = current_dir.parent().map(|p| p.to_path_buf());
+            let dir_for_read = current_dir.clone();
+            let (entries, parent_entries) = cx
+                .background_executor()
+                .spawn(async move {
+                    let entries = read_dir_cached(&cache, &dir_for_read, opts);
+                    let parent_entries = parent_path
+                        .as_deref()
+                        .map(|p| read_dir_cached(&cache, p, opts))
+                        .unwrap_or_default();
+                    (entries, parent_entries)
+                })
+                .await;
+
+            this.update(cx, |this, cx| {
+                if this.listing_gen != listing_gen {
+                    return;
+                }
+                this.entries = entries;
+                this.parent_entries = parent_entries;
+                if let Some(name) = select_after.as_deref() {
+                    this.selected_index = this
+                        .entries
+                        .iter()
+                        .position(|e| e.name == name)
+                        .unwrap_or(0);
+                } else {
+                    this.selected_index =
+                        cmp::min(want_index, this.entries.len().saturating_sub(1));
+                }
+                this.populate_git_status(cx);
+                this.ensure_visible();
+                this.spawn_child_count_fill(cx);
+                this.request_preview_update(cx);
+                cx.emit(FileManagerEvent::PathChanged);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Populate `child_count` on the current + parent column entries from
@@ -582,7 +668,7 @@ impl FileManager {
         if let Some(idx) = self.entries.iter().position(|e| e.name == name) {
             self.selected_index = idx;
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
         }
     }
@@ -601,7 +687,7 @@ impl FileManager {
         self.selected_index = clamped;
         self.scroll_handle
             .scroll_to_item(self.selected_index, ScrollStrategy::Nearest);
-        self.update_preview_sync();
+        self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
     }
@@ -704,11 +790,16 @@ impl FileManager {
             self.forward_stack.clear();
             self.current_dir = target_dir;
             self.selected_index = 0;
-            self.reload_entries(window, cx);
-        }
-        if let Some(name) = select_name {
+            // Thread the focus-target through the async reload so it's
+            // applied inside the apply closure when entries are
+            // available — calling `select_entry_by_name` here would
+            // run before the new listing has loaded.
+            self.reload_entries_with(select_name, cx);
+        } else if let Some(name) = select_name {
+            // Same dir — entries are already current, select inline.
             self.select_entry_by_name(&name, cx);
         }
+        let _ = window;
     }
 
     fn populate_git_status(&mut self, cx: &App) {
@@ -854,45 +945,73 @@ impl FileManager {
         editor
     }
 
-    pub(crate) fn update_preview_sync(&mut self) {
-        let Some(entry) = self.entries.get(self.selected_index) else {
+    /// Request the preview pane to update for the currently selected
+    /// entry. The actual filesystem reads run on the background executor
+    /// after a short debounce window, so rapid `j`/`k` scrolling no
+    /// longer queues N synchronous reads on the foreground thread.
+    ///
+    /// Coalescing rules:
+    /// - If the new target path matches `preview_target`, no-op.
+    /// - Otherwise `preview_gen` is bumped, the previous in-flight task
+    ///   is logically cancelled (it sees the mismatched gen and drops
+    ///   its result without touching `self`), and a new task is spawned.
+    ///
+    /// The previous preview keeps rendering until the new one lands —
+    /// blanking the pane during scroll would feel like a flicker.
+    pub(crate) fn request_preview_update(&mut self, cx: &mut Context<Self>) {
+        let target_path = self
+            .entries
+            .get(self.selected_index)
+            .map(|e| e.path.clone());
+
+        if target_path == self.preview_target {
+            return;
+        }
+
+        self.preview_gen = self.preview_gen.wrapping_add(1);
+        self.preview_target = target_path.clone();
+        let preview_gen = self.preview_gen;
+
+        let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             self.preview = Preview::Empty;
+            self.preview_editor = None;
+            cx.notify();
             return;
         };
+        let opts = self.read_dir_options();
+        let cache = Arc::clone(&self.dir_cache);
 
-        if entry.is_dir {
-            let children = read_dir_sync(&entry.path, self.read_dir_options());
-            self.preview = Preview::Directory(children);
-            return;
-        }
-
-        let path = entry.path.clone();
-        let name = entry.name.clone();
-        let size = entry.size;
-
-        if is_image_path(&path) {
-            self.preview = Preview::Image(read_image_info(&path, name, size));
-            return;
-        }
-
-        if is_archive_path(&path) {
-            if let Some(listing) = read_archive_listing(&path) {
-                self.preview = Preview::Archive(listing);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(PREVIEW_DEBOUNCE_MS))
+                .await;
+            // Quick gen-check before doing the actual read — a fresher
+            // request may have arrived during the debounce window.
+            let still_current = this
+                .update(cx, |this, _| this.preview_gen == preview_gen)
+                .unwrap_or(false);
+            if !still_current {
                 return;
             }
-            // Recognised extension but the archive failed to open — fall
-            // through to the binary fallback so the user still sees the
-            // header / hex dump instead of a silent blank pane.
-        }
 
-        match read_text_preview(&path, size) {
-            Some(text) => {
-                self.preview = Preview::Text(text);
-            }
-            None => {
-                self.preview = Preview::Binary(read_binary_info(&path, name, size));
-            }
-        }
+            let new_preview = cx
+                .background_executor()
+                .spawn(async move { compute_preview(&entry, opts, &cache) })
+                .await;
+
+            this.update(cx, |this, cx| {
+                if this.preview_gen != preview_gen {
+                    return;
+                }
+                this.preview = new_preview;
+                // `preview_editor` is keyed on the previewed path; the
+                // view layer rebuilds it on next render if the path
+                // changed, so we don't need to invalidate it here.
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn ensure_visible(&self) {
@@ -913,7 +1032,7 @@ impl FileManager {
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.refresh_visual_marks();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
             self.notify_workspace_scrolled(cx);
         }
@@ -923,7 +1042,7 @@ impl FileManager {
         self.selected_index = self.selected_index.saturating_sub(1);
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.refresh_visual_marks();
-        self.update_preview_sync();
+        self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
     }
@@ -933,7 +1052,7 @@ impl FileManager {
             let half = self.visible_lines / 2;
             self.selected_index = cmp::min(self.selected_index + half, self.entries.len() - 1);
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
             self.notify_workspace_scrolled(cx);
         }
@@ -943,7 +1062,7 @@ impl FileManager {
         let half = self.visible_lines / 2;
         self.selected_index = self.selected_index.saturating_sub(half);
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
-        self.update_preview_sync();
+        self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
     }
@@ -955,7 +1074,7 @@ impl FileManager {
                 self.entries.len() - 1,
             );
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
             self.notify_workspace_scrolled(cx);
         }
@@ -964,7 +1083,7 @@ impl FileManager {
     fn page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(self.visible_lines);
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
-        self.update_preview_sync();
+        self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
     }
@@ -1079,22 +1198,18 @@ impl FileManager {
             self.forward_stack.clear();
             self.current_dir = parent;
             self.selected_index = 0;
-            self.reload_entries(window, cx);
-
-            if let Some(name) = old_dir_name {
-                if let Some(idx) = self.entries.iter().position(|e| e.name == name) {
-                    self.selected_index = idx;
-                    self.update_preview_sync();
-                    cx.notify();
-                }
-            }
+            // Jumping back to the directory we just came out of has to
+            // happen inside the apply closure — the entries don't exist
+            // yet at this point.
+            self.reload_entries_with(old_dir_name, cx);
+            let _ = window;
         }
     }
 
     fn go_to_top(&mut self, _: &GoToTop, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = 0;
         self.ensure_visible();
-        self.update_preview_sync();
+        self.request_preview_update(cx);
         cx.notify();
     }
 
@@ -1102,7 +1217,7 @@ impl FileManager {
         if !self.entries.is_empty() {
             self.selected_index = self.entries.len() - 1;
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
         }
     }
@@ -1524,7 +1639,7 @@ impl FileManager {
         }
         self.mode = PaneMode::Normal;
         if had_filter {
-            self.clear_filter();
+            self.clear_filter(cx);
         }
         if let Some(origin) = find_origin {
             self.selected_index = cmp::min(
@@ -1532,7 +1647,7 @@ impl FileManager {
                 self.entries.len().saturating_sub(1),
             );
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
         }
         cx.notify();
         cx.stop_propagation();
@@ -1612,11 +1727,17 @@ impl FileManager {
     /// `origin_index - 1` (forward) or `+1` (backward) so the first
     /// character anchors against the cursor's pre-find position and lands
     /// on the nearest match in the chosen direction.
-    fn apply_find_preview(&mut self, query: &str, origin_index: usize, forward: bool) {
+    fn apply_find_preview(
+        &mut self,
+        query: &str,
+        origin_index: usize,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) {
         if query.is_empty() {
             self.selected_index = cmp::min(origin_index, self.entries.len().saturating_sub(1));
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             return;
         }
         let len = self.entries.len();
@@ -1636,7 +1757,7 @@ impl FileManager {
         if let Some(idx) = found {
             self.selected_index = idx;
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
         }
     }
 
@@ -1649,7 +1770,7 @@ impl FileManager {
         if let Some(idx) = self.find_forward_from(self.selected_index, &needle) {
             self.selected_index = idx;
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
         }
     }
@@ -1663,7 +1784,7 @@ impl FileManager {
         if let Some(idx) = self.find_backward_from(self.selected_index, &needle) {
             self.selected_index = idx;
             self.ensure_visible();
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             cx.notify();
         }
     }
@@ -1928,18 +2049,18 @@ impl FileManager {
         }
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::Filter);
-        self.apply_filter();
+        self.apply_filter(cx);
         cx.notify();
     }
 
-    fn apply_filter(&mut self) {
+    fn apply_filter(&mut self, cx: &mut Context<Self>) {
         let Some(unfiltered) = self.entries_unfiltered.clone() else {
             return;
         };
         if self.filter_query.is_empty() {
             self.entries = unfiltered;
             self.selected_index = 0;
-            self.update_preview_sync();
+            self.request_preview_update(cx);
             return;
         }
         let needle: Vec<char> = self
@@ -1953,10 +2074,10 @@ impl FileManager {
             .collect();
         self.selected_index = 0;
         self.marked.clear();
-        self.update_preview_sync();
+        self.request_preview_update(cx);
     }
 
-    fn clear_filter(&mut self) {
+    fn clear_filter(&mut self, cx: &mut Context<Self>) {
         self.filter_query.clear();
         if let Some(unfiltered) = self.entries_unfiltered.take() {
             self.entries = unfiltered;
@@ -1965,7 +2086,7 @@ impl FileManager {
             self.selected_index,
             self.entries.len().saturating_sub(1),
         );
-        self.update_preview_sync();
+        self.request_preview_update(cx);
     }
 
     fn delete_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2168,9 +2289,7 @@ impl FileManager {
     /// repaint, so we drop the git-status refresh until the next
     /// focus event.
     pub(crate) fn reload_entries_after_bulk_rename(&mut self, cx: &mut Context<Self>) {
-        self.reload_entries_sync();
-        cx.emit(FileManagerEvent::PathChanged);
-        cx.notify();
+        self.reload_entries_with(None, cx);
     }
 
     /// `cm` chord: snapshot the affected paths + their current mode and
@@ -2467,7 +2586,7 @@ impl FileManager {
                 self.pending_input = None;
                 self.mode = PaneMode::Normal;
                 if was_filter {
-                    self.clear_filter();
+                    self.clear_filter(cx);
                 }
                 if let Some(origin) = find_origin {
                     self.selected_index = cmp::min(
@@ -2475,7 +2594,7 @@ impl FileManager {
                         self.entries.len().saturating_sub(1),
                     );
                     self.ensure_visible();
-                    self.update_preview_sync();
+                    self.request_preview_update(cx);
                 }
                 cx.notify();
             }
@@ -2495,7 +2614,7 @@ impl FileManager {
                     }
                     PendingInput::Filter => {
                         self.filter_query.pop();
-                        self.apply_filter();
+                        self.apply_filter(cx);
                         None
                     }
                     PendingInput::FindForward { query, origin_index } => {
@@ -2511,7 +2630,7 @@ impl FileManager {
                     | PendingInput::ConfirmSkipTrashDelete { .. } => None,
                 };
                 if let Some((q, origin, forward)) = find_step {
-                    self.apply_find_preview(&q, origin, forward);
+                    self.apply_find_preview(&q, origin, forward, cx);
                 }
                 cx.notify();
             }
@@ -2701,7 +2820,7 @@ impl FileManager {
                             }
                             PendingInput::Filter => {
                                 self.filter_query.push_str(ch);
-                                self.apply_filter();
+                                self.apply_filter(cx);
                                 None
                             }
                             PendingInput::FindForward { query, origin_index } => {
@@ -2717,7 +2836,7 @@ impl FileManager {
                             | PendingInput::ConfirmSkipTrashDelete { .. } => None,
                         };
                         if let Some((q, origin, forward)) = find_step {
-                            self.apply_find_preview(&q, origin, forward);
+                            self.apply_find_preview(&q, origin, forward, cx);
                         }
                         cx.notify();
                     }
@@ -2970,7 +3089,7 @@ impl FileManager {
                 true
             }
             "escape" if !self.filter_query.is_empty() || self.entries_unfiltered.is_some() => {
-                self.clear_filter();
+                self.clear_filter(cx);
                 cx.notify();
                 true
             }
@@ -3906,7 +4025,7 @@ fn default_bulk_rename_pattern(first: &Path) -> String {
 /// keeps the dotfile filter; `sort` + `reverse` set the comparator;
 /// `show_gitignored` is consulted by the FM (after git status is
 /// populated) — `read_dir_sync` itself does not see git status.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReadDirOptions {
     pub show_hidden: bool,
     pub sort: crate::prefs::SortMode,
@@ -3920,6 +4039,133 @@ impl Default for ReadDirOptions {
             sort: crate::prefs::SortMode::Name,
             reverse: false,
         }
+    }
+}
+
+/// Small per-FM LRU of recently-read directory listings, keyed on the
+/// absolute path. Entries also carry the directory's `mtime` and the
+/// `ReadDirOptions` they were read under — a cache hit requires the
+/// stored mtime to match the directory's *current* mtime, so external
+/// changes (a new file dropped in another pane, a `git pull`) bust the
+/// cache transparently the next time we look the directory up.
+///
+/// Wrapped in `Arc<Mutex<…>>` on the `FileManager` so the background
+/// listing task can consult and update it without round-tripping back
+/// to the foreground.
+pub(crate) struct DirCacheEntry {
+    pub mtime: std::time::SystemTime,
+    pub opts: ReadDirOptions,
+    pub entries: Vec<DirEntry>,
+}
+
+#[derive(Default)]
+pub(crate) struct DirCache {
+    inner: VecDeque<(PathBuf, DirCacheEntry)>,
+}
+
+impl DirCache {
+    fn lookup(
+        &mut self,
+        path: &Path,
+        mtime: std::time::SystemTime,
+        opts: ReadDirOptions,
+    ) -> Option<Vec<DirEntry>> {
+        let pos = self.inner.iter().position(|(p, _)| p == path)?;
+        let (_, entry) = &self.inner[pos];
+        if entry.mtime != mtime || entry.opts != opts {
+            return None;
+        }
+        let result = entry.entries.clone();
+        if let Some(kv) = self.inner.remove(pos) {
+            self.inner.push_front(kv);
+        }
+        Some(result)
+    }
+
+    fn store(
+        &mut self,
+        path: PathBuf,
+        mtime: std::time::SystemTime,
+        opts: ReadDirOptions,
+        entries: Vec<DirEntry>,
+    ) {
+        self.inner.retain(|(p, _)| p != &path);
+        self.inner.push_front((
+            path,
+            DirCacheEntry {
+                mtime,
+                opts,
+                entries,
+            },
+        ));
+        while self.inner.len() > DIR_CACHE_CAP {
+            self.inner.pop_back();
+        }
+    }
+}
+
+/// Cache-aware variant of `read_dir_sync`. Stats the directory to get
+/// its current mtime, consults the cache, and falls back to a real
+/// `read_dir` on miss / staleness. Returns the entries and stores the
+/// fresh listing under the new mtime so subsequent lookups hit.
+///
+/// Designed to be called from the background executor: the cache is
+/// behind a `Mutex` but contention is negligible (one FM task at a
+/// time per FM instance).
+fn read_dir_cached(
+    cache: &std::sync::Mutex<DirCache>,
+    path: &Path,
+    opts: ReadDirOptions,
+) -> Vec<DirEntry> {
+    let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    if let Some(mtime) = mtime
+        && let Ok(mut cache) = cache.lock()
+        && let Some(entries) = cache.lookup(path, mtime, opts)
+    {
+        return entries;
+    }
+    let entries = read_dir_sync(path, opts);
+    if let Some(mtime) = mtime
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.store(path.to_path_buf(), mtime, opts, entries.clone());
+    }
+    entries
+}
+
+/// Compute the preview payload for `entry`. Pure / Send-safe so it can
+/// be moved onto the background executor by `request_preview_update`.
+/// All GPUI / entity construction stays on the foreground.
+fn compute_preview(
+    entry: &DirEntry,
+    opts: ReadDirOptions,
+    cache: &std::sync::Mutex<DirCache>,
+) -> Preview {
+    if entry.is_dir {
+        let children = read_dir_cached(cache, &entry.path, opts);
+        return Preview::Directory(children);
+    }
+
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+    let size = entry.size;
+
+    if is_image_path(&path) {
+        return Preview::Image(read_image_info(&path, name, size));
+    }
+
+    if is_archive_path(&path) {
+        if let Some(listing) = read_archive_listing(&path) {
+            return Preview::Archive(listing);
+        }
+        // Recognised extension but the archive failed to open — fall
+        // through to the binary fallback so the user still sees the
+        // header / hex dump instead of a silent blank pane.
+    }
+
+    match read_text_preview(&path, size) {
+        Some(text) => Preview::Text(text),
+        None => Preview::Binary(read_binary_info(&path, name, size)),
     }
 }
 
@@ -4581,6 +4827,119 @@ mod tests {
             }
         }
         dir
+    }
+
+    #[test]
+    fn dir_cache_lookup_hits_when_mtime_and_opts_match() {
+        let mut cache = DirCache::default();
+        let path = PathBuf::from("/synthetic/dir");
+        let mtime = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let opts = ReadDirOptions::default();
+        let entries = vec![DirEntry {
+            name: "x.txt".into(),
+            path: path.join("x.txt"),
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            size: 0,
+            git_status: None,
+            mtime: None,
+            btime: None,
+            mode: None,
+            uid: None,
+            gid: None,
+            child_count: None,
+        }];
+        cache.store(path.clone(), mtime, opts, entries.clone());
+        let hit = cache.lookup(&path, mtime, opts);
+        assert_eq!(
+            hit.as_deref().map(|s| s.len()),
+            Some(1),
+            "exact match should hit"
+        );
+        let stale_mtime = mtime + std::time::Duration::from_secs(1);
+        assert!(
+            cache.lookup(&path, stale_mtime, opts).is_none(),
+            "different mtime should miss"
+        );
+        let other_opts = ReadDirOptions {
+            show_hidden: true,
+            ..opts
+        };
+        assert!(
+            cache.lookup(&path, mtime, other_opts).is_none(),
+            "different opts should miss"
+        );
+    }
+
+    #[test]
+    fn dir_cache_lru_evicts_oldest() {
+        let mut cache = DirCache::default();
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let opts = ReadDirOptions::default();
+        // Fill past the cap.
+        for i in 0..(DIR_CACHE_CAP + 2) {
+            cache.store(
+                PathBuf::from(format!("/dir/{i}")),
+                mtime,
+                opts,
+                Vec::new(),
+            );
+        }
+        // Earliest two paths must have been evicted.
+        assert!(cache.lookup(&PathBuf::from("/dir/0"), mtime, opts).is_none());
+        assert!(cache.lookup(&PathBuf::from("/dir/1"), mtime, opts).is_none());
+        // Most recent ones still resolve.
+        assert!(
+            cache
+                .lookup(
+                    &PathBuf::from(format!("/dir/{}", DIR_CACHE_CAP + 1)),
+                    mtime,
+                    opts
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn dir_cache_mtime_change_busts_the_cache() {
+        let dir = make_tree(&[("a.txt", false)]);
+        let cache = std::sync::Mutex::new(DirCache::default());
+        let opts = ReadDirOptions::default();
+        let _ = read_dir_cached(&cache, dir.path(), opts);
+        // Sleep ~10 ms then create a file: this bumps the directory's
+        // mtime (POSIX), so the next lookup must miss.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        fs::write(dir.path().join("b.txt"), b"").expect("touch");
+        let after = read_dir_cached(&cache, dir.path(), opts);
+        assert_eq!(
+            after.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["a.txt", "b.txt"]
+        );
+    }
+
+    #[test]
+    fn dir_cache_different_opts_miss_each_other() {
+        let dir = make_tree(&[
+            ("visible.txt", false),
+            (".hidden.txt", false),
+        ]);
+        let cache = std::sync::Mutex::new(DirCache::default());
+        let no_hidden = ReadDirOptions::default();
+        let with_hidden = ReadDirOptions {
+            show_hidden: true,
+            ..ReadDirOptions::default()
+        };
+        let a = read_dir_cached(&cache, dir.path(), no_hidden);
+        assert_eq!(
+            a.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["visible.txt"]
+        );
+        let b = read_dir_cached(&cache, dir.path(), with_hidden);
+        assert_eq!(
+            b.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec![".hidden.txt", "visible.txt"]
+        );
     }
 
     #[test]
