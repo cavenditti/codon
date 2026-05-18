@@ -19,23 +19,29 @@ use crate::theme::FmThemeStore;
 use std::time::SystemTime;
 
 impl FileManager {
-    fn render_entry(
-        &self,
-        entry: &DirEntry,
-        index: usize,
-        selected: Option<usize>,
-        dimmed: bool,
-        line_mode: LineMode,
-        show_meta: bool,
-        cx: &App,
-    ) -> impl IntoElement {
-        // Marks are intrinsically tied to the current column's index space
-        // (`self.entries`). `render_entry` is only called for the parent and
-        // preview columns, where applying `self.marked` indices would
-        // erroneously highlight rows that happen to share an index with a
-        // marked current-column entry. The current column inlines its own
-        // marked-row rendering in the `uniform_list` closure.
-        let is_selected = selected == Some(index);
+}
+
+// Free function (not a method) because the `uniform_list` closures
+// that drive the virtualized parent + directory-preview columns move
+// their captures and can't hold a borrow on the `FileManager` entity.
+// All inputs come from the entry + the captured render context — no
+// `&self` is needed.
+fn render_entry_row(
+    entry: &DirEntry,
+    index: usize,
+    selected: Option<usize>,
+    dimmed: bool,
+    line_mode: LineMode,
+    show_meta: bool,
+    cx: &App,
+) -> AnyElement {
+    // Marks are intrinsically tied to the current column's index space.
+    // `render_entry_row` is only called for the parent and preview
+    // columns, where applying the marked-set would erroneously
+    // highlight rows that happen to share an index with a marked
+    // current-column entry. The current column inlines its own
+    // marked-row rendering in the `uniform_list` closure.
+    let is_selected = selected == Some(index);
         let theme = cx.theme();
         let selected_bg = theme.colors().ghost_element_selected;
 
@@ -127,27 +133,36 @@ impl FileManager {
                     ),
                 )
             })
-    }
+            .into_any_element()
+}
 
+impl FileManager {
     fn render_column_static(
         &self,
         entries: &[DirEntry],
         dimmed: bool,
         show_meta: bool,
-        cx: &Context<Self>,
+        list_id: &'static str,
+        _cx: &Context<Self>,
     ) -> impl IntoElement {
         let line_mode = self.line_mode;
-
-        // No explicit bg — the root container paints the panel color
-        // once and the columns inherit it, so the three sub-panels
-        // blend into one continuous surface (no card-vs-window contrast).
-        v_flex()
-            .flex_1()
-            .overflow_hidden()
-            .py(px(2.))
-            .children(entries.iter().enumerate().map(|(i, entry)| {
-                self.render_entry(entry, i, None, dimmed, line_mode, show_meta, cx)
-            }))
+        // Virtualized: a directory whose listing happens to be the
+        // user's parent dir can easily run into the hundreds (think
+        // `~/Projects/` or `node_modules/`). Eager `.children(...)`
+        // materialized every row every paint; `uniform_list` only
+        // builds the rows currently visible inside the column's
+        // viewport. No explicit bg — the root container paints the
+        // panel color once and the columns inherit it.
+        let entries: Vec<DirEntry> = entries.to_vec();
+        uniform_list(list_id, entries.len(), move |range, _window, cx| {
+            range
+                .map(|i| {
+                    render_entry_row(&entries[i], i, None, dimmed, line_mode, show_meta, cx)
+                })
+                .collect()
+        })
+        .flex_1()
+        .py(px(2.))
     }
 
     fn render_preview(
@@ -166,11 +181,33 @@ impl FileManager {
         let snapshot = self.preview.clone();
 
         let body: AnyElement = match snapshot {
-            Preview::Directory(entries) => div()
-                .children(entries.iter().enumerate().map(|(i, entry)| {
-                    self.render_entry(entry, i, None, true, line_mode, true, cx)
-                }))
-                .into_any_element(),
+            Preview::Directory(entries) => {
+                // Virtualized: preview can render thousands of children
+                // when the user lands on a big directory (`node_modules`,
+                // `~/Downloads`). Without `uniform_list`, every
+                // navigation rebuilt every row.
+                uniform_list(
+                    "fm-preview-dir-list",
+                    entries.len(),
+                    move |range, _window, cx| {
+                        range
+                            .map(|i| {
+                                render_entry_row(
+                                    &entries[i],
+                                    i,
+                                    None,
+                                    true,
+                                    line_mode,
+                                    true,
+                                    cx,
+                                )
+                            })
+                            .collect()
+                    },
+                )
+                .flex_1()
+                .into_any_element()
+            }
             Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
             Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
             Preview::Image(info) => render_image_preview(&info).into_any_element(),
@@ -295,7 +332,13 @@ impl Render for FileManager {
             total_for_layout == 0.0 || total_for_layout >= HIDE_PREVIEW_BELOW;
         let parent_col = if show_parent_for_build {
             Some(
-                self.render_column_static(&self.parent_entries, true, parent_show_meta, cx)
+                self.render_column_static(
+                    &self.parent_entries,
+                    true,
+                    parent_show_meta,
+                    "fm-parent-list",
+                    cx,
+                )
                     .into_any_element(),
             )
         } else {
