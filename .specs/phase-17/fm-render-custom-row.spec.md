@@ -10,7 +10,7 @@ summary: >
   directly into the scene — no `Interactivity`, no `with_text_style`,
   no `with_image_cache`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-custom-row-element
 aspects: [custom-element, paint, no-interactivity, glyph-runs]

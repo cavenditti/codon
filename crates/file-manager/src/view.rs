@@ -15,10 +15,21 @@ use crate::file_manager::{
     TextPreview, format_hex_dump,
 };
 use crate::prefs::LineMode;
+use crate::render::row::{FmRowElement, RowDisplayState, RowMetrics, resolve_row_theme};
+use crate::render::shaped_line_cache::ShapedLineCache;
 use crate::theme::FmThemeStore;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 impl FileManager {
+    /// Whether the phase-17 custom-render pipeline is active. Wired
+    /// through `FmPrefs::custom_render` so users can flip it from
+    /// `codon.toml`. Off by default while the harness stabilises.
+    pub(crate) fn custom_render_enabled(&self) -> bool {
+        crate::prefs::FmPrefs::load().custom_render
+    }
 }
 
 // Free function (not a method) because the `uniform_list` closures
@@ -132,6 +143,71 @@ fn render_entry_row(
             .into_any_element()
 }
 
+/// Per-row state shared by the legacy `render_entry_row` and the
+/// custom `FmRowElement` paths.
+#[derive(Clone, Copy)]
+pub(crate) struct RowCallSite {
+    pub dimmed: bool,
+    pub show_meta: bool,
+    pub line_mode: LineMode,
+    pub custom_render: bool,
+}
+
+/// Build the `AnyElement` for a single row, picking either the
+/// custom `FmRowElement` path (when `custom_render = true`) or the
+/// legacy nested-Div path (the default until the harness stabilises).
+///
+/// The shaped-line cache is shared across rows in a single
+/// `uniform_list` callback invocation via `Rc<RefCell<_>>` — that's
+/// the smallest sharing granularity that keeps `uniform_list`'s
+/// `'static` closure requirement satisfied.
+pub(crate) fn build_entry_row(
+    entry: &DirEntry,
+    index: usize,
+    selected_index: Option<usize>,
+    is_marked: bool,
+    site: RowCallSite,
+    cache: &Rc<RefCell<ShapedLineCache>>,
+    cx: &App,
+) -> AnyElement {
+    if !site.custom_render {
+        return render_entry_row(
+            entry,
+            index,
+            selected_index,
+            site.dimmed,
+            site.line_mode,
+            site.show_meta,
+            cx,
+        );
+    }
+
+    let theme = resolve_row_theme(cx);
+    let font_size = theme::theme_settings(cx).ui_font_size(cx) * 0.85;
+    let metrics = RowMetrics::standard(font_size);
+    let meta_text = if site.show_meta {
+        entry.labels.meta[site.line_mode.idx()].clone()
+    } else {
+        None
+    };
+
+    let row = FmRowElement {
+        entry: Arc::new(entry.clone()),
+        row_index: index,
+        state: RowDisplayState {
+            is_selected: selected_index == Some(index),
+            is_marked,
+            is_focused_row: selected_index == Some(index),
+            zebra_stripe: false,
+        },
+        metrics,
+        theme,
+        meta_text,
+        shaped_line_cache: cache.clone(),
+    };
+    row.into_any_element()
+}
+
 /// Resolve and cache the icon path for each not-yet-populated entry.
 /// `FileIcons::get_icon` needs `&App`, so this must run on the
 /// foreground — but the cost is amortized to once per listing-load
@@ -162,6 +238,14 @@ impl FileManager {
         _cx: &Context<Self>,
     ) -> impl IntoElement {
         let line_mode = self.line_mode;
+        let custom_render = self.custom_render_enabled();
+        let entries: Vec<DirEntry> = entries.to_vec();
+        let site = RowCallSite {
+            dimmed,
+            show_meta,
+            line_mode,
+            custom_render,
+        };
         // Virtualized: a directory whose listing happens to be the
         // user's parent dir can easily run into the hundreds (think
         // `~/Projects/` or `node_modules/`). Eager `.children(...)`
@@ -169,12 +253,19 @@ impl FileManager {
         // builds the rows currently visible inside the column's
         // viewport. No explicit bg — the root container paints the
         // panel color once and the columns inherit it.
-        let entries: Vec<DirEntry> = entries.to_vec();
         uniform_list(list_id, entries.len(), move |range, _window, cx| {
+            // Cache is per-range invocation — `uniform_list` invokes
+            // the callback once per visible window, so a fresh cache
+            // captures hits across the rows in this batch.
+            let cache = Rc::new(RefCell::new(ShapedLineCache::new(
+                crate::render::shaped_line_cache::default_capacity(
+                    range.len().max(8),
+                    1,
+                    1,
+                ),
+            )));
             range
-                .map(|i| {
-                    render_entry_row(&entries[i], i, None, dimmed, line_mode, show_meta, cx)
-                })
+                .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
                 .collect()
         })
         .size_full()
@@ -202,22 +293,25 @@ impl FileManager {
                 // when the user lands on a big directory (`node_modules`,
                 // `~/Downloads`). Without `uniform_list`, every
                 // navigation rebuilt every row.
+                let site = RowCallSite {
+                    dimmed: true,
+                    show_meta: true,
+                    line_mode,
+                    custom_render: self.custom_render_enabled(),
+                };
                 uniform_list(
                     "fm-preview-dir-list",
                     entries.len(),
                     move |range, _window, cx| {
+                        let cache = Rc::new(RefCell::new(ShapedLineCache::new(
+                            crate::render::shaped_line_cache::default_capacity(
+                                range.len().max(8),
+                                1,
+                                1,
+                            ),
+                        )));
                         range
-                            .map(|i| {
-                                render_entry_row(
-                                    &entries[i],
-                                    i,
-                                    None,
-                                    true,
-                                    line_mode,
-                                    true,
-                                    cx,
-                                )
-                            })
+                            .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
                             .collect()
                     },
                 )
@@ -486,9 +580,39 @@ impl Render for FileManager {
         let this = cx.entity().downgrade();
         let focus = self.focus_handle.clone();
         let line_mode = self.line_mode;
+        let custom_render = self.custom_render_enabled();
+        let selected_idx_for_current = self.selected_index;
 
         let current_col = uniform_list("file-list", entries.len(), {
             move |range, _window, cx| {
+                if custom_render {
+                    let site = RowCallSite {
+                        dimmed: false,
+                        show_meta: true,
+                        line_mode,
+                        custom_render: true,
+                    };
+                    let cache = Rc::new(RefCell::new(ShapedLineCache::new(
+                        crate::render::shaped_line_cache::default_capacity(
+                            range.len().max(8),
+                            1,
+                            1,
+                        ),
+                    )));
+                    return range
+                        .map(|i| {
+                            build_entry_row(
+                                &entries[i],
+                                i,
+                                Some(selected_idx_for_current),
+                                marked.contains(&i),
+                                site,
+                                &cache,
+                                cx,
+                            )
+                        })
+                        .collect();
+                }
                 let theme = cx.theme();
                 // Cursor row uses the active token (vs the dimmer
                 // `ghost_element_selected`) so the focused row pops at
@@ -635,6 +759,7 @@ impl Render for FileManager {
                                 })
                                 .ok();
                             })
+                            .into_any_element()
                     })
                     .collect()
             }

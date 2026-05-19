@@ -80,6 +80,13 @@ pub struct FmPrefs {
     pub show_gitignored: bool,
     #[serde(default = "default_preview_fraction")]
     pub preview_fraction: f32,
+    /// Opt into the phase-17 custom-render pipeline
+    /// (`REQ:codon/fm-render`). Off by default while the harness
+    /// stabilises — flip to `true` to exercise the
+    /// `FmRowElement` / `FmColumnElement` paint path. Reversible
+    /// escape hatch.
+    #[serde(default)]
+    pub custom_render: bool,
 }
 
 fn default_show_gitignored() -> bool {
@@ -105,6 +112,7 @@ impl Default for FmPrefs {
             line_mode: default_line_mode(),
             show_gitignored: true,
             preview_fraction: PREVIEW_FRACTION_DEFAULT,
+            custom_render: false,
         }
     }
 }

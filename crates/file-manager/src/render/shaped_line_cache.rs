@@ -17,7 +17,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use gpui::{FontId, Pixels, ShapedLine, SharedString, TextRun, WindowTextSystem, px};
+use gpui::{FontId, Pixels, ShapedLine, SharedString, TextRun, WindowTextSystem};
 use indexmap::IndexMap;
 
 use crate::render::trace::COUNTERS;
@@ -49,6 +49,7 @@ impl ShapedLineKey {
 /// FM-scoped LRU over `ShapedLine`. Insertion order tracks recency:
 /// the most-recently-accessed key is moved to the tail; eviction
 /// drops the head.
+#[allow(dead_code)] // hits/misses/reset_counters surfaced by fm-render-frame-budget
 pub(crate) struct ShapedLineCache {
     inner: IndexMap<ShapedLineKey, Arc<ShapedLine>>,
     capacity: NonZeroUsize,
@@ -165,6 +166,7 @@ impl ShapedLineCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::px;
 
     fn dummy_key(font_id: usize, font_size: f32, text: &str) -> ShapedLineKey {
         ShapedLineKey {
