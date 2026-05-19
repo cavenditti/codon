@@ -263,6 +263,22 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix d d" = "codon_session::DiffOpen"
 "prefix d g" = "diagnostics::Deploy"
 
+# Pickers (`prefix p` prefix — Helix space-mode mirror).
+# `p` is the codon mnemonic for "pickers"; the global chord namespace
+# makes these reachable from terminal / file-manager panes too, not just
+# editors. The letter map matches Helix's `space <letter>` pickers
+# (space f / b / s / S / d / D / r). The 2-key `prefix p` leaf above
+# (WindowPrev) is shadowed by these chords once the next key arrives,
+# mirroring the same `prefix a/g/o/d` leaf-plus-chord pattern used by
+# the panes-from-panels section.
+"prefix p f"       = "file_finder::Toggle"
+"prefix p b"       = "tab_switcher::Toggle"
+"prefix p s"       = "outline::Toggle"
+"prefix p shift-s" = "project_symbols::Toggle"
+"prefix p d"       = "diagnostics::Deploy"
+"prefix p shift-d" = "diagnostics::Deploy"
+"prefix p r"       = "projects::OpenRecent"
+
 # Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
 # covers every visible word / URL / clickable; the URL-only variant
 # `cmd-k u` filters to URL candidates and copies the matched one to

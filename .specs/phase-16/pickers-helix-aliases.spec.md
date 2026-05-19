@@ -11,7 +11,7 @@ summary: >
   `outline::Toggle`, `project_symbols::Toggle`,
   `diagnostics::Deploy`, `projects::OpenRecent`).
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/helix-pickers#c-prefix-namespace
   - REQ:codon/helix-pickers#c-cheatsheet-coverage
