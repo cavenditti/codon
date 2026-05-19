@@ -11,7 +11,7 @@ summary: >
   standalone "run a command, capture output to a transient buffer"
   form Helix exposes — no selection involvement.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/shell-integration#c-palette-verbs
 ---
