@@ -11,7 +11,7 @@ summary: >
   Rendering, cycle actions, and overview shorthand are
   follow-up tasks.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/stacked-panes#c-member-stack
   - REQ:codon/stacked-panes#c-match-site-coverage
