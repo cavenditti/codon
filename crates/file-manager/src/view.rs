@@ -15,6 +15,7 @@ use crate::file_manager::{
     TextPreview, format_hex_dump,
 };
 use crate::prefs::LineMode;
+use crate::render::column::{ColumnKind, ColumnTheme, DirtyRows, FmColumnElement};
 use crate::render::row::{FmRowElement, RowDisplayState, RowMetrics, resolve_row_theme};
 use crate::render::shaped_line_cache::ShapedLineCache;
 use crate::theme::FmThemeStore;
@@ -208,6 +209,58 @@ pub(crate) fn build_entry_row(
     row.into_any_element()
 }
 
+/// Build an `FmColumnElement` for a slice of entries. Returns
+/// `None` when the custom render path isn't active so the caller
+/// falls back to `uniform_list`.
+pub(crate) fn build_fm_column(
+    entries: &[DirEntry],
+    selection: Option<usize>,
+    marks: &std::collections::HashSet<usize>,
+    site: RowCallSite,
+    column_kind: ColumnKind,
+    scroll_offset: &Rc<RefCell<f32>>,
+    dirty_rows: &Rc<RefCell<DirtyRows>>,
+    cx: &App,
+) -> FmColumnElement {
+    let row_theme = resolve_row_theme(cx);
+    let font_size = theme::theme_settings(cx).ui_font_size(cx) * 0.85;
+    let metrics = RowMetrics::standard(font_size);
+    let colors = theme::ActiveTheme::theme(cx).colors();
+    let column_theme = Arc::new(ColumnTheme {
+        row: row_theme,
+        scrollbar_track: colors.scrollbar_track_background,
+        scrollbar_thumb: colors.scrollbar_thumb_background,
+    });
+
+    let entries_arc: Arc<[Arc<DirEntry>]> = entries
+        .iter()
+        .cloned()
+        .map(Arc::new)
+        .collect::<Vec<_>>()
+        .into();
+
+    let cache_capacity = crate::render::shaped_line_cache::default_capacity(
+        entries.len().max(32).min(64),
+        1,
+        1,
+    );
+    let cache = Rc::new(RefCell::new(ShapedLineCache::new(cache_capacity)));
+
+    FmColumnElement {
+        column_kind,
+        entries: entries_arc,
+        selection,
+        marks: Arc::new(marks.clone()),
+        theme: column_theme,
+        row_metrics: metrics,
+        line_mode: site.line_mode,
+        scroll_offset: scroll_offset.clone(),
+        shaped_line_cache: cache,
+        dirty_rows: dirty_rows.clone(),
+        dimmed: site.dimmed,
+    }
+}
+
 /// Resolve and cache the icon path for each not-yet-populated entry.
 /// `FileIcons::get_icon` needs `&App`, so this must run on the
 /// foreground — but the cost is amortized to once per listing-load
@@ -235,17 +288,49 @@ impl FileManager {
         dimmed: bool,
         show_meta: bool,
         list_id: &'static str,
-        _cx: &Context<Self>,
-    ) -> impl IntoElement {
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let line_mode = self.line_mode;
         let custom_render = self.custom_render_enabled();
-        let entries: Vec<DirEntry> = entries.to_vec();
         let site = RowCallSite {
             dimmed,
             show_meta,
             line_mode,
             custom_render,
         };
+
+        if custom_render {
+            // Determine which scroll/dirty cell to use based on
+            // `list_id`. The two static-column call sites pass
+            // "fm-parent-list" or "fm-preview-dir-list" — anything
+            // else lands on the current-column cells.
+            let (scroll_cell, dirty_cell, kind) = if list_id == "fm-parent-list" {
+                (
+                    &self.custom_scroll_parent,
+                    &self.custom_dirty_parent,
+                    ColumnKind::Parent,
+                )
+            } else {
+                (
+                    &self.custom_scroll_preview,
+                    &self.custom_dirty_preview,
+                    ColumnKind::Preview,
+                )
+            };
+            return build_fm_column(
+                entries,
+                None,
+                &Default::default(),
+                site,
+                kind,
+                scroll_cell,
+                dirty_cell,
+                cx,
+            )
+            .into_any_element();
+        }
+
+        let entries: Vec<DirEntry> = entries.to_vec();
         // Virtualized: a directory whose listing happens to be the
         // user's parent dir can easily run into the hundreds (think
         // `~/Projects/` or `node_modules/`). Eager `.children(...)`
@@ -270,6 +355,7 @@ impl FileManager {
         })
         .size_full()
         .py(px(2.))
+        .into_any_element()
     }
 
     fn render_preview(
@@ -289,16 +375,30 @@ impl FileManager {
 
         let body: AnyElement = match snapshot {
             Preview::Directory(entries) => {
-                // Virtualized: preview can render thousands of children
-                // when the user lands on a big directory (`node_modules`,
-                // `~/Downloads`). Without `uniform_list`, every
-                // navigation rebuilt every row.
+                let custom_render = self.custom_render_enabled();
                 let site = RowCallSite {
                     dimmed: true,
                     show_meta: true,
                     line_mode,
-                    custom_render: self.custom_render_enabled(),
+                    custom_render,
                 };
+                if custom_render {
+                    build_fm_column(
+                        &entries,
+                        None,
+                        &Default::default(),
+                        site,
+                        ColumnKind::Preview,
+                        &self.custom_scroll_preview,
+                        &self.custom_dirty_preview,
+                        cx,
+                    )
+                    .into_any_element()
+                } else {
+                // Virtualized: preview can render thousands of children
+                // when the user lands on a big directory (`node_modules`,
+                // `~/Downloads`). Without `uniform_list`, every
+                // navigation rebuilt every row.
                 uniform_list(
                     "fm-preview-dir-list",
                     entries.len(),
@@ -317,6 +417,7 @@ impl FileManager {
                 )
                 .size_full()
                 .into_any_element()
+                }
             }
             Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
             Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
@@ -583,36 +684,30 @@ impl Render for FileManager {
         let custom_render = self.custom_render_enabled();
         let selected_idx_for_current = self.selected_index;
 
-        let current_col = uniform_list("file-list", entries.len(), {
+        // Phase-17 custom render path for the current column.
+        let current_col: AnyElement = if custom_render {
+            let site = RowCallSite {
+                dimmed: false,
+                show_meta: true,
+                line_mode,
+                custom_render: true,
+            };
+            let marks_set: std::collections::HashSet<usize> =
+                marked.iter().copied().collect();
+            build_fm_column(
+                &entries,
+                Some(selected_idx_for_current),
+                &marks_set,
+                site,
+                ColumnKind::Current,
+                &self.custom_scroll_current,
+                &self.custom_dirty_current,
+                cx,
+            )
+            .into_any_element()
+        } else {
+            let current_col = uniform_list("file-list", entries.len(), {
             move |range, _window, cx| {
-                if custom_render {
-                    let site = RowCallSite {
-                        dimmed: false,
-                        show_meta: true,
-                        line_mode,
-                        custom_render: true,
-                    };
-                    let cache = Rc::new(RefCell::new(ShapedLineCache::new(
-                        crate::render::shaped_line_cache::default_capacity(
-                            range.len().max(8),
-                            1,
-                            1,
-                        ),
-                    )));
-                    return range
-                        .map(|i| {
-                            build_entry_row(
-                                &entries[i],
-                                i,
-                                Some(selected_idx_for_current),
-                                marked.contains(&i),
-                                site,
-                                &cache,
-                                cx,
-                            )
-                        })
-                        .collect();
-                }
                 let theme = cx.theme();
                 // Cursor row uses the active token (vs the dimmer
                 // `ghost_element_selected`) so the focused row pops at
@@ -767,6 +862,8 @@ impl Render for FileManager {
         .size_full()
         .py(px(2.))
         .track_scroll(&self.scroll_handle);
+            current_col.into_any_element()
+        };
 
         let panel = v_flex()
             .size_full()

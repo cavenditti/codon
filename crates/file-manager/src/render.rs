@@ -5,6 +5,7 @@
 //! umbrella where each piece (trace harness, custom row, custom column,
 //! caches) is wired in turn.
 
+pub(crate) mod column;
 pub(crate) mod row;
 pub(crate) mod shaped_line_cache;
 pub(crate) mod trace;

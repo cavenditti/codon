@@ -338,6 +338,20 @@ pub struct FileManager {
     /// three, then drop the preview column too when even two
     /// would be cramped. 0.0 until the first paint.
     pub(crate) fm_total_width: f32,
+    /// Per-column scroll offsets (pixels) for the phase-17 custom
+    /// render pipeline. `Rc<RefCell<f32>>` so the column Element can
+    /// auto-track the selection (without going through `&mut
+    /// FileManager`) when the user moves with `j`/`k`. Unused when
+    /// `custom_render = false`.
+    pub(crate) custom_scroll_parent: std::rc::Rc<std::cell::RefCell<f32>>,
+    pub(crate) custom_scroll_current: std::rc::Rc<std::cell::RefCell<f32>>,
+    pub(crate) custom_scroll_preview: std::rc::Rc<std::cell::RefCell<f32>>,
+    /// Per-column dirty-row hint set populated by
+    /// `mark_rows_dirty` (`fm-render-dirty-rect`). Empty means
+    /// "full repaint".
+    pub(crate) custom_dirty_parent: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    pub(crate) custom_dirty_current: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    pub(crate) custom_dirty_preview: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
 }
 
 #[derive(Clone)]
@@ -475,6 +489,12 @@ impl FileManager {
             cmd_only_held: false,
             parent_col_width: 0.0,
             fm_total_width: 0.0,
+            custom_scroll_parent: std::rc::Rc::new(std::cell::RefCell::new(0.0)),
+            custom_scroll_current: std::rc::Rc::new(std::cell::RefCell::new(0.0)),
+            custom_scroll_preview: std::rc::Rc::new(std::cell::RefCell::new(0.0)),
+            custom_dirty_parent: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
+            custom_dirty_current: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
+            custom_dirty_preview: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
         };
         // Kick off the initial listing via the same async path that
         // navigation uses — the FM renders briefly empty (one frame at

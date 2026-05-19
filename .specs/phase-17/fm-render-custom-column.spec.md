@@ -9,7 +9,7 @@ summary: >
   scrollbar, and inline row painting. Calls `FmRowElement::paint`
   directly without instantiating per-row Elements.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-custom-column-element
 aspects: [custom-element, virtualization, scrollbar, inline-paint]
