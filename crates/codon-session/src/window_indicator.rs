@@ -8,7 +8,7 @@ use ui::{
 use workspace::{ItemHandle, StatusItemView, Workspace, notifications::NotifyTaskExt as _};
 
 use crate::{
-    actions::{WindowGoto, persist_async},
+    actions::{WindowGoto, persist_debounced},
     registry::SessionRegistry,
     runtime::{WindowRuntime, WindowRuntimeCache},
     session::{SessionId, WindowId},
@@ -117,7 +117,7 @@ pub(crate) fn switch_to_window(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
-    persist_async(cx);
+    persist_debounced(cx);
 
     let cache = WindowRuntimeCache::global(cx);
     let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
@@ -217,7 +217,7 @@ pub(crate) fn commit_active_window(target_idx: usize, cx: &gpui::App) {
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not commit active window after preview: {err:?}");
     }
-    persist_async(cx);
+    persist_debounced(cx);
 }
 
 /// Wire WindowGoto(usize) action handler that switches to window at index.

@@ -10,7 +10,7 @@ summary: >
   switch, and on shutdown — but never on every keystroke that
   cycles a window.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-defer-persist
 aspects: [debounce, idle-flush, lifecycle-hooks, persist]

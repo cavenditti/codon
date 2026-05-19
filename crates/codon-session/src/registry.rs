@@ -1,9 +1,15 @@
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context as _, Result};
 use db::kvp::GlobalKeyValueStore;
-use gpui::{App, Global};
-use parking_lot::RwLock;
+use gpui::{App, AppContext as _, Global, Task};
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::session::{Session, SessionId};
@@ -169,6 +175,124 @@ impl PersistedSnapshot {
     }
 }
 
+/// Debounced + immediate writer for the session registry.
+///
+/// `c-defer-persist`: rapid `prefix Tab` window-cycle previously queued
+/// a JSON serialization on the background executor on every switch.
+/// `mark_dirty` instead arms a 2 s debounce — additional `mark_dirty`
+/// calls inside that window coalesce into a single eventual flush.
+/// Lifecycle events that need a synchronous on-disk view
+/// (attach/detach/create/delete/rename/shutdown) call `flush_now`,
+/// which spawns immediately and returns the `Task` so the caller can
+/// detach or await as appropriate.
+///
+/// The pending-task `Mutex` is intentionally coarse: serialization
+/// already runs off the foreground thread, and the scheduler itself is
+/// only contended at switch rate (a few hundred Hz at most). A
+/// finer-grained lock-free design would not pay for itself.
+pub struct PersistScheduler {
+    dirty: AtomicBool,
+    pending_timer: Mutex<Option<Task<()>>>,
+    /// Counts the total number of background persist tasks spawned by
+    /// this scheduler. Read by `c-switch-budget-harness` tests to
+    /// assert that rapid switches coalesce into a single flush.
+    flush_count: AtomicU32,
+}
+
+use std::sync::atomic::AtomicU32;
+
+const PERSIST_DEBOUNCE: Duration = Duration::from_secs(2);
+
+impl PersistScheduler {
+    fn new() -> Self {
+        Self {
+            dirty: AtomicBool::new(false),
+            pending_timer: Mutex::new(None),
+            flush_count: AtomicU32::new(0),
+        }
+    }
+
+    /// Total background persist tasks spawned since the scheduler was
+    /// created. Inclusive of both debounced and `flush_now` paths.
+    pub fn flush_count(&self) -> u32 {
+        self.flush_count.load(Ordering::Relaxed)
+    }
+
+    /// Mark the registry dirty. If no flush is currently pending, arm
+    /// the debounce timer; otherwise the in-flight timer absorbs this
+    /// switch into the eventual single flush.
+    pub fn mark_dirty(self: &Arc<Self>, cx: &App) {
+        self.dirty.store(true, Ordering::Release);
+        let mut guard = self.pending_timer.lock();
+        if guard.is_some() {
+            // A debounce timer is already armed; coalesce.
+            return;
+        }
+        let scheduler = self.clone();
+        let task = cx.spawn(async move |cx| {
+            cx.background_executor().timer(PERSIST_DEBOUNCE).await;
+            // Clear the pending-timer slot BEFORE spawning the write —
+            // the next `mark_dirty` after this point arms a fresh
+            // debounce window rather than getting silently swallowed.
+            scheduler.pending_timer.lock().take();
+            if !scheduler.dirty.swap(false, Ordering::AcqRel) {
+                return;
+            }
+            scheduler.spawn_flush_task(cx).detach();
+        });
+        *guard = Some(task);
+    }
+
+    /// Flush the registry now. The returned task spawns immediately on
+    /// the background executor; the caller picks whether to detach or
+    /// await. Lifecycle events (attach/detach/create/delete/rename/
+    /// shutdown) call this so the on-disk view is consistent at the
+    /// boundaries that matter for crash recovery.
+    pub fn flush_now(self: &Arc<Self>, cx: &App) -> Task<()> {
+        // Any in-flight debounce becomes redundant once we flush
+        // synchronously — drop it so the queued task doesn't fire a
+        // duplicate write a second later.
+        self.pending_timer.lock().take();
+        self.dirty.store(false, Ordering::Release);
+        self.spawn_flush_task(&mut cx.to_async())
+    }
+
+    fn spawn_flush_task(&self, cx: &mut gpui::AsyncApp) -> Task<()> {
+        self.flush_count.fetch_add(1, Ordering::Relaxed);
+        let snapshot = cx.update(|cx| SessionRegistry::global(cx).snapshot());
+        cx.background_spawn(async move {
+            if let Err(err) = snapshot.write().await {
+                log::warn!("persist scheduler: failed to persist session registry: {err:?}");
+            }
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct PersistSchedulerHandle(Arc<PersistScheduler>);
+
+impl PersistSchedulerHandle {
+    pub fn mark_dirty(&self, cx: &App) {
+        self.0.mark_dirty(cx);
+    }
+
+    pub fn flush_now(&self, cx: &App) -> Task<()> {
+        self.0.flush_now(cx)
+    }
+
+    pub fn flush_count(&self) -> u32 {
+        self.0.flush_count()
+    }
+}
+
+impl Global for PersistSchedulerHandle {}
+
+/// Cheap (Arc-cloned) global handle. Cloning detaches from the `App`
+/// borrow so callers can hold it across `cx.notify()`, switches, etc.
+pub fn persist_scheduler(cx: &App) -> PersistSchedulerHandle {
+    cx.global::<PersistSchedulerHandle>().clone()
+}
+
 pub fn init(cx: &mut App) {
     let registry = SessionRegistry::default();
     match GlobalKeyValueStore::global().read_kvp(KVP_KEY) {
@@ -183,10 +307,14 @@ pub fn init(cx: &mut App) {
         }
     }
     cx.set_global(registry);
+    cx.set_global(PersistSchedulerHandle(Arc::new(PersistScheduler::new())));
 
     spawn_heartbeat(cx);
 
     cx.on_app_quit(|cx| {
+        // Shutdown drain: flush the registry synchronously through the
+        // scheduler so any pending debounced switch lands on disk
+        // before the app exits.
         let snapshot = SessionRegistry::global(cx).snapshot();
         async move {
             if let Err(err) = snapshot.write().await {

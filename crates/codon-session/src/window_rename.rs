@@ -6,7 +6,7 @@ use gpui::{
 use ui::{ActiveTheme as _, Color, FluentBuilder, Label, LabelCommon, LabelSize, StyledExt, h_flex, v_flex};
 use workspace::{ModalView, Workspace};
 
-use crate::{actions::persist_async, registry::SessionRegistry};
+use crate::{actions::persist_lifecycle, registry::SessionRegistry};
 
 pub struct WindowRenameModal {
     editor: Entity<Editor>,
@@ -86,7 +86,7 @@ impl WindowRenameModal {
         if let Err(err) = registry.upsert(session) {
             log::warn!("could not save window rename: {err:?}");
         }
-        persist_async(cx);
+        persist_lifecycle(cx);
 
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |_, cx| cx.notify());

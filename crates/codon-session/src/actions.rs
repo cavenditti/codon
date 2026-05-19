@@ -304,7 +304,7 @@ fn create_session_for_workspace(
         log::warn!("could not set active session: {err:?}");
     }
     workspace.set_session_id(Some(id.to_string()));
-    persist_async(cx);
+    persist_lifecycle(cx);
     cx.notify();
     log::info!("created session '{unique}' ({id})");
     Some(id)
@@ -411,7 +411,7 @@ fn handle_session_close(
     } else {
         workspace.set_session_id(None);
     }
-    persist_async(cx);
+    persist_lifecycle(cx);
     cx.notify();
 }
 
@@ -446,7 +446,7 @@ fn handle_window_new(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save new window: {err:?}");
     }
-    persist_async(cx);
+    persist_lifecycle(cx);
 
     workspace.replace_center_with_empty_pane(window, cx);
 }
@@ -591,7 +591,7 @@ fn finish_window_close(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save after window close: {err:?}");
     }
-    persist_async(cx);
+    persist_lifecycle(cx);
     cx.notify();
 
     // Swap the visible pane tree to whatever the new active window has.
@@ -678,7 +678,7 @@ fn handle_break_pane_to_window(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save after break-pane: {err:?}");
     }
-    persist_async(cx);
+    persist_lifecycle(cx);
 
     // Apply the broken-pane layout in the visible center. Items
     // re-hydrate via SerializableItemRegistry.
@@ -777,7 +777,7 @@ fn handle_move_pane_to_window(
         if let Err(err) = registry.upsert(session) {
             log::warn!("could not save after move-pane: {err:?}");
         }
-        persist_async(cx);
+        persist_lifecycle(cx);
         cx.notify();
 
         let weak = workspace.weak_handle();
@@ -796,7 +796,7 @@ fn handle_move_pane_to_window(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save after move-pane (single-pane source): {err:?}");
     }
-    persist_async(cx);
+    persist_lifecycle(cx);
     cx.notify();
 
     let weak = workspace.weak_handle();
@@ -925,8 +925,11 @@ fn cycle_window(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
+    // Intra-session window cycle: debounce off the synchronous switch
+    // path. Rapid `prefix Tab` mashing coalesces into a single flush
+    // ~2 s after the last switch (`c-defer-persist`).
     let persist_started = Instant::now();
-    persist_async(cx);
+    persist_debounced(cx);
     let persist_scheduled_ms = elapsed_ms(persist_started);
 
     let cache = WindowRuntimeCache::global(cx);
@@ -1131,7 +1134,7 @@ pub fn attach_session(
     workspace.set_session_id(Some(target_id.to_string()));
     let restore = restore_incoming_timed(workspace, target_id, window, cx);
     let persist_started = Instant::now();
-    persist_async(cx);
+    persist_lifecycle(cx);
     let persist_scheduled_ms = elapsed_ms(persist_started);
     cx.notify();
 
@@ -1163,14 +1166,20 @@ fn unique_name(base: &str, cx: &App) -> String {
     base.to_string()
 }
 
-pub(crate) fn persist_async(cx: &App) {
-    let snapshot = SessionRegistry::global(cx).snapshot();
-    cx.background_spawn(async move {
-        if let Err(err) = snapshot.write().await {
-            log::warn!("failed to persist session registry: {err:?}");
-        }
-    })
-    .detach();
+/// Persist the registry now. Used for lifecycle events
+/// (attach/detach/create/delete/rename) where the on-disk view must be
+/// consistent at the boundary. The returned task spawns immediately on
+/// the background executor.
+pub(crate) fn persist_lifecycle(cx: &App) {
+    crate::registry::persist_scheduler(cx).flush_now(cx).detach();
+}
+
+/// Mark the registry dirty and let the persist scheduler debounce the
+/// actual JSON write off the switch path
+/// (`c-defer-persist`). Rapid `prefix Tab` cycles coalesce into a
+/// single eventual flush rather than queuing one task per switch.
+pub(crate) fn persist_debounced(cx: &App) {
+    crate::registry::persist_scheduler(cx).mark_dirty(cx);
 }
 
 // ─── switch-timing trace harness ────────────────────────────────────────
