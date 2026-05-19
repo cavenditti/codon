@@ -44,4 +44,16 @@ pub fn init(cx: &mut App) {
     registry::init(cx);
     registers::init(cx);
     runtime::init(cx);
+
+    // Wire the vendored Zed `restore_center_root` timing callback into
+    // the switch-perf trace harness. The callback captures the wall-clock
+    // duration of the restore burst plus the count of previously-unseen
+    // panes attached to the workspace; the value lands in a thread-local
+    // slot that the codon-session action handler drains when it builds
+    // the corresponding `SwitchTiming` event. The harness pattern matches
+    // the existing codon pane-kind registry: vendored Zed does not import
+    // codon types, codon installs the function pointer here.
+    workspace::codon_bridge::set_restore_timing_callback(
+        crate::actions::record_restore_timing_from_workspace,
+    );
 }

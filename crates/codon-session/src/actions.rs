@@ -1,8 +1,10 @@
 use std::{
+    cell::Cell,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
+use file_manager::{CacheOutcome, SwitchKind, record_switch_timing};
 use gpui::{Action, App, AppContext as _, Context, Global, Window, actions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -900,8 +902,13 @@ fn cycle_window(
     let new_idx = ((session.active_window as i32 + delta).rem_euclid(len)) as usize;
 
     let outgoing_id = session.active().map(|w| w.id);
+    let _ = take_restore_timing();
+    let capture_started = Instant::now();
     let snapshot = swap::capture(workspace, window, cx);
+    let capture_ms = elapsed_ms(capture_started);
+    let runtime_started = Instant::now();
     let runtime = capture_runtime(workspace, cx);
+    let runtime_capture_ms = elapsed_ms(runtime_started);
     if let Some(active) = session.active_mut() {
         active.layout = Some(snapshot);
     }
@@ -915,16 +922,20 @@ fn cycle_window(
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
+    let persist_started = Instant::now();
     persist_async(cx);
+    let persist_scheduled_ms = elapsed_ms(persist_started);
 
     let cache = WindowRuntimeCache::global(cx);
     let cached_runtime = incoming_window_id.and_then(|id| cache.take(active_id, id));
-    if let Some(rt) = cached_runtime {
+    let restore_started = Instant::now();
+    let cache_outcome = if let Some(rt) = cached_runtime {
         log::debug!(
             "restoring window {:?} from in-memory runtime cache",
             incoming_window_id
         );
         workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+        CacheOutcome::Hit
     } else if let Some(layout) = incoming_layout {
         log::debug!(
             "restoring window {:?} from persisted snapshot (no runtime cache hit)",
@@ -932,13 +943,34 @@ fn cycle_window(
         );
         let weak = workspace.weak_handle();
         swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+        CacheOutcome::Miss
     } else {
         log::debug!(
             "no state for window {:?}; opening fresh empty pane",
             incoming_window_id
         );
         workspace.replace_center_with_empty_pane(window, cx);
-    }
+        CacheOutcome::Cold
+    };
+    let restore_ms = take_restore_timing()
+        .map(|(ms, _)| ms)
+        .unwrap_or_else(|| elapsed_ms(restore_started));
+
+    record_switch_timing(
+        SwitchKind::Window,
+        outgoing_id.map(|w| w.0),
+        incoming_window_id.map(|w| w.0),
+        capture_ms,
+        runtime_capture_ms,
+        restore_ms,
+        persist_scheduled_ms,
+        cache_outcome,
+    );
+}
+
+#[inline]
+fn elapsed_ms(start: Instant) -> f32 {
+    start.elapsed().as_secs_f64() as f32 * 1000.0
 }
 
 fn capture_runtime(workspace: &Workspace, cx: &App) -> Option<WindowRuntime> {
@@ -957,19 +989,43 @@ fn stash_outgoing(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let _ = stash_outgoing_timed(workspace, window, cx);
+}
+
+#[derive(Default, Clone, Copy)]
+struct StashTiming {
+    outgoing_window: Option<u64>,
+    capture_ms: f32,
+    runtime_capture_ms: f32,
+}
+
+/// Same as [`stash_outgoing`], but returns per-phase timing for the
+/// switch-trace harness. Inline timing is preferable to wrapping at the
+/// call site because the conditional early-returns (no active session,
+/// no active window) need to surface as zero values rather than an
+/// outer-`Instant` measurement that misattributes the no-op cost.
+fn stash_outgoing_timed(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> StashTiming {
     let registry = SessionRegistry::global(cx);
     let Some(outgoing_session_id) = registry.active_id() else {
-        return;
+        return StashTiming::default();
     };
     let Some(mut session) = registry.get(outgoing_session_id) else {
-        return;
+        return StashTiming::default();
     };
     let Some(outgoing_window_id) = session.active().map(|w| w.id) else {
-        return;
+        return StashTiming::default();
     };
 
+    let capture_started = Instant::now();
     let snapshot = swap::capture(workspace, window, cx);
+    let capture_ms = elapsed_ms(capture_started);
+    let runtime_started = Instant::now();
     let runtime = capture_runtime(workspace, cx);
+    let runtime_capture_ms = elapsed_ms(runtime_started);
 
     if let Some(active) = session.active_mut() {
         active.layout = Some(snapshot);
@@ -980,17 +1036,31 @@ fn stash_outgoing(
     if let Some(rt) = runtime {
         WindowRuntimeCache::global(cx).insert(outgoing_session_id, outgoing_window_id, rt);
     }
+
+    StashTiming {
+        outgoing_window: Some(outgoing_window_id.0),
+        capture_ms,
+        runtime_capture_ms,
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct RestoreTiming {
+    incoming_window: Option<u64>,
+    restore_ms: f32,
+    cache_outcome: Option<CacheOutcome>,
 }
 
 /// Restore (or initialize) the workspace center to the active window of
 /// `target_id`. Prefers the in-memory runtime cache, falls back to the
 /// persisted `LayoutSnapshot`, and finally drops in a fresh empty pane.
-fn restore_incoming(
+/// Returns timing + cache-outcome for the switch-trace harness.
+fn restore_incoming_timed(
     workspace: &mut Workspace,
     target_id: SessionId,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> RestoreTiming {
     let registry = SessionRegistry::global(cx);
     let session = registry.get(target_id);
     let incoming_window_id = session.as_ref().and_then(|s| s.active().map(|w| w.id));
@@ -999,12 +1069,15 @@ fn restore_incoming(
     let cached = incoming_window_id
         .and_then(|id| WindowRuntimeCache::global(cx).take(target_id, id));
 
-    if let Some(rt) = cached {
+    let _ = take_restore_timing();
+    let restore_started = Instant::now();
+    let outcome = if let Some(rt) = cached {
         log::debug!(
             "attach: restoring session {target_id} window {:?} from runtime cache",
             incoming_window_id
         );
         workspace.restore_center_root(rt.root, rt.active_pane, window, cx);
+        CacheOutcome::Hit
     } else if let Some(layout) = incoming_layout {
         log::debug!(
             "attach: restoring session {target_id} window {:?} from persisted snapshot",
@@ -1012,12 +1085,22 @@ fn restore_incoming(
         );
         let weak = workspace.weak_handle();
         swap::apply(workspace, layout, window, cx).detach_and_notify_err(weak, window, cx);
+        CacheOutcome::Miss
     } else {
         log::debug!(
             "attach: no state for session {target_id} window {:?}; opening fresh empty pane",
             incoming_window_id
         );
         workspace.replace_center_with_empty_pane(window, cx);
+        CacheOutcome::Cold
+    };
+    let restore_ms = take_restore_timing()
+        .map(|(ms, _)| ms)
+        .unwrap_or_else(|| elapsed_ms(restore_started));
+    RestoreTiming {
+        incoming_window: incoming_window_id.map(|w| w.0),
+        restore_ms,
+        cache_outcome: Some(outcome),
     }
 }
 
@@ -1034,15 +1117,28 @@ pub fn attach_session(
     if registry.active_id() == Some(target_id) {
         return;
     }
-    stash_outgoing(workspace, window, cx);
+    let stash = stash_outgoing_timed(workspace, window, cx);
     if let Err(err) = registry.set_active(target_id) {
         log::warn!("could not activate session: {err:?}");
         return;
     }
     workspace.set_session_id(Some(target_id.to_string()));
-    restore_incoming(workspace, target_id, window, cx);
+    let restore = restore_incoming_timed(workspace, target_id, window, cx);
+    let persist_started = Instant::now();
     persist_async(cx);
+    let persist_scheduled_ms = elapsed_ms(persist_started);
     cx.notify();
+
+    record_switch_timing(
+        SwitchKind::Session,
+        stash.outgoing_window,
+        restore.incoming_window,
+        stash.capture_ms,
+        stash.runtime_capture_ms,
+        restore.restore_ms,
+        persist_scheduled_ms,
+        restore.cache_outcome.unwrap_or(CacheOutcome::Cold),
+    );
 }
 
 fn unique_name(base: &str, cx: &App) -> String {
@@ -1069,6 +1165,33 @@ pub(crate) fn persist_async(cx: &App) {
         }
     })
     .detach();
+}
+
+// ─── switch-timing trace harness ────────────────────────────────────────
+//
+// `Workspace::restore_center_root` (vendored Zed) measures its own wall
+// clock and hands the result to the function pointer registered in
+// `codon_session::init`. The pointer cannot pass values through GPUI's
+// `cx` (the trampoline is sync-from-vendored-crate; there is no `cx`
+// available to read globals), so the value lands in a thread-local
+// cell. The codon-session action handler drives the rest of the switch
+// path on the same foreground thread, so a `Cell<Option<f32>>` is
+// race-free in practice — the cell is `take()`n right after the
+// `restore_center_root` call returns.
+thread_local! {
+    static LAST_RESTORE_TIMING: Cell<Option<(f32, u32)>> = const { Cell::new(None) };
+}
+
+pub(crate) fn record_restore_timing_from_workspace(restore_ms: f32, new_pane_count: u32) {
+    LAST_RESTORE_TIMING.with(|slot| slot.set(Some((restore_ms, new_pane_count))));
+}
+
+/// Drain the thread-local slot populated by the restore-timing callback.
+/// Returns `(restore_ms, new_pane_count)` if a `restore_center_root` call
+/// has fired since the last drain on this thread, `None` otherwise (e.g.
+/// cache-miss path that took the `swap::apply` fallback instead).
+fn take_restore_timing() -> Option<(f32, u32)> {
+    LAST_RESTORE_TIMING.with(|slot| slot.take())
 }
 
 // ─── hold-to-quit ───────────────────────────────────────────────────────

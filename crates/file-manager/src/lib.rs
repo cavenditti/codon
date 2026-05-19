@@ -25,7 +25,10 @@ pub use file_manager::{
     ToggleMark, ToggleSortReverse, YankPath,
 };
 pub use openers::{Opener, OpenerStore};
-pub use render::trace::{default_trace_path, install_global as install_render_trace};
+pub use render::trace::{
+    CacheOutcome, SwitchKind, default_trace_path, install_global as install_render_trace,
+    record_switch as record_switch_timing,
+};
 
 use std::sync::Arc;
 

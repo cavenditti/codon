@@ -1,7 +1,7 @@
 //! Render-trace harness.
 //!
-//! A feature-gated, per-process JSONL recorder that captures three event
-//! kinds emitted from the FM render pipeline:
+//! A feature-gated, per-process JSONL recorder that captures four event
+//! kinds:
 //!
 //! - `KeypressDispatched` — a key reached the FM input handler.
 //! - `FramePainted` — the FM render closure returned (provisional;
@@ -9,6 +9,10 @@
 //!   `TASK:phase-17/fm-render-custom-row`).
 //! - `PreviewUpgraded` — the FM upgraded the preview column from the
 //!   lightweight snapshot to the real `EditorElement`.
+//! - `SwitchTiming` — codon-session emits one per window-/session-switch
+//!   boundary with per-phase durations (capture / restore / persist) so
+//!   `scripts/render-trace-report.py --kind switch` can compute the
+//!   phase-17 switch-budget percentiles.
 //!
 //! The harness has two enable paths:
 //!
@@ -41,6 +45,49 @@ use std::{
 
 use gpui::SharedString;
 
+/// Switch boundary classification carried by [`TraceEvent::SwitchTiming`].
+/// `Window` is an intra-session window cycle (`prefix Tab` / `prefix N` /
+/// `prefix P`); `Session` is a `codon_session::SessionSwitch` /
+/// `attach_session` boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchKind {
+    Window,
+    Session,
+}
+
+impl SwitchKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            SwitchKind::Window => "window",
+            SwitchKind::Session => "session",
+        }
+    }
+}
+
+/// Outcome of the [`WindowRuntimeCache`] lookup for the incoming window.
+///
+/// `Hit` — runtime cache served the restore (cheapest path);
+/// `Miss` — cache absent or expired, fell back to the persisted
+/// `LayoutSnapshot` (`swap::apply` path);
+/// `Cold` — neither cache nor snapshot was available, a fresh empty
+/// pane was installed instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheOutcome {
+    Hit,
+    Miss,
+    Cold,
+}
+
+impl CacheOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            CacheOutcome::Hit => "hit",
+            CacheOutcome::Miss => "miss",
+            CacheOutcome::Cold => "cold",
+        }
+    }
+}
+
 /// One traced event. Variants stay POD-cheap so `record` never allocates
 /// on the hot path beyond a single `Vec::push`.
 #[derive(Debug)]
@@ -61,6 +108,35 @@ pub(crate) enum TraceEvent {
     PreviewUpgraded {
         at: Instant,
         path: PathBuf,
+    },
+    SwitchTiming {
+        at: Instant,
+        kind: SwitchKind,
+        /// Codon `WindowId` of the outgoing window (raw `u64`). `None`
+        /// for the first switch of a freshly-launched process when no
+        /// window was previously attached.
+        outgoing: Option<u64>,
+        /// Codon `WindowId` of the incoming window (raw `u64`). Same
+        /// `None` semantics as `outgoing` (e.g. switch to a brand-new
+        /// session with no windows yet).
+        incoming: Option<u64>,
+        /// Time spent inside `swap::capture` for the outgoing window.
+        /// `0.0` when the cache-hit fast path elided the capture
+        /// (`c-skip-capture-on-cache-hit`).
+        capture_ms: f32,
+        /// Time spent inside `capture_runtime` building the in-memory
+        /// `WindowRuntime` Arc bumps. Distinguished from `capture_ms`
+        /// because the fast path keeps this even when it drops the
+        /// snapshot capture.
+        runtime_capture_ms: f32,
+        /// Time spent inside `Workspace::restore_center_root` (or the
+        /// fallback `swap::apply` path on cache miss).
+        restore_ms: f32,
+        /// Time spent enqueuing the persist task (`mark_dirty` /
+        /// `flush_now`). The actual JSON serialization runs on the
+        /// background executor and is not included here.
+        persist_scheduled_ms: f32,
+        cache_outcome: CacheOutcome,
     },
 }
 
@@ -147,6 +223,33 @@ impl RenderTrace {
                     "{{\"t\":\"preview_upgraded\",\"at_ms\":{at_ms:.3},\"path\":{}}}",
                     json_string(&path.display().to_string()),
                 ),
+                TraceEvent::SwitchTiming {
+                    kind,
+                    outgoing,
+                    incoming,
+                    capture_ms,
+                    runtime_capture_ms,
+                    restore_ms,
+                    persist_scheduled_ms,
+                    cache_outcome,
+                    ..
+                } => format!(
+                    "{{\"t\":\"switch\",\"at_ms\":{at_ms:.3},\"kind\":\"{}\",\
+                     \"outgoing\":{},\"incoming\":{},\
+                     \"capture_ms\":{capture_ms:.3},\
+                     \"runtime_capture_ms\":{runtime_capture_ms:.3},\
+                     \"restore_ms\":{restore_ms:.3},\
+                     \"persist_scheduled_ms\":{persist_scheduled_ms:.3},\
+                     \"cache_outcome\":\"{}\"}}",
+                    kind.as_str(),
+                    outgoing
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    incoming
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    cache_outcome.as_str(),
+                ),
             };
             if writeln!(out, "{line}").is_err() {
                 break;
@@ -177,7 +280,8 @@ fn at_ms(event: &TraceEvent, origin: Instant) -> f64 {
     let at = match event {
         TraceEvent::KeypressDispatched { at, .. }
         | TraceEvent::FramePainted { at, .. }
-        | TraceEvent::PreviewUpgraded { at, .. } => *at,
+        | TraceEvent::PreviewUpgraded { at, .. }
+        | TraceEvent::SwitchTiming { at, .. } => *at,
     };
     at.saturating_duration_since(origin).as_secs_f64() * 1000.0
 }
@@ -292,6 +396,38 @@ pub(crate) fn record_preview_upgraded(path: &Path) {
     }
 }
 
+/// Record a [`TraceEvent::SwitchTiming`]. Called from `codon-session`
+/// (and indirectly from vendored Zed's `restore_center_root` via the
+/// `set_restore_timing_callback` shim) at the boundary of each window-
+/// or session-switch. Returns immediately when the trace collector is
+/// not installed.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn record_switch(
+    kind: SwitchKind,
+    outgoing: Option<u64>,
+    incoming: Option<u64>,
+    capture_ms: f32,
+    runtime_capture_ms: f32,
+    restore_ms: f32,
+    persist_scheduled_ms: f32,
+    cache_outcome: CacheOutcome,
+) {
+    if let Some(trace) = GLOBAL.get() {
+        trace.record(TraceEvent::SwitchTiming {
+            at: Instant::now(),
+            kind,
+            outgoing,
+            incoming,
+            capture_ms,
+            runtime_capture_ms,
+            restore_ms,
+            persist_scheduled_ms,
+            cache_outcome,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,16 +458,62 @@ mod tests {
                 at: Instant::now(),
                 path: PathBuf::from("/tmp/foo.rs"),
             });
+            trace.record(TraceEvent::SwitchTiming {
+                at: Instant::now(),
+                kind: SwitchKind::Window,
+                outgoing: Some(3),
+                incoming: Some(4),
+                capture_ms: 0.0,
+                runtime_capture_ms: 0.1,
+                restore_ms: 2.3,
+                persist_scheduled_ms: 0.05,
+                cache_outcome: CacheOutcome::Hit,
+            });
         }
         let content = std::fs::read_to_string(&path).expect("read trace");
         let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 3, "one line per event");
+        assert_eq!(lines.len(), 4, "one line per event");
         assert!(lines[0].contains("\"t\":\"keypress\""));
         assert!(lines[0].contains("\"key\":\"j\""));
         assert!(lines[1].contains("\"t\":\"frame_painted\""));
         assert!(lines[1].contains("\"rows_painted\":30"));
         assert!(lines[2].contains("\"t\":\"preview_upgraded\""));
         assert!(lines[2].contains("/tmp/foo.rs"));
+        assert!(lines[3].contains("\"t\":\"switch\""));
+        assert!(lines[3].contains("\"kind\":\"window\""));
+        assert!(lines[3].contains("\"outgoing\":3"));
+        assert!(lines[3].contains("\"incoming\":4"));
+        assert!(lines[3].contains("\"cache_outcome\":\"hit\""));
+        assert!(lines[3].contains("\"capture_ms\":0.000"));
+        assert!(lines[3].contains("\"restore_ms\":2.300"));
+    }
+
+    /// Confirm that the `Option<u64>` outgoing/incoming fields serialize
+    /// as JSON `null` when the switch has no opposite side (e.g. first
+    /// switch from a freshly-launched process).
+    #[test]
+    fn switch_timing_null_outgoing_serializes_as_json_null() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("trace.jsonl");
+        {
+            let trace = RenderTrace::new(path.clone());
+            trace.record(TraceEvent::SwitchTiming {
+                at: Instant::now(),
+                kind: SwitchKind::Session,
+                outgoing: None,
+                incoming: Some(1),
+                capture_ms: 4.2,
+                runtime_capture_ms: 0.2,
+                restore_ms: 5.0,
+                persist_scheduled_ms: 0.1,
+                cache_outcome: CacheOutcome::Cold,
+            });
+        }
+        let content = std::fs::read_to_string(&path).expect("read trace");
+        assert!(content.contains("\"outgoing\":null"));
+        assert!(content.contains("\"incoming\":1"));
+        assert!(content.contains("\"kind\":\"session\""));
+        assert!(content.contains("\"cache_outcome\":\"cold\""));
     }
 
     #[test]

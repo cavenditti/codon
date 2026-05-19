@@ -9,7 +9,7 @@ summary: >
   restore / persist durations, plus a scripted-switch replay. Acts as
   the acceptance gate for the switch-perf clauses.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-switch-budget-harness
 aspects: [instrumentation, switch-timing, acceptance-gate]
