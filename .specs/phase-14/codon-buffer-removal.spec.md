@@ -10,7 +10,7 @@ summary: >
   `REQ:codon/buffer-trait` was superseded by the decision to
   adopt Zed's vim + `helix_default` wholesale.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/code-quality#c-no-silencer-functions
 ---

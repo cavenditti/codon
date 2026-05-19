@@ -424,8 +424,8 @@ agent, git) rewired to `&dyn Buffer`. That plan was *superseded* on
 - With no second consumer ever planned, the `codon_buffer` abstraction
   had no payoff over using `language::Buffer` directly.
 
-The `crates/codon-buffer/` crate exists from earlier exploration but
-has zero consumers and is slated for removal. The `vendor/helix/`
+The `crates/codon-buffer/` crate from earlier exploration has been
+removed (Phase 14) — it had zero consumers. The `vendor/helix/`
 submodule stays in tree as *reference material* — when we want to
 understand how Helix implements a behavior we're mirroring, the
 source is right there. It is not built or linked.
@@ -1163,9 +1163,6 @@ have shipped; 14–17 are in flight or planned.
 
 == Cleanup pending
 
-- *`crates/codon-buffer/` removal.* Zero consumers; superseded by
-  the decision to keep `language::Buffer` directly. Tracked by
-  `TASK:phase-14/codon-buffer-removal`.
 - *Doc drift.* `TASK:phase-14/doc-drift-resolve` reconciles
   CLAUDE.md and this design doc with the shipped phases.
 
