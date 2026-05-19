@@ -9,7 +9,7 @@ summary: >
   joined with codon-session's pane-activation history. Bound to
   `prefix p j`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/helix-pickers#c-jumplist-picker
 ---

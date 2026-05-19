@@ -3577,6 +3577,7 @@ dependencies = [
  "project",
  "ui",
  "util",
+ "vim",
  "workspace",
 ]
 
