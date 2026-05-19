@@ -9,7 +9,7 @@ summary: >
   syntax highlighting they would in a normal editor pane. Enrich the
   binary fallback with a friendly type label derived from mime.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/fm-preview-richer#c-syntax-highlight
   - REQ:codon/fm-preview-richer#c-metadata-fallback
