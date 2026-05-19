@@ -61,8 +61,12 @@ fn handle_toggle(
 ) {
     let weak = workspace.weak_handle();
     let initial = last_picker::take_query_for(cx, PICKER_ACTION_NAME);
+    // Collect rows BEFORE `toggle_modal` updates the workspace entity —
+    // anything inside the modal-constructor closure that does
+    // `workspace.read(cx)` would double-borrow and panic.
+    let rows = collect_rows(workspace, cx);
     workspace.toggle_modal(window, cx, move |window, cx| {
-        ChangedFilesModal::new(weak, initial, window, cx)
+        ChangedFilesModal::new(weak, rows, initial, window, cx)
     });
 }
 
@@ -89,8 +93,7 @@ pub struct ChangedFilesPickerDelegate {
 }
 
 impl ChangedFilesPickerDelegate {
-    fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Self {
-        let rows = collect_rows(&workspace, cx);
+    fn new(workspace: WeakEntity<Workspace>, rows: Vec<ChangedFileRow>) -> Self {
         let matches = rows
             .iter()
             .enumerate()
@@ -111,11 +114,8 @@ impl ChangedFilesPickerDelegate {
     }
 }
 
-fn collect_rows(workspace: &WeakEntity<Workspace>, cx: &mut App) -> Vec<ChangedFileRow> {
-    let Some(workspace) = workspace.upgrade() else {
-        return Vec::new();
-    };
-    let project = workspace.read(cx).project().clone();
+fn collect_rows(workspace: &Workspace, cx: &App) -> Vec<ChangedFileRow> {
+    let project = workspace.project().clone();
     let git_store = project.read(cx).git_store().clone();
     let mut rows: Vec<ChangedFileRow> = Vec::new();
     let repositories: Vec<Entity<project::git_store::Repository>> =
@@ -358,6 +358,7 @@ pub struct ChangedFilesModal {
 impl ChangedFilesModal {
     fn new(
         workspace: WeakEntity<Workspace>,
+        rows: Vec<ChangedFileRow>,
         initial_query: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -366,7 +367,7 @@ impl ChangedFilesModal {
         scaffold.on_open(cx);
         cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
             .detach();
-        let delegate = ChangedFilesPickerDelegate::new(workspace, cx);
+        let delegate = ChangedFilesPickerDelegate::new(workspace, rows);
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx).modal(false);
             if let Some(query) = initial_query

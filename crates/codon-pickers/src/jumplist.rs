@@ -62,8 +62,12 @@ fn handle_toggle(
 ) {
     let weak = workspace.weak_handle();
     let initial = last_picker::take_query_for(cx, PICKER_ACTION_NAME);
+    // Collect rows BEFORE `toggle_modal` updates the workspace entity —
+    // anything inside the modal-constructor closure that does
+    // `workspace.read(cx)` would double-borrow and panic.
+    let rows = collect_rows(workspace, cx);
     workspace.toggle_modal(window, cx, move |window, cx| {
-        JumplistModal::new(weak, initial, window, cx)
+        JumplistModal::new(weak, rows, initial, window, cx)
     });
 }
 
@@ -98,8 +102,7 @@ pub struct JumplistPickerDelegate {
 }
 
 impl JumplistPickerDelegate {
-    fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Self {
-        let rows = collect_rows(&workspace, cx);
+    fn new(workspace: WeakEntity<Workspace>, rows: Vec<JumplistRow>) -> Self {
         let matches = rows
             .iter()
             .enumerate()
@@ -120,14 +123,11 @@ impl JumplistPickerDelegate {
     }
 }
 
-fn collect_rows(workspace: &WeakEntity<Workspace>, cx: &mut App) -> Vec<JumplistRow> {
-    let Some(workspace_entity) = workspace.upgrade() else {
-        return Vec::new();
-    };
+fn collect_rows(workspace: &Workspace, cx: &App) -> Vec<JumplistRow> {
     let mut rows: Vec<JumplistRow> = Vec::new();
 
     // Layer 1: vim jumplist (NavHistory) entries.
-    let jumps = codon_jumplist::workspace_jumplist_entries(workspace_entity.read(cx), cx);
+    let jumps = codon_jumplist::workspace_jumplist_entries(workspace, cx);
     for jump in jumps {
         let path = jump
             .abs_path
@@ -152,8 +152,7 @@ fn collect_rows(workspace: &WeakEntity<Workspace>, cx: &mut App) -> Vec<Jumplist
     // dep here without an import cycle. The workspace's own pane list,
     // ordered by their `activation_history()` last-activated timestamps,
     // gives the same surface for the picker's purposes.
-    let workspace_ref = workspace_entity.read(cx);
-    for (ix, pane) in workspace_ref.panes().iter().enumerate() {
+    for (ix, pane) in workspace.panes().iter().enumerate() {
         let pane_ref = pane.read(cx);
         let active_item_label = pane_ref
             .active_item()
@@ -313,6 +312,7 @@ pub struct JumplistModal {
 impl JumplistModal {
     fn new(
         workspace: WeakEntity<Workspace>,
+        rows: Vec<JumplistRow>,
         initial_query: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -321,7 +321,7 @@ impl JumplistModal {
         scaffold.on_open(cx);
         cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
             .detach();
-        let delegate = JumplistPickerDelegate::new(workspace, cx);
+        let delegate = JumplistPickerDelegate::new(workspace, rows);
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx).modal(false);
             if let Some(query) = initial_query
