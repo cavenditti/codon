@@ -8,7 +8,7 @@ summary: >
   `Workspace::restore_center_root` (vendored Zed) with an O(N+M)
   `HashSet`-based pass. Pure complexity fix; behaviour unchanged.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-restore-pane-set-hashmap
 aspects: [vendored-zed, complexity-fix, restore-path]

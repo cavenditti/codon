@@ -9,7 +9,7 @@ summary: >
   `workspace.panes` before the restore — only newly-attached panes
   need their cached render state invalidated.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-restore-skip-notify
 aspects: [vendored-zed, notify-elision, gpui-render-cache]
