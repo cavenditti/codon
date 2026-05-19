@@ -1,6 +1,8 @@
 use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
 use fs::{copy_recursive, CopyOptions, RenameOptions};
-use git::status::FileStatus;
+use git::status::{
+    FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+};
 use gpui::{
     actions, point, prelude::*, Action, App, Bounds, ClipboardItem, Context, Entity, EventEmitter,
     FocusHandle, Focusable, KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task,
@@ -10,7 +12,7 @@ use language::{Buffer, LanguageRegistry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::{Icon, IconName};
@@ -418,7 +420,7 @@ impl FileManager {
         // handling stays here only for FM-private housekeeping (git
         // status refresh + re-render).
         cx.on_focus(&focus_handle, window, |this: &mut Self, _window, cx| {
-            this.populate_git_status(cx);
+            this.spawn_git_status_fill(cx);
             cx.notify();
         })
         .detach();
@@ -841,68 +843,44 @@ impl FileManager {
         let _ = window;
     }
 
-    /// Defer the git-status pass to the next foreground tick. The
-    /// apply closure that just installed new entries returns first
-    /// (so the listing paints immediately), and the populate runs
-    /// once the render has flushed.
-    ///
-    /// `populate_git_status` is O(entries.len()) on the foreground —
-    /// for entries outside the project's known worktrees it walks
-    /// every git repo in scope and does a `abs_path_to_repo_path` +
-    /// `status_for_path` per entry. On a 1000-entry directory that
-    /// pass was ~tens of milliseconds blocking the first paint after
-    /// `Enter`. Deferring makes the listing render instantly; git
-    /// indicators fill in a frame or two later.
+    /// Resolve git status by shelling out to `git status --porcelain`
+    /// directly, rather than going through Zed's `workspace::Project`
+    /// + `git_store`. The Zed path required registering a project
+    /// worktree for the FM's `current_dir`, which kicked off a
+    /// recursive `worktree::BackgroundScanner::scan_dir` over the
+    /// whole subtree — exactly the 100+ ms FS burst the profiler
+    /// flagged on directory enter. Direct `git status` is bounded to
+    /// the enclosing repo and runs on the background executor.
     ///
     /// Stale-listing guard via `listing_gen`, same pattern as
-    /// `spawn_child_count_fill`.
+    /// `spawn_child_count_fill`. Result is applied + gitignore
+    /// filter is run on the foreground apply closure.
     fn spawn_git_status_fill(&self, cx: &mut Context<Self>) {
         let listing_gen = self.listing_gen;
+        let current_dir = self.current_dir.clone();
+        let parent_dir = current_dir.parent().map(Path::to_path_buf);
         cx.spawn(async move |this, cx| {
+            let map = cx
+                .background_executor()
+                .spawn(async move { collect_git_status(&current_dir, parent_dir.as_deref()) })
+                .await;
             this.update(cx, |this, cx| {
                 if this.listing_gen != listing_gen {
                     return;
                 }
-                this.populate_git_status(cx);
+                let map = map.unwrap_or_default();
+                for entry in &mut this.entries {
+                    entry.git_status = map.get(entry.path.as_path()).copied();
+                }
+                for entry in &mut this.parent_entries {
+                    entry.git_status = map.get(entry.path.as_path()).copied();
+                }
+                this.apply_gitignore_filter();
                 cx.notify();
             })
             .ok();
         })
         .detach();
-    }
-
-    fn populate_git_status(&mut self, cx: &App) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let workspace = workspace.read(cx);
-        let project = workspace.project().read(cx);
-        let git_store = project.git_store().read(cx);
-
-        let lookup = |abs_path: &Path| -> Option<FileStatus> {
-            if let Some(pp) = project.project_path_for_absolute_path(abs_path, cx)
-                && let Some(status) = git_store.project_path_git_status(&pp, cx)
-            {
-                return Some(status);
-            }
-            for repo in git_store.repositories().values() {
-                let repo = repo.read(cx);
-                if let Some(repo_path) = repo.abs_path_to_repo_path(abs_path)
-                    && let Some(entry) = repo.status_for_path(&repo_path)
-                {
-                    return Some(entry.status);
-                }
-            }
-            None
-        };
-
-        for entry in &mut self.entries {
-            entry.git_status = lookup(&entry.path);
-        }
-        for entry in &mut self.parent_entries {
-            entry.git_status = lookup(&entry.path);
-        }
-        self.apply_gitignore_filter();
     }
 
     /// `zg` toggle: when `show_gitignored` is false, drop entries whose
@@ -4368,6 +4346,135 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
 /// One `SharedString` allocation per non-`None` slot, then four
 /// `Arc::clone`s per row per frame instead of four `format!` + four
 /// `SharedString::from(String)` allocations.
+/// Resolve git status for the entries displayed by the FM by shelling
+/// out to `git status --porcelain=v1 -z --ignored` directly. Designed
+/// to run on the background executor: pure-blocking, no GPUI entities,
+/// no Zed `Project` / `Worktree` involvement.
+///
+/// Returns a map keyed on the absolute path of each changed/untracked/
+/// ignored file or directory. Entries not in the map are clean.
+///
+/// Discovers the enclosing repo by walking up from `current_dir` until
+/// a `.git` entry is found (file or directory, so submodules + linked
+/// worktrees are handled). `parent_dir` lets the caller include a
+/// second lookup for the parent column when the parent is in the same
+/// repo as the current dir; the merge is implicit since `git status`
+/// reports the whole worktree.
+pub(crate) fn collect_git_status(
+    current_dir: &Path,
+    parent_dir: Option<&Path>,
+) -> Option<HashMap<PathBuf, FileStatus>> {
+    let repo_root = find_git_repo_root(current_dir)
+        .or_else(|| parent_dir.and_then(find_git_repo_root))?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_root)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("-z")
+        .arg("--ignored")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(parse_porcelain_v1_z(&output.stdout, &repo_root))
+}
+
+/// Walk up from `start` searching for a `.git` entry. Stops at the
+/// filesystem root. The match check uses `fs::symlink_metadata` so
+/// `.git` files (gitlinks for submodules / linked worktrees) count as
+/// hits the same way the directory form does.
+fn find_git_repo_root(start: &Path) -> Option<PathBuf> {
+    let mut current = start;
+    loop {
+        if std::fs::symlink_metadata(current.join(".git")).is_ok() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+/// Parse `git status --porcelain=v1 -z` output. Each record is a
+/// two-byte XY code, a space, the path, and a NUL terminator; renames
+/// and copies carry an extra NUL-terminated original-path field that
+/// we consume and discard.
+fn parse_porcelain_v1_z(bytes: &[u8], repo_root: &Path) -> HashMap<PathBuf, FileStatus> {
+    let mut out = HashMap::new();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        let x = bytes[i] as char;
+        let y = bytes[i + 1] as char;
+        // bytes[i + 2] is a space — skip.
+        let path_start = i + 3;
+        let Some(nul_rel) = bytes[path_start..].iter().position(|&b| b == 0) else {
+            break;
+        };
+        let path_bytes = &bytes[path_start..path_start + nul_rel];
+        i = path_start + nul_rel + 1;
+
+        // Rename + copy carry an extra original-path field — skip it.
+        if x == 'R' || x == 'C' {
+            let Some(nul2) = bytes[i..].iter().position(|&b| b == 0) else {
+                break;
+            };
+            i += nul2 + 1;
+        }
+
+        let Ok(path_str) = std::str::from_utf8(path_bytes) else {
+            continue;
+        };
+        let abs = repo_root.join(Path::new(path_str));
+        if let Some(status) = porcelain_xy_to_file_status(x, y) {
+            out.insert(abs, status);
+        }
+    }
+    out
+}
+
+fn porcelain_xy_to_file_status(x: char, y: char) -> Option<FileStatus> {
+    match (x, y) {
+        ('?', '?') => Some(FileStatus::Untracked),
+        ('!', '!') => Some(FileStatus::Ignored),
+        // Unmerged combinations per `git status` docs: DD, AA, AU, UD,
+        // UA, DU, UU. Any `U` on either side is unmerged.
+        ('D', 'D') | ('A', 'A') => Some(FileStatus::Unmerged(UnmergedStatus {
+            first_head: unmerged_code(x)?,
+            second_head: unmerged_code(y)?,
+        })),
+        _ if x == 'U' || y == 'U' => Some(FileStatus::Unmerged(UnmergedStatus {
+            first_head: unmerged_code(x)?,
+            second_head: unmerged_code(y)?,
+        })),
+        _ => Some(FileStatus::Tracked(TrackedStatus {
+            index_status: porcelain_code(x)?,
+            worktree_status: porcelain_code(y)?,
+        })),
+    }
+}
+
+fn porcelain_code(c: char) -> Option<StatusCode> {
+    match c {
+        ' ' => Some(StatusCode::Unmodified),
+        'M' => Some(StatusCode::Modified),
+        'T' => Some(StatusCode::TypeChanged),
+        'A' => Some(StatusCode::Added),
+        'D' => Some(StatusCode::Deleted),
+        'R' => Some(StatusCode::Renamed),
+        'C' => Some(StatusCode::Copied),
+        _ => None,
+    }
+}
+
+fn unmerged_code(c: char) -> Option<UnmergedStatusCode> {
+    match c {
+        'A' => Some(UnmergedStatusCode::Added),
+        'D' => Some(UnmergedStatusCode::Deleted),
+        'U' => Some(UnmergedStatusCode::Updated),
+        _ => None,
+    }
+}
+
 pub(crate) fn build_entry_labels(entry: &DirEntry) -> EntryLabels {
     let mut meta: [Option<gpui::SharedString>; LineMode::COUNT] = Default::default();
     for mode in [
@@ -4956,23 +5063,13 @@ fn open_file_manager(
         .map(|wt| wt.read(cx).abs_path().to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
 
-    // Make sure the project has a worktree covering this directory so
-    // git_store can discover the enclosing repository and per-entry
-    // status lookups resolve to a real `FileStatus`.
-    let needs_worktree = project
-        .read(cx)
-        .worktree_store()
-        .read(cx)
-        .find_worktree(&dir, cx)
-        .is_none();
-    if needs_worktree {
-        let dir_arc: Arc<Path> = Arc::from(dir.as_path());
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree(dir_arc, false, cx)
-            })
-            .detach_and_log_err(cx);
-    }
+    // Git status is resolved by shelling out to `git status` directly
+    // (see `collect_git_status`) — no project worktree needed. The
+    // previous `project.find_or_create_worktree` call here kicked off
+    // `worktree::BackgroundScanner::scan_dir` over the whole subtree
+    // (~150 ms FS burst on directory enter per the samply trace), and
+    // its only consumer was the git-status lookup that's now
+    // independent of `Project`.
 
     let languages = Some(workspace.app_state().languages.clone());
     let file_manager =
@@ -4997,6 +5094,80 @@ mod tests {
             }
         }
         dir
+    }
+
+    #[test]
+    fn porcelain_parse_handles_xy_variants() {
+        // Build a synthetic `git status --porcelain=v1 -z` payload:
+        //   ?? untracked.txt    → Untracked
+        //   !! ignored.log      → Ignored
+        //   M  staged.rs        → Tracked(M, Unmodified)
+        //    M dirty.rs         → Tracked(Unmodified, M)
+        //   UU conflict.rs      → Unmerged(Updated, Updated)
+        //   R  new\0old         → Tracked(R, Unmodified), original consumed
+        let root = PathBuf::from("/repo");
+        let mut bytes: Vec<u8> = Vec::new();
+        for record in [
+            b"?? untracked.txt".as_slice(),
+            b"!! ignored.log",
+            b"M  staged.rs",
+            b" M dirty.rs",
+            b"UU conflict.rs",
+            b"R  new.rs",
+        ] {
+            bytes.extend_from_slice(record);
+            bytes.push(0);
+        }
+        // After the R record, append the original path field.
+        bytes.extend_from_slice(b"old.rs");
+        bytes.push(0);
+
+        let map = parse_porcelain_v1_z(&bytes, &root);
+        assert_eq!(map[&root.join("untracked.txt")], FileStatus::Untracked);
+        assert_eq!(map[&root.join("ignored.log")], FileStatus::Ignored);
+        assert_eq!(
+            map[&root.join("staged.rs")],
+            FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Unmodified,
+            })
+        );
+        assert_eq!(
+            map[&root.join("dirty.rs")],
+            FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Modified,
+            })
+        );
+        assert_eq!(
+            map[&root.join("conflict.rs")],
+            FileStatus::Unmerged(UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            })
+        );
+        assert_eq!(
+            map[&root.join("new.rs")],
+            FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Renamed,
+                worktree_status: StatusCode::Unmodified,
+            })
+        );
+        // Original-path field was consumed, not surfaced.
+        assert!(!map.contains_key(&root.join("old.rs")));
+    }
+
+    #[test]
+    fn find_git_repo_root_walks_up() {
+        let dir = make_tree(&[("subdir", true), ("subdir/nested", true)]);
+        // Create a `.git` file at the root.
+        fs::write(dir.path().join(".git"), b"gitdir: /elsewhere").expect("touch .git");
+        // From the nested subdir, root resolution should find the tempdir.
+        let root = find_git_repo_root(&dir.path().join("subdir/nested")).expect("root");
+        assert_eq!(root, dir.path().to_path_buf());
+        // From a directory without an enclosing `.git`, returns None.
+        let unrelated = TempDir::new().expect("tempdir");
+        assert!(find_git_repo_root(unrelated.path()).is_none());
     }
 
     #[test]
