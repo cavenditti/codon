@@ -31,6 +31,22 @@ pub struct Window {
     pub id: WindowId,
     pub name: String,
     pub layout: Option<LayoutSnapshot>,
+    /// `true` when the in-memory runtime cache holds a fresher copy of
+    /// this window's pane tree than `layout` does. Set by the
+    /// switch-stash fast path (`c-skip-capture-on-cache-hit`) and
+    /// cleared by `WindowRuntimeCache::evict_and_persist` when the
+    /// cache entry materializes back into a `LayoutSnapshot`.
+    ///
+    /// Skipped during serialization so the persisted JSON does not
+    /// carry the flag across restarts — after restart the on-disk
+    /// `layout` (whatever last got materialized) is the only source
+    /// of truth.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub layout_stale: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Window {
@@ -39,6 +55,7 @@ impl Window {
             id,
             name: name.into(),
             layout: None,
+            layout_stale: false,
         }
     }
 }

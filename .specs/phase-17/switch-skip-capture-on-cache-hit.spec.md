@@ -9,7 +9,7 @@ summary: >
   tree, so a fresh `LayoutSnapshot` is only useful on eviction or
   detach. Build it lazily.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-skip-capture-on-cache-hit
 aspects: [lazy-capture, cache-hit-path, eviction-hook]

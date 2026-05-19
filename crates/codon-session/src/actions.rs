@@ -903,14 +903,17 @@ fn cycle_window(
 
     let outgoing_id = session.active().map(|w| w.id);
     let _ = take_restore_timing();
-    let capture_started = Instant::now();
-    let snapshot = swap::capture(workspace, window, cx);
-    let capture_ms = elapsed_ms(capture_started);
+    // c-skip-capture-on-cache-hit: building a `LayoutSnapshot` here is
+    // wasted work on the intra-session window-switch fast path — the
+    // runtime cache below holds the live `Member` tree, which IS the
+    // freshest copy. The snapshot is rebuilt lazily on eviction /
+    // detach / shutdown via `WindowRuntimeCache::evict_and_persist`.
+    let capture_ms = 0.0_f32;
     let runtime_started = Instant::now();
     let runtime = capture_runtime(workspace, cx);
     let runtime_capture_ms = elapsed_ms(runtime_started);
     if let Some(active) = session.active_mut() {
-        active.layout = Some(snapshot);
+        active.layout_stale = true;
     }
     if let (Some(outgoing_window_id), Some(rt)) = (outgoing_id, runtime) {
         WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
@@ -986,10 +989,10 @@ fn capture_runtime(workspace: &Workspace, cx: &App) -> Option<WindowRuntime> {
 /// afterwards.
 fn stash_outgoing(
     workspace: &mut Workspace,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let _ = stash_outgoing_timed(workspace, window, cx);
+    let _ = stash_outgoing_timed(workspace, cx);
 }
 
 #[derive(Default, Clone, Copy)]
@@ -1006,7 +1009,6 @@ struct StashTiming {
 /// outer-`Instant` measurement that misattributes the no-op cost.
 fn stash_outgoing_timed(
     workspace: &mut Workspace,
-    window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> StashTiming {
     let registry = SessionRegistry::global(cx);
@@ -1020,15 +1022,19 @@ fn stash_outgoing_timed(
         return StashTiming::default();
     };
 
-    let capture_started = Instant::now();
-    let snapshot = swap::capture(workspace, window, cx);
-    let capture_ms = elapsed_ms(capture_started);
+    // c-skip-capture-on-cache-hit: same fast-path reasoning as
+    // `cycle_window` — we stash a runtime entry below that holds the
+    // live `Member` tree, so a fresh `LayoutSnapshot` here would be
+    // immediately stale. Mark the persisted layout as stale and rely
+    // on `WindowRuntimeCache::evict_and_persist` to materialize a
+    // snapshot at eviction / detach / shutdown.
+    let capture_ms = 0.0_f32;
     let runtime_started = Instant::now();
     let runtime = capture_runtime(workspace, cx);
     let runtime_capture_ms = elapsed_ms(runtime_started);
 
     if let Some(active) = session.active_mut() {
-        active.layout = Some(snapshot);
+        active.layout_stale = true;
     }
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not stash outgoing session layout: {err:?}");
@@ -1117,7 +1123,7 @@ pub fn attach_session(
     if registry.active_id() == Some(target_id) {
         return;
     }
-    let stash = stash_outgoing_timed(workspace, window, cx);
+    let stash = stash_outgoing_timed(workspace, cx);
     if let Err(err) = registry.set_active(target_id) {
         log::warn!("could not activate session: {err:?}");
         return;
