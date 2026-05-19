@@ -1105,9 +1105,53 @@ fn render_text_preview(
     text: &TextPreview,
     window: &mut Window,
     cx: &mut Context<FileManager>,
-) -> impl IntoElement {
+) -> AnyElement {
+    // Deferred-editor preview: while the user is moving across
+    // rows, render a static text snapshot via plain glyph runs and
+    // skip the full `EditorElement::prepaint` →
+    // `WindowTextSystem::shape_line` cost. Once the dwell timer
+    // (150 ms) has elapsed on the same target path, upgrade to the
+    // real editor for cursor / folding / gutter / etc. See
+    // `REQ:codon/fm-render#c-defer-editor-in-preview`.
+    let dwell_complete = fm.preview_dwell_upgraded
+        && fm.preview_dwell_path.as_ref() == Some(&text.path);
+    if !dwell_complete {
+        return render_text_preview_static(text);
+    }
     let editor = fm.preview_editor_for(text, window, cx);
-    div().size_full().px(px(8.)).py(px(2.)).child(editor)
+    div()
+        .size_full()
+        .px(px(8.))
+        .py(px(2.))
+        .child(editor)
+        .into_any_element()
+}
+
+/// Static fallback rendering for the deferred-editor preview. Emits
+/// the file's bytes as a vertical stack of muted `Label`s — enough
+/// to give the user a glance at the file contents without paying
+/// the full `EditorElement::prepaint` cost on every `j` / `k` move.
+fn render_text_preview_static(text: &TextPreview) -> AnyElement {
+    // Cap the static preview to a screenful's worth of lines.
+    // Beyond that the user is going to want the real editor (which
+    // the dwell timer will deliver in 150 ms).
+    const MAX_LINES: usize = 64;
+    let lines: Vec<String> = text
+        .content
+        .lines()
+        .take(MAX_LINES)
+        .map(|s| s.to_string())
+        .collect();
+    let mut col = v_flex().size_full().px(px(8.)).py(px(2.)).gap(px(0.));
+    for line in lines {
+        col = col.child(
+            Label::new(line)
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .single_line(),
+        );
+    }
+    col.into_any_element()
 }
 
 fn render_image_preview(info: &ImageInfo) -> impl IntoElement {

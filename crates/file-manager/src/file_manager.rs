@@ -362,6 +362,18 @@ pub struct FileManager {
         std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
     pub(crate) custom_row_cache_preview:
         std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
+    /// Dwell-timer state for the deferred-editor preview pipeline
+    /// (`REQ:codon/fm-render#c-defer-editor-in-preview`). While the
+    /// selection has been stable on the current preview target for
+    /// less than 150 ms, the FM renders a static text snapshot via
+    /// the custom row Elements; once the dwell threshold trips the
+    /// FM upgrades to the real `EditorElement`. The next selection
+    /// change cancels the timer and drops the upgrade.
+    pub(crate) preview_dwell_path: Option<PathBuf>,
+    pub(crate) preview_dwell_upgraded: bool,
+    /// Outstanding dwell-timer task; held by the FM so a subsequent
+    /// selection change can cancel it implicitly via drop.
+    pub(crate) preview_dwell_task: Option<gpui::Task<()>>,
 }
 
 #[derive(Clone)]
@@ -514,6 +526,9 @@ impl FileManager {
             custom_row_cache_preview: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::render::row_glyph_cache::RowGlyphCache::new(512),
             )),
+            preview_dwell_path: None,
+            preview_dwell_upgraded: false,
+            preview_dwell_task: None,
         };
         // Kick off the initial listing via the same async path that
         // navigation uses — the FM renders briefly empty (one frame at
@@ -1057,6 +1072,32 @@ impl FileManager {
 
         if target_path == self.preview_target {
             return;
+        }
+
+        // Reset the dwell-timer for the deferred-editor preview
+        // pipeline. While the user is moving across rows, we render
+        // a static text snapshot via the custom row Elements; once
+        // the selection has been stable on this target for 150 ms,
+        // the timer fires and upgrades the preview to the real
+        // `EditorElement`. Dropping the existing task cancels it.
+        self.preview_dwell_path = target_path.clone();
+        self.preview_dwell_upgraded = false;
+        self.preview_dwell_task = None;
+        if target_path.is_some() {
+            let weak = cx.entity().downgrade();
+            self.preview_dwell_task = Some(cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(150))
+                    .await;
+                let _ = weak.update(cx, |fm, cx| {
+                    // Guard: ignore the timer if the selection has
+                    // moved off this target since the dwell started.
+                    if fm.preview_dwell_path == fm.preview_target {
+                        fm.preview_dwell_upgraded = true;
+                        cx.notify();
+                    }
+                });
+            }));
         }
 
         self.preview_gen = self.preview_gen.wrapping_add(1);

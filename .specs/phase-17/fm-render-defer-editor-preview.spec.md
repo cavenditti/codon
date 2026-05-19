@@ -11,7 +11,7 @@ summary: >
   `CTLine::new_with_attributed_string` cost during fast j/k
   navigation.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-defer-editor-in-preview
 aspects: [editor-deferral, dwell-timer, snapshot-preview]
