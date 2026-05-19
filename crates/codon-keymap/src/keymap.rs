@@ -454,6 +454,16 @@ const DEFAULT_KEYMAP: &str = r#"
 "["       = "vim::PushHelixPrevious({\"around\":true})"
 "ctrl-s"  = "editor::SaveLocation"
 
+# Helix shell verbs (REQ:codon/shell-integration). Each opens the
+# command palette pre-filled with the verb mnemonic; the
+# codon-command-palette completers then prompt for the rest of the
+# shell command and dispatch `vim::ShellRun { mode, cmd }`.
+"|"       = "vim::ShellPipeSelection"
+"alt-|"   = "vim::ShellPipeTo"
+"!"       = "vim::ShellInsertOutput"
+"alt-!"   = "vim::ShellAppendOutput"
+"$"       = "vim::ShellKeepPipe"
+
 # Bindable-now gaps — actions already exist in vendored Zed but
 # vim.json doesn't bind them under a helix context. Surfacing
 # them here is what TASK:phase-16/helix-bindings-mirror lists as

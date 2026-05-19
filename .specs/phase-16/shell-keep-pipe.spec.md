@@ -9,7 +9,7 @@ summary: >
   `$SHELL -c <cmd>`, and keeps only those selections whose exit
   code was 0. Buffer text is unchanged. Bound to `$`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/shell-integration#c-actions-five
   - REQ:codon/shell-integration#c-prompt-ux

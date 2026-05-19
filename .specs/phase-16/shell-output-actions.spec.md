@@ -9,7 +9,7 @@ summary: >
   `$SHELL -c <cmd>`, and insert stdout *before* (Insert) or *after*
   (Append) each selection. Bound to `!` and `alt-!`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/shell-integration#c-actions-five
   - REQ:codon/shell-integration#c-prompt-ux

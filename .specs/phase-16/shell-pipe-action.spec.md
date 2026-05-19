@@ -11,7 +11,7 @@ summary: >
   command's stdout; PipeTo discards stdout. Bound to `|` and
   `alt-|` in codon TOML.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/shell-integration#c-actions-five
   - REQ:codon/shell-integration#c-prompt-ux
