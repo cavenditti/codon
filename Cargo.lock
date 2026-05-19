@@ -3620,6 +3620,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-terminal-blocks"
+version = "0.1.0"
+dependencies = [
+ "codon-pane-bridge",
+ "gpui",
+ "log",
+]
+
+[[package]]
 name = "codon-which-key"
 version = "0.1.0"
 dependencies = [

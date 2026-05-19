@@ -41,7 +41,7 @@
 //!
 //! See `REQ:codon/object-grammar` for the full design.
 
-use gpui::{Action, App};
+use gpui::{Action, App, EntityId};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -115,6 +115,11 @@ pub enum GrammarSelection {
     Commits(Vec<String>),
     /// Diagnostics — see [`DiagnosticRef`].
     Diagnostics(Vec<DiagnosticRef>),
+    /// Terminal command-output blocks — see [`TerminalBlockRef`].
+    /// Carried by terminal panes when block-selection state is
+    /// active. Resolves to concrete `Block` records via the owning
+    /// pane's `BlockStore`.
+    Blocks(Vec<TerminalBlockRef>),
 }
 
 /// Reference to a diagnostic — enough to identify and re-resolve it
@@ -128,6 +133,24 @@ pub struct DiagnosticRef {
     pub message: String,
 }
 
+/// Reference to a terminal block — enough to look it up in the
+/// owning terminal pane's `BlockStore` without dragging the
+/// `terminal` crate into `codon-pane-bridge`. The `pane` field is a
+/// raw [`EntityId`] (rather than `WeakEntity<Terminal>`) so this
+/// crate stays cycle-free and pane-agnostic; the consumer crate
+/// (`codon-terminal-blocks`) round-trips it back to a typed
+/// `WeakEntity` via the pane registry at resolve time.
+///
+/// `index` is the per-pane position of the block in its
+/// `BlockStore` insertion order — stable across in-session
+/// scrollback growth, undefined across restarts (blocks are not
+/// persisted; see `REQ:codon/terminal-blocks#c-persistence`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerminalBlockRef {
+    pub pane: EntityId,
+    pub index: usize,
+}
+
 impl GrammarSelection {
     /// True iff the selection holds no items.
     pub fn is_empty(&self) -> bool {
@@ -139,6 +162,7 @@ impl GrammarSelection {
             GrammarSelection::Hunks(hunks) => hunks.is_empty(),
             GrammarSelection::Commits(shas) => shas.is_empty(),
             GrammarSelection::Diagnostics(diags) => diags.is_empty(),
+            GrammarSelection::Blocks(blocks) => blocks.is_empty(),
         }
     }
 }

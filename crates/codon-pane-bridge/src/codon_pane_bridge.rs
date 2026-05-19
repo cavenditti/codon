@@ -31,7 +31,7 @@ pub mod object_grammar;
 
 pub use object_grammar::{
     AroundContainer, DiagnosticRef, GrammarKind, GrammarSelection, InnerContainer, ObjectGrammar,
-    ObjectNext, ObjectPrev, SelectAll,
+    ObjectNext, ObjectPrev, SelectAll, TerminalBlockRef,
 };
 
 use gpui::{App, BorrowAppContext, Focusable, Global, SharedString, actions};

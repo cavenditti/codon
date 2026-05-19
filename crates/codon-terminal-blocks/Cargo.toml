@@ -1,0 +1,19 @@
+[package]
+name = "codon-terminal-blocks"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_terminal_blocks.rs"
+
+[dependencies]
+codon-pane-bridge.workspace = true
+gpui.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
