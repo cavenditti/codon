@@ -9,7 +9,7 @@ summary: >
   is shaped at most once per visible-set lifetime instead of every
   frame.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-shaped-line-cache
 aspects: [text-shaping, lru, theme-invalidation]

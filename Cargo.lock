@@ -6788,6 +6788,7 @@ dependencies = [
  "globset",
  "gpui",
  "image",
+ "indexmap 2.14.0",
  "language",
  "log",
  "menu",

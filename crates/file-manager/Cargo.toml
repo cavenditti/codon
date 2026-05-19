@@ -29,6 +29,7 @@ git.workspace = true
 globset.workspace = true
 gpui.workspace = true
 image.workspace = true
+indexmap.workspace = true
 log.workspace = true
 menu.workspace = true
 mime_guess.workspace = true

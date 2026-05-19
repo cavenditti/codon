@@ -9,3 +9,4 @@
 //! `TASK:phase-17/fm-render-custom-column`.
 
 pub(crate) mod trace;
+pub(crate) mod shaped_line_cache;

@@ -39,7 +39,7 @@ use std::{
     fs::{self, File},
     io::{BufWriter, Write as _},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{atomic::{AtomicU64, Ordering}, Mutex, OnceLock},
     time::Instant,
 };
 
@@ -524,3 +524,84 @@ mod tests {
         assert_eq!(json_string("a\nb"), "\"a\\nb\"");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-cache counters used by the FM render pipeline (TASK:phase-17/fm-render-*).
+// Lightweight AtomicU64 surface so each cache wires hit/miss counts into a
+// stable API without threading a `&mut` borrow through prepaint/paint.
+
+#[derive(Clone, Copy, Debug, Default)]
+#[allow(dead_code)]
+pub(crate) struct CounterSnapshot {
+    pub shaped_line_cache_hits: u64,
+    pub shaped_line_cache_misses: u64,
+    pub row_glyph_cache_hits: u64,
+    pub row_glyph_cache_misses: u64,
+    pub rows_repainted: u64,
+}
+
+#[allow(dead_code)]
+pub(crate) struct RenderCounters {
+    pub shaped_line_cache_hits: AtomicU64,
+    pub shaped_line_cache_misses: AtomicU64,
+    pub row_glyph_cache_hits: AtomicU64,
+    pub row_glyph_cache_misses: AtomicU64,
+    pub rows_repainted: AtomicU64,
+}
+
+#[allow(dead_code)]
+impl RenderCounters {
+    pub const fn new() -> Self {
+        Self {
+            shaped_line_cache_hits: AtomicU64::new(0),
+            shaped_line_cache_misses: AtomicU64::new(0),
+            row_glyph_cache_hits: AtomicU64::new(0),
+            row_glyph_cache_misses: AtomicU64::new(0),
+            rows_repainted: AtomicU64::new(0),
+        }
+    }
+
+    pub fn add_shaped_line_hits(&self, n: u64) {
+        if n > 0 {
+            self.shaped_line_cache_hits.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_shaped_line_misses(&self, n: u64) {
+        if n > 0 {
+            self.shaped_line_cache_misses
+                .fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_row_glyph_hits(&self, n: u64) {
+        if n > 0 {
+            self.row_glyph_cache_hits.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_row_glyph_misses(&self, n: u64) {
+        if n > 0 {
+            self.row_glyph_cache_misses.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_rows_repainted(&self, n: u64) {
+        if n > 0 {
+            self.rows_repainted.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+
+    pub fn drain(&self) -> CounterSnapshot {
+        CounterSnapshot {
+            shaped_line_cache_hits: self.shaped_line_cache_hits.swap(0, Ordering::Relaxed),
+            shaped_line_cache_misses: self.shaped_line_cache_misses.swap(0, Ordering::Relaxed),
+            row_glyph_cache_hits: self.row_glyph_cache_hits.swap(0, Ordering::Relaxed),
+            row_glyph_cache_misses: self.row_glyph_cache_misses.swap(0, Ordering::Relaxed),
+            rows_repainted: self.rows_repainted.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) static COUNTERS: RenderCounters = RenderCounters::new();
