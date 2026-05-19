@@ -113,6 +113,59 @@ pub fn apply_from_str(content: &str, cx: &mut App) -> Result<()> {
     Ok(())
 }
 
+/// Parsed `[diagnostics]` sub-tree. Codon's host (apps/codon) reads
+/// this after `codon-config` loads the user's `codon.toml`, then
+/// hands `render_trace_path` off to `file_manager::install_render_trace`.
+/// This indirection keeps `codon-config` independent of `file-manager`
+/// (the dependency only goes the other way).
+#[derive(Default, Debug, Clone)]
+pub struct DiagnosticsConfig {
+    pub render_trace: bool,
+    pub render_trace_path: Option<PathBuf>,
+}
+
+/// Read the `[diagnostics]` table from a codon.toml document already
+/// in memory. Missing table / fields produce the [`Default`] config.
+pub fn diagnostics_config(content: &str) -> DiagnosticsConfig {
+    let Ok(toml_doc) = content.parse::<toml::Value>() else {
+        return DiagnosticsConfig::default();
+    };
+    let Some(table) = toml_doc.get("diagnostics").and_then(|v| v.as_table()) else {
+        return DiagnosticsConfig::default();
+    };
+    DiagnosticsConfig {
+        render_trace: table
+            .get("render_trace")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        render_trace_path: table
+            .get("render_trace_path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from),
+    }
+}
+
+/// Read [`diagnostics_config`] straight from the on-disk
+/// `codon.toml`. Returns the [`Default`] config when the file is
+/// missing or unreadable; parse errors are logged at `warn` and the
+/// default is returned.
+pub fn diagnostics_config_from_disk() -> DiagnosticsConfig {
+    let Some(path) = user_config_path() else {
+        return DiagnosticsConfig::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(content) => diagnostics_config(&content),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => DiagnosticsConfig::default(),
+        Err(err) => {
+            log::warn!(
+                "codon-config: could not read {} for diagnostics: {err}",
+                path.display()
+            );
+            DiagnosticsConfig::default()
+        }
+    }
+}
+
 /// Translate the `[window]` sub-tree of codon.toml to the
 /// `platform_title_bar::WindowChromeConfig` global. Both fields default
 /// to false (vanilla Zed behavior) so an absent `[window]` table or

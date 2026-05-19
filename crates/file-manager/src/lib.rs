@@ -9,6 +9,7 @@ pub(crate) mod opener_picker;
 pub(crate) mod openers;
 pub(crate) mod persistence;
 pub(crate) mod prefs;
+pub(crate) mod render;
 pub(crate) mod search;
 pub(crate) mod shell;
 pub(crate) mod task_history_modal;
@@ -24,6 +25,7 @@ pub use file_manager::{
     ToggleMark, ToggleSortReverse, YankPath,
 };
 pub use openers::{Opener, OpenerStore};
+pub use render::trace::{default_trace_path, install_global as install_render_trace};
 
 use std::sync::Arc;
 

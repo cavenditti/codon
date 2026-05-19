@@ -327,6 +327,21 @@ impl FileManager {
 
 impl Render for FileManager {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Render-trace harness: time how long the `Render::render`
+        // closure spends building the element tree. This is the
+        // "prepaint-ish" half of the frame cost — the real
+        // paint/draw cost happens after we return, inside GPUI's
+        // pipeline, and only becomes visible when the custom-Element
+        // pipeline lands.
+        //
+        // TODO(TASK:phase-17/fm-render-custom-row): move the timing
+        // into the custom row/column Element's `prepaint` / `paint`
+        // hooks once they exist, then emit one
+        // `FramePainted { prepaint_ms, paint_ms, draw_ms, ... }` with
+        // the real split + row/cache counters. Until then the stub
+        // reports `prepaint_ms = render_closure_build_ms` and zeroes
+        // the other fields.
+        let render_started = std::time::Instant::now();
         // `into_any_element()` is applied eagerly because Rust 2024's
         // capture rules treat `impl IntoElement` returned by `&self` /
         // `&mut self` methods as borrowing `*self` for the element's
@@ -628,7 +643,7 @@ impl Render for FileManager {
         .py(px(2.))
         .track_scroll(&self.scroll_handle);
 
-        v_flex()
+        let panel = v_flex()
             .size_full()
             .bg(panel_bg)
             .key_context(self.dispatch_context())
@@ -827,7 +842,15 @@ impl Render for FileManager {
                         .child(Label::new(msg).size(LabelSize::Small).color(Color::Error)),
                 )
             })
-            .child(render_bottom_bar(&bottom_bar_state, bottom_left_mode, cx))
+            .child(render_bottom_bar(&bottom_bar_state, bottom_left_mode, cx));
+
+        // Stub frame-painted event — see the TODO at the top of this
+        // function. Until the custom Element pipeline lands, only
+        // `prepaint_ms` is meaningful; the rest are zero.
+        let elapsed_ms = render_started.elapsed().as_secs_f32() * 1000.0;
+        crate::render::trace::record_frame(elapsed_ms, 0.0, 0.0, 0, 0, 0);
+
+        panel
     }
 }
 

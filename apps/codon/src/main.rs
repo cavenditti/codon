@@ -259,6 +259,22 @@ fn main() {
         paths::set_custom_data_dir(dir);
     }
 
+    // `--render-trace[=FILE]` installs the FM render-trace collector
+    // before any FM code can fire an event. An empty PathBuf (the
+    // `default_missing_value`) means "flag passed without =FILE" — we
+    // resolve to the default path. A non-empty value is used verbatim.
+    // The settings field (`[diagnostics] render_trace = true`) installs
+    // the same collector later from `codon-config`; the first install
+    // wins so the CLI flag takes precedence.
+    if let Some(path) = args.render_trace.as_ref() {
+        let resolved = if path.as_os_str().is_empty() {
+            file_manager::default_trace_path()
+        } else {
+            path.clone()
+        };
+        file_manager::install_render_trace(resolved);
+    }
+
     #[cfg(target_os = "windows")]
     match util::get_zed_cli_path() {
         Ok(path) => askpass::set_askpass_program(path),
@@ -778,6 +794,18 @@ fn main() {
         codon_config::start_watcher(app_state.fs.clone(), cx, |cx| {
             codon_keymap::load_codon_keymap(cx);
         });
+        // `[diagnostics] render_trace = true` installs the FM
+        // render-trace collector. The CLI install above (when
+        // `--render-trace` is passed) already wins via OnceLock; this
+        // path covers the no-CLI case. Resolution order:
+        // explicit `render_trace_path` → default path.
+        let diagnostics = codon_config::diagnostics_config_from_disk();
+        if diagnostics.render_trace {
+            let path = diagnostics
+                .render_trace_path
+                .unwrap_or_else(file_manager::default_trace_path);
+            file_manager::install_render_trace(path);
+        }
         codon_session::init(cx);
         codon_pickers::init(cx);
         codon_jump::init(app_state.fs.clone(), cx);
@@ -1835,6 +1863,15 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(long, hide = true)]
     etw_socket: Option<String>,
+
+    /// Enable the file-manager render-trace harness. Writes a JSONL
+    /// file with per-frame prepaint/paint/draw timings plus
+    /// `keypress → painted` deltas. With no value, writes to
+    /// `$XDG_STATE_HOME/codon/render-trace/codon-<unix-ts>.jsonl`.
+    /// The flag takes precedence over the
+    /// `[diagnostics] render_trace = true` setting in `codon.toml`.
+    #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    render_trace: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]

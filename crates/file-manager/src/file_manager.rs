@@ -989,6 +989,11 @@ impl FileManager {
             editor: editor.clone(),
         });
 
+        // Render-trace: a fresh `EditorElement` was just constructed for
+        // this preview — the moment phase-17 calls "the upgrade". Cache
+        // hits above don't fire this; only the cold path does.
+        crate::render::trace::record_preview_upgraded(&text.path);
+
         editor
     }
 
@@ -2954,6 +2959,13 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Record the keypress for the render-trace harness before any
+        // mode/short-circuit gating — what we want to measure is the
+        // delta from "key reached the FM" to "FM finished its next
+        // paint", regardless of which branch handles it.
+        crate::render::trace::record_keypress(SharedString::from(
+            event.keystroke.key.clone(),
+        ));
         if self.mode == PaneMode::Insert {
             self.handle_insert_key(event, window, cx);
             return;
