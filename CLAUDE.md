@@ -35,7 +35,12 @@ spec coverage REQ:codon/sessions       # per-clause + per-task progress
 spec start  TASK:phase-N/foo           # lifecycle: start/done/block/defer/wontdo/reset
 spec done   TASK:phase-N/foo
 
-# Pre-commit hook (one-time, opt-in per clone) — runs spec lint when .spec.md files are staged
+# Pre-commit hooks (one-time, opt-in per clone) — managed by prek
+# (https://prek.j178.dev). Installs fmt/clippy/test for codon crates + spec lint.
+prek install
+
+# Legacy shell hook (spec-lint only) — superseded by prek; keep for clones
+# without prek installed.
 git config core.hooksPath .githooks
 ```
 

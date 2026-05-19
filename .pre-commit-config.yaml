@@ -1,0 +1,67 @@
+# Codon pre-commit hooks (managed by prek: https://prek.j178.dev).
+#
+# Enable per-clone with:
+#     prek install
+#
+# All Rust hooks are scoped to codon-authored crates — running cargo on the
+# full workspace (which includes vendored Zed) on every commit would be too
+# slow. Vendored Zed has its own conventions (see vendor/zed/CLAUDE.md).
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: rustfmt --check (codon crates)
+        entry: rustfmt --check --edition 2024
+        language: system
+        types: [rust]
+        files: ^(apps/codon|crates)/
+        pass_filenames: true
+
+      - id: cargo-clippy
+        name: cargo clippy -D warnings (codon crates)
+        entry: cargo clippy
+              -p codon
+              -p codon-agent
+              -p codon-command-palette
+              -p codon-config
+              -p codon-jump
+              -p codon-keymap
+              -p codon-mode
+              -p codon-pane-bridge
+              -p codon-panes
+              -p codon-pickers
+              -p codon-session
+              -p file-manager
+              --all-targets --
+              -D warnings
+        language: system
+        types: [rust]
+        files: ^(apps/codon|crates)/
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test (codon crates)
+        entry: cargo test
+              -p codon
+              -p codon-agent
+              -p codon-command-palette
+              -p codon-config
+              -p codon-jump
+              -p codon-keymap
+              -p codon-mode
+              -p codon-pane-bridge
+              -p codon-panes
+              -p codon-pickers
+              -p codon-session
+              -p file-manager
+        language: system
+        types: [rust]
+        files: ^(apps/codon|crates)/
+        pass_filenames: false
+
+      - id: spec-lint
+        name: spec lint (.specs/)
+        entry: spec lint
+        language: system
+        files: ^\.specs/.*\.(spec\.md|toml)$
+        pass_filenames: false
