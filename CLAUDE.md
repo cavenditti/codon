@@ -97,9 +97,30 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 
 `spec lint` checks that referenced TASK ids exist. The pre-commit hook (opt-in) runs this on `.spec.md` changes.
 
-**Phase planning.** Roadmap is in `.specs/`, not `TODO.md`. `TODO.md` is a one-page pointer. To plan new work, write `TASK:phase-N/<slug>.spec.md` files refining clauses on existing `REQ:codon/<area>` specs — see `.specs/AGENTS.md` for the full vocabulary. `spec todo` is the single source of truth for what's open.
+**Phase planning.** Roadmap is in `.specs/`, not `TODO.md`. `TODO.md` is a one-page pointer. To plan new work, scaffold `TASK:phase-N/<slug>` files refining clauses on existing `REQ:codon/<area>` specs — see `.specs/AGENTS.md` for the full vocabulary. `spec todo` is the single source of truth for what's open.
 
-**Spec-first, always.** Any new feature — even a small one — follows the same order: (1) write or extend the `REQ:codon/<area>` spec with clauses, (2) author one `TASK:phase-N/<slug>.spec.md` per clause, (3) only then start the prototype. Never skip straight from "good idea" to code. The spec is the design conversation; the TASKs make scope reviewable; the prototype implements what's already agreed. `spec lint` must stay clean across the trio.
+**Always use `spec` — never touch `.specs/` files directly.** Treat the spec CLI as the only sanctioned way to interact with the roadmap. Reading raw `.spec.md` files or hand-editing frontmatter bypasses validation, breaks refinement links, and produces commits that `spec lint` will reject. Use these subcommands instead:
+
+```sh
+SPEC=vendor/forge-spec/spec-cli/target/release/spec
+$SPEC todo                                        # what's open right now (start here)
+$SPEC coverage REQ:codon/<area>                   # per-clause + per-task progress for an area
+$SPEC ancestors TASK:phase-N/<slug>               # parent REQ + refined clauses
+$SPEC children  REQ:codon/<area>                  # tasks refining this REQ
+$SPEC render --target agent REQ:codon/<area>      # read a spec (agent-rendered)
+$SPEC render --target agent TASK:phase-N/<slug>   # read a task (agent-rendered)
+$SPEC new task   phase-N/<slug>                   # scaffold a new TASK from the template
+$SPEC new req    codon/<area>                     # scaffold a new REQ
+$SPEC start  TASK:phase-N/<slug>                  # lifecycle: start → done (or block/defer/wontdo/reset)
+$SPEC done   TASK:phase-N/<slug>
+$SPEC lint                                        # must stay at 0 errors
+```
+
+**Always pass `--target agent` to `spec render`.** The default `human` target strips structure that you rely on for traceability; the `agent` target preserves clause IDs, refinement links, and machine-readable framing. If you need ancestors/descendants in the same call, add `--ancestors full --descendants full` (or `--include-source` when you need resolved source references). Never `cat` / `Read` a `.spec.md` file to get its content — go through `spec render --target agent`.
+
+When `spec new` scaffolds a file, edit it to fill in clauses/acceptance criteria — that body editing is the only direct file write that's appropriate, and it must be followed by `spec lint`. Never use `Read`/`Write`/`Edit` to discover what tasks exist, to enumerate clauses, to read a spec, or to flip lifecycle state — those go through `spec render --target agent` / `spec todo` / `spec coverage` / `spec start|done|block|defer|wontdo|reset`.
+
+**Spec-first, always.** Any new feature — even a small one — follows the same order: (1) `spec new req codon/<area>` (or extend an existing REQ) and fill in clauses, (2) `spec new task phase-N/<slug>` per clause and fill in acceptance criteria, (3) `spec start` and only then start the prototype, (4) `spec done` when shipped. Never skip straight from "good idea" to code. The spec is the design conversation; the TASKs make scope reviewable; the prototype implements what's already agreed. `spec lint` must stay clean across the trio.
 
 **Code quality**: Always prefer clarity over cleverness. Use descriptive names, break complex functions into smaller ones, and add comments where necessary to explain non-obvious logic. Follow Rust's idiomatic practices and leverage the type system to prevent bugs. Always use `cargo clippy` (or `vendor/zed/script/clippy` when editing Zed) to catch common mistakes and enforce code quality standards. Write tests for new features and bug fixes to ensure reliability and maintainability.
 
@@ -113,4 +134,4 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 
 - Reach for an existing codon crate before adding a new one — `codon-session` has the picker pattern, `codon-keymap` has the modal pattern, `codon-mode` has the selection/focus pattern.
 - Reach for a vendored Zed primitive before writing a new one — `picker::Picker`, `ui::KeyBinding::from_keystrokes`, `workspace::ModalView`, `buffer_diff::DiffHunk`, `git::FileStatus` all already exist.
-- Check `.specs/` for an existing task before starting work — `spec ancestors <id>` and `spec coverage REQ:codon/<area>` will tell you what's already planned.
+- Check the roadmap for an existing task before starting work via `spec todo` / `spec ancestors <id>` / `spec coverage REQ:codon/<area>` — never grep or read `.specs/` files to figure out what's already planned.
