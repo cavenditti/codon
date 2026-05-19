@@ -73,6 +73,26 @@ format_on_save = "on"
 [keymap]
 # prefix = "ctrl-x"
 
+# ═══ Which-key chord HUD ════════════════════════════════════════════
+# Codon's chord HUD is a Helix-style overlay rendered across the full
+# width of the active pane. It appears after a short hold on the chord
+# prefix and shows the bindings reachable from the current state. The
+# rendering and settings are owned by the `codon-which-key` crate
+# (vendored Zed's `which_key` is not wired into codon's init path).
+[which_key]
+# Master switch. Set to false to suppress the HUD entirely without
+# touching delay_ms (the chord still fires immediately).
+# enabled = true
+#
+# Hold duration before the HUD shows up, in milliseconds. Lower values
+# surface bindings faster; higher values keep fast typists' screens clean.
+# delay_ms = 250
+#
+# Minimum width per column when laying out the HUD's rows. Codon divides
+# the active pane's width by this value (floor) to pick a column count;
+# wider panes get more columns, narrow panes collapse to one column.
+# min_column_width = 240
+
 # ═══ Window chrome ═══════════════════════════════════════════════════
 # Codon-only knobs that don't map to Zed settings; read at startup and
 # applied to the title-bar renderer.

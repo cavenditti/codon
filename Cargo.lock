@@ -3278,6 +3278,7 @@ dependencies = [
  "codon-panes",
  "codon-pickers",
  "codon-session",
+ "codon-which-key",
  "collab_ui",
  "collections",
  "command_palette",
@@ -3406,7 +3407,6 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
- "which_key",
  "windows 0.61.3",
  "workspace",
  "zed-reqwest",
@@ -3609,6 +3609,24 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "codon-which-key"
+version = "0.1.0"
+dependencies = [
+ "codon-config",
+ "codon-pane-bridge",
+ "command_palette",
+ "gpui",
+ "log",
+ "serde",
+ "settings",
+ "theme_settings",
+ "toml 0.8.23",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]

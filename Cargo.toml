@@ -12,6 +12,7 @@ members = [
     "crates/codon-panes",
     "crates/codon-pickers",
     "crates/codon-session",
+    "crates/codon-which-key",
     "crates/file-manager",
     "vendor/zed/crates/acp_thread",
     "vendor/zed/crates/acp_tools",
@@ -356,6 +357,7 @@ codon-pane-bridge = { path = "crates/codon-pane-bridge" }
 codon-panes = { path = "crates/codon-panes" }
 codon-pickers = { path = "crates/codon-pickers" }
 codon-session = { path = "crates/codon-session" }
+codon-which-key = { path = "crates/codon-which-key" }
 fs = { path = "vendor/zed/crates/fs" }
 fuzzy = { path = "vendor/zed/crates/fuzzy" }
 fuzzy_nucleo = { path = "vendor/zed/crates/fuzzy_nucleo" }

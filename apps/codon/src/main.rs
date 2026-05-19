@@ -809,7 +809,7 @@ fn main() {
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
-        which_key::init(cx);
+        codon_which_key::init(cx);
         #[cfg(target_os = "windows")]
         etw_tracing::init(cx);
 

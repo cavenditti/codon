@@ -1,0 +1,25 @@
+[package]
+name = "codon-which-key"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/codon_which_key.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codon-config.workspace = true
+codon-pane-bridge.workspace = true
+command_palette.workspace = true
+gpui.workspace = true
+log.workspace = true
+serde.workspace = true
+settings.workspace = true
+theme_settings.workspace = true
+toml.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
