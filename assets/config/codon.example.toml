@@ -77,8 +77,9 @@ format_on_save = "on"
 # Codon's chord HUD is a Helix-style overlay rendered across the full
 # width of the active pane. It appears after a short hold on the chord
 # prefix and shows the bindings reachable from the current state. The
-# rendering and settings are owned by the `codon-which-key` crate
-# (vendored Zed's `which_key` is not wired into codon's init path).
+# rendering, settings, and auto-flip rule are owned by the
+# `codon-which-key` crate (vendored Zed's `which_key` is not wired into
+# codon's init path).
 [which_key]
 # Master switch. Set to false to suppress the HUD entirely without
 # touching delay_ms (the chord still fires immediately).
@@ -92,6 +93,12 @@ format_on_save = "on"
 # the active pane's width by this value (floor) to pick a column count;
 # wider panes get more columns, narrow panes collapse to one column.
 # min_column_width = 240
+#
+# Fraction of the active pane's height above which the HUD flips from
+# the bottom edge to the top edge. Use a smaller value (e.g. 0.3) to
+# flip more aggressively in short panes; closer to 0.9 to keep the
+# bottom anchor in most cases. Clamped to [0.1, 0.9] on load.
+# flip_threshold = 0.5
 
 # ═══ Window chrome ═══════════════════════════════════════════════════
 # Codon-only knobs that don't map to Zed settings; read at startup and

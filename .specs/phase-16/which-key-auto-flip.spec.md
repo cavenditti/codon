@@ -10,7 +10,7 @@ summary: >
   edge of the active pane instead of the bottom. Threshold is
   configurable; default 0.5.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/which-key-overlay#c-auto-flip
 ---

@@ -215,10 +215,7 @@ impl Render for CodonWhichKeyModal {
         let max_content_height = pane_height - status_height - px(12.);
         let clamped_height = content_height.min(max_content_height);
 
-        // Bottom anchor is the default per `c-bottom-default`. The
-        // auto-flip rule (`c-auto-flip` / TASK:phase-16/which-key-auto-flip)
-        // lives in a follow-up commit and slots a top-anchor branch in here.
-        let _ = pane_height;
+        let anchor = compute_anchor(content_height, pane_height, self.settings.flip_threshold);
 
         let mode_label = Self::pane_mode_label(cx);
         let pending_keys = self.pending_keys.clone();
@@ -290,10 +287,15 @@ impl Render for CodonWhichKeyModal {
             .py(px(4.))
             .child(panel_body);
 
-        let margin_bottom = px(4.);
-        let bottom_offset = margin_bottom + status_height;
-        let pane_bottom = viewport_size.height - (pane_origin_y + pane_height);
-        panel.bottom(pane_bottom + bottom_offset)
+        match anchor {
+            Anchor::Bottom => {
+                let margin_bottom = px(4.);
+                let bottom_offset = margin_bottom + status_height;
+                let pane_bottom = viewport_size.height - (pane_origin_y + pane_height);
+                panel.bottom(pane_bottom + bottom_offset)
+            }
+            Anchor::Top => panel.top(pane_origin_y + px(4.)),
+        }
     }
 }
 
@@ -358,6 +360,31 @@ pub fn compute_columns(pane_width: Pixels, min_column_width: Pixels, binding_cou
     raw.clamp(1, binding_count)
 }
 
+/// Choose anchor for the HUD: bottom by default, flipped to top when
+/// the natural content height exceeds `pane_height * threshold`.
+///
+/// The comparison is strictly greater-than at the boundary, so an
+/// exact-equal height does not flip. The threshold is clamped to
+/// `[0.1, 0.9]` on the settings-loading side; this function does not
+/// re-clamp because the unit tests want to exercise the raw boundary
+/// behaviour at `0.0` and `1.0`.
+pub fn compute_anchor(content_height: Pixels, pane_height: Pixels, threshold: f32) -> Anchor {
+    let pane = f32::from(pane_height).max(0.0);
+    let content = f32::from(content_height).max(0.0);
+    if content > pane * threshold {
+        Anchor::Top
+    } else {
+        Anchor::Bottom
+    }
+}
+
+/// Where the HUD should render against the active pane's bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    Top,
+    Bottom,
+}
+
 fn group_bindings(
     binding_data: Vec<(Vec<Keystroke>, SharedString)>,
 ) -> Vec<(Vec<Keystroke>, SharedString)> {
@@ -415,4 +442,33 @@ mod tests {
         assert_eq!(compute_columns(px(2000.), px(240.), 3), 3);
     }
 
+    #[test]
+    fn compute_anchor_below_threshold_stays_bottom() {
+        assert_eq!(compute_anchor(px(100.), px(1000.), 0.5), Anchor::Bottom);
+    }
+
+    #[test]
+    fn compute_anchor_above_threshold_flips_top() {
+        assert_eq!(compute_anchor(px(600.), px(1000.), 0.5), Anchor::Top);
+    }
+
+    #[test]
+    fn compute_anchor_exact_threshold_stays_bottom() {
+        // Strict greater-than at the boundary → 500 == 500 stays bottom.
+        assert_eq!(compute_anchor(px(500.), px(1000.), 0.5), Anchor::Bottom);
+    }
+
+    #[test]
+    fn compute_anchor_threshold_one_only_flips_when_content_exceeds_pane() {
+        // Threshold 1.0 effectively disables flipping unless the HUD
+        // would already overflow the pane — content must strictly
+        // exceed `pane_height * 1.0` to trip.
+        assert_eq!(compute_anchor(px(900.), px(1000.), 1.0), Anchor::Bottom);
+        assert_eq!(compute_anchor(px(2000.), px(1000.), 1.0), Anchor::Top);
+    }
+
+    #[test]
+    fn compute_anchor_threshold_zero_always_flips_when_any_content() {
+        assert_eq!(compute_anchor(px(1.), px(1000.), 0.0), Anchor::Top);
+    }
 }

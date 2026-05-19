@@ -10,7 +10,7 @@ summary: >
   bottom edge, with multi-column layout. The companion task
   `phase-16/which-key-auto-flip` adds the top-flip rule.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/which-key-overlay#c-full-pane-width
   - REQ:codon/which-key-overlay#c-bottom-default
