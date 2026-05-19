@@ -9,7 +9,7 @@ summary: >
   dispatcher. Helix-text-register interop and named-persistent
   registers are follow-up tasks.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/selection-registers#c-register-store
   - REQ:codon/selection-registers#c-write-prefix
