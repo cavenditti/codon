@@ -342,16 +342,18 @@ fn handle_session_overview(
     cx: &mut Context<Workspace>,
 ) {
     let weak = workspace.weak_handle();
-    // Capture before `toggle_modal` leases the workspace — the modal
-    // constructor runs nested inside that lease and can't re-enter.
-    let snapshot = SessionRegistry::global(cx)
-        .active_id()
-        .map(|_| swap::capture(workspace, window, cx));
+    // c-overview-defer-capture: the modal's visual summary is sourced
+    // from the active session's last persisted `Window::layout`. That
+    // snapshot lags the runtime cache by at most one eviction (handled
+    // by `WindowRuntimeCache::evict_and_persist`), which is fine for
+    // the modal's pane-count / shorthand rendering. Skip the expensive
+    // `swap::capture` walk so the modal-open chord stays responsive
+    // even on 8+ pane layouts.
     workspace.toggle_modal(window, cx, move |window, cx| {
         crate::overview::OverviewModal::new(
             crate::overview::InitialFocus::Session,
             weak,
-            snapshot,
+            None,
             window,
             cx,
         )
@@ -377,14 +379,13 @@ fn handle_window_overview(
     cx: &mut Context<Workspace>,
 ) {
     let weak = workspace.weak_handle();
-    let snapshot = SessionRegistry::global(cx)
-        .active_id()
-        .map(|_| swap::capture(workspace, window, cx));
+    // c-overview-defer-capture: see `handle_session_overview` —
+    // identical reasoning, only the initial-row focus differs.
     workspace.toggle_modal(window, cx, move |window, cx| {
         crate::overview::OverviewModal::new(
             crate::overview::InitialFocus::Window,
             weak,
-            snapshot,
+            None,
             window,
             cx,
         )

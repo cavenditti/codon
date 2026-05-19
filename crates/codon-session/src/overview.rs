@@ -81,11 +81,15 @@ impl OverviewModal {
         sessions.sort_by(|a, b| b.last_attached_ms.cmp(&a.last_attached_ms));
         let active_session_id = registry.active_id();
 
-        // The active session's active-window `layout` is routinely stale
-        // (snapshots are only re-taken on switch-out). The caller hands
-        // us a fresh capture taken before `toggle_modal` leased the
-        // workspace — splicing it in must happen here, not inside this
-        // constructor (a nested workspace.update would double-lease).
+        // The active session's active-window `layout` may be stale: the
+        // switch fast path (`c-skip-capture-on-cache-hit`) keeps the
+        // freshest copy in the runtime cache rather than re-materializing
+        // a snapshot on every switch. `c-overview-defer-capture` lets the
+        // modal open without paying the synchronous capture cost — the
+        // persisted snapshot (last materialized at eviction/detach/
+        // shutdown) is good enough for the pane-count / shorthand
+        // summary. Callers that want a live overlay can still pass an
+        // already-captured `LayoutSnapshot` and it splices in here.
         if let (Some(active_id), Some(snapshot)) = (active_session_id, live_snapshot)
             && let Some(session) = sessions.iter_mut().find(|s| s.id == active_id)
             && let Some(active_window) = session.active_mut()

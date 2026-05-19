@@ -9,7 +9,7 @@ summary: >
   its layout summary from the last cached `Window::layout` snapshot
   and captures fresh state on-demand when a tile needs it.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/perf-switch#c-overview-defer-capture
 aspects: [overview-modal, defer-capture, on-demand]
