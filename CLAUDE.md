@@ -25,19 +25,19 @@ cargo test  -p codon-keymap [test_name]
 #   (not `cargo clippy`) — this is required by Zed's own conventions.
 ( cd vendor/zed && ./script/clippy )
 
-# Roadmap / task tracking — see .specs/AGENTS.md for the full vocabulary
-SPEC=vendor/forge-spec/spec-cli/target/release/spec
-$SPEC lint                              # 0 errors expected on a clean tree
-$SPEC todo                              # what's open right now
-$SPEC coverage REQ:codon/sessions       # per-clause + per-task progress
-$SPEC start  TASK:phase-N/foo           # lifecycle: start/done/block/defer/wontdo/reset
-$SPEC done   TASK:phase-N/foo
+# Roadmap / task tracking — see .specs/AGENTS.md for the full vocabulary.
+# The `spec` binary is on PATH — invoke it as `spec`, not via the vendored
+# release path. (Built once from vendor/forge-spec/spec-cli; the pre-commit
+# hook will build it lazily if missing.)
+spec lint                              # 0 errors expected on a clean tree
+spec todo                              # what's open right now
+spec coverage REQ:codon/sessions       # per-clause + per-task progress
+spec start  TASK:phase-N/foo           # lifecycle: start/done/block/defer/wontdo/reset
+spec done   TASK:phase-N/foo
 
 # Pre-commit hook (one-time, opt-in per clone) — runs spec lint when .spec.md files are staged
 git config core.hooksPath .githooks
 ```
-
-The `spec` binary must be built once after fresh clone: `( cd vendor/forge-spec/spec-cli && cargo build --release )`. The pre-commit hook will build it lazily if missing.
 
 Rust toolchain is pinned in `rust-toolchain.toml` (currently 1.95.0).
 
@@ -102,18 +102,17 @@ Spec-Ref: REQ:codon/sessions#c-create (touches)
 **Always use `spec` — never touch `.specs/` files directly.** Treat the spec CLI as the only sanctioned way to interact with the roadmap. Reading raw `.spec.md` files or hand-editing frontmatter bypasses validation, breaks refinement links, and produces commits that `spec lint` will reject. Use these subcommands instead:
 
 ```sh
-SPEC=vendor/forge-spec/spec-cli/target/release/spec
-$SPEC todo                                        # what's open right now (start here)
-$SPEC coverage REQ:codon/<area>                   # per-clause + per-task progress for an area
-$SPEC ancestors TASK:phase-N/<slug>               # parent REQ + refined clauses
-$SPEC children  REQ:codon/<area>                  # tasks refining this REQ
-$SPEC render --target agent REQ:codon/<area>      # read a spec (agent-rendered)
-$SPEC render --target agent TASK:phase-N/<slug>   # read a task (agent-rendered)
-$SPEC new task   phase-N/<slug>                   # scaffold a new TASK from the template
-$SPEC new req    codon/<area>                     # scaffold a new REQ
-$SPEC start  TASK:phase-N/<slug>                  # lifecycle: start → done (or block/defer/wontdo/reset)
-$SPEC done   TASK:phase-N/<slug>
-$SPEC lint                                        # must stay at 0 errors
+spec todo                                        # what's open right now (start here)
+spec coverage REQ:codon/<area>                   # per-clause + per-task progress for an area
+spec ancestors TASK:phase-N/<slug>               # parent REQ + refined clauses
+spec children  REQ:codon/<area>                  # tasks refining this REQ
+spec render --target agent REQ:codon/<area>      # read a spec (agent-rendered)
+spec render --target agent TASK:phase-N/<slug>   # read a task (agent-rendered)
+spec new task   phase-N/<slug>                   # scaffold a new TASK from the template
+spec new req    codon/<area>                     # scaffold a new REQ
+spec start  TASK:phase-N/<slug>                  # lifecycle: start → done (or block/defer/wontdo/reset)
+spec done   TASK:phase-N/<slug>
+spec lint                                        # must stay at 0 errors
 ```
 
 **Always pass `--target agent` to `spec render`.** The default `human` target strips structure that you rely on for traceability; the `agent` target preserves clause IDs, refinement links, and machine-readable framing. If you need ancestors/descendants in the same call, add `--ancestors full --descendants full` (or `--include-source` when you need resolved source references). Never `cat` / `Read` a `.spec.md` file to get its content — go through `spec render --target agent`.
