@@ -7,5 +7,6 @@
 
 pub(crate) mod column;
 pub(crate) mod row;
+pub(crate) mod row_glyph_cache;
 pub(crate) mod shaped_line_cache;
 pub(crate) mod trace;

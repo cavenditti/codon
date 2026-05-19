@@ -31,6 +31,7 @@ use gpui::{
 use crate::file_manager::DirEntry;
 use crate::prefs::LineMode;
 use crate::render::row::{FmRowElement, RowDisplayState, RowMetrics, RowTheme};
+use crate::render::row_glyph_cache::{CachedRow, RowGlyphCache, RowGlyphKey};
 use crate::render::shaped_line_cache::ShapedLineCache;
 use crate::render::trace::COUNTERS;
 
@@ -74,6 +75,12 @@ pub(crate) struct FmColumnElement {
     /// Shaped-line cache shared across every visible row in this
     /// column for the lifetime of the paint.
     pub shaped_line_cache: Rc<RefCell<ShapedLineCache>>,
+    /// Row-glyph cache — sits one layer above the shaped-line cache
+    /// and stores the fully-resolved row payload (bg colour + shaped
+    /// name + shaped meta) keyed on `(path, display_state,
+    /// line_mode)`. On selection move, only the two affected rows
+    /// (previously- and newly-selected) are cache misses.
+    pub row_glyph_cache: Rc<RefCell<RowGlyphCache>>,
     /// Optional dirty-row hint: when populated by
     /// `mark_rows_dirty`, paint only the listed rows + the
     /// previously-selected row, leaving the rest as-is. Empty means
@@ -149,7 +156,7 @@ impl IntoElement for FmColumnElement {
 /// row Elements for the visible window so `paint` can drive them
 /// inline.
 pub(crate) struct FmColumnPrepaint {
-    visible_rows: Vec<(Bounds<Pixels>, FmRowElement, FmRowPrepaintLite)>,
+    visible_rows: Vec<(Bounds<Pixels>, FmRowElement, FmRowPrepaintLite, Arc<CachedRow>)>,
     track_bounds: Option<Bounds<Pixels>>,
     thumb_bounds: Option<Bounds<Pixels>>,
 }
@@ -194,7 +201,7 @@ impl Element for FmColumnElement {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
         let (first, last) = self.first_last_visible(bounds);
@@ -221,8 +228,8 @@ impl Element for FmColumnElement {
                 zebra_stripe: false,
             };
             let meta_text = entry.labels.meta[self.line_mode.idx()].clone();
-            let row = FmRowElement {
-                entry,
+            let mut row = FmRowElement {
+                entry: entry.clone(),
                 row_index: i,
                 state,
                 metrics: self.row_metrics,
@@ -230,7 +237,40 @@ impl Element for FmColumnElement {
                 meta_text: meta_text.clone(),
                 shaped_line_cache: self.shaped_line_cache.clone(),
             };
-            visible_rows.push((row_bounds, row, FmRowPrepaintLite { state, meta_text }));
+
+            // Row-glyph cache lookup. The cached payload composes
+            // the shaped name + meta lines + resolved background;
+            // a hit skips all per-row state-derivation work.
+            let icon_path_key = entry
+                .icon_path
+                .as_ref()
+                .and_then(|o| o.clone());
+            let key = RowGlyphKey {
+                path: entry.path.clone(),
+                line_mode: self.line_mode,
+                state,
+                icon_path: icon_path_key,
+            };
+            let cached = {
+                let mut cache = self.row_glyph_cache.borrow_mut();
+                cache.get(&key)
+            };
+            let payload = match cached {
+                Some(c) => c,
+                None => {
+                    let inline = row.prepaint_inline(row_bounds, window, _cx);
+                    let c = Arc::new(CachedRow {
+                        background: row.background_color_inline(),
+                        name_line: inline.name_line.clone(),
+                        meta_line: inline.meta_line.clone(),
+                    });
+                    self.row_glyph_cache
+                        .borrow_mut()
+                        .insert(key, c.clone());
+                    c
+                }
+            };
+            visible_rows.push((row_bounds, row, FmRowPrepaintLite { state, meta_text }, payload));
         }
 
         // Scrollbar: track always painted, thumb sized to the visible
@@ -296,15 +336,17 @@ impl Element for FmColumnElement {
 
         let visible_rows = std::mem::take(&mut prepaint.visible_rows);
         let mut painted = 0u64;
-        for (row_bounds, mut row, lite) in visible_rows {
+        for (row_bounds, mut row, lite, payload) in visible_rows {
             if dirty_only && !dirty_set.contains(&row.row_index) {
                 continue;
             }
-            // Re-shape via the cache (cheap on hit) so each row can
-            // paint independently. The shared cache absorbs the cost
-            // when neighbouring rows share text (rare for filenames
-            // but common for meta labels like "1 item").
-            let mut prepaint_row = row.prepaint_inline(row_bounds, window, cx);
+            // Hand the cached payload to the row's inline paint —
+            // no re-shape, no run construction, no colour
+            // resolution. A pure translation + scene insert.
+            let mut prepaint_row = RowInlinePrepaint {
+                name_line: payload.name_line.clone(),
+                meta_line: payload.meta_line.clone(),
+            };
             row.paint_inline(row_bounds, &mut prepaint_row, lite, window, cx);
             painted += 1;
         }
@@ -470,7 +512,7 @@ impl FmRowElement {
         }
     }
 
-    fn background_color_inline(&self) -> Option<Hsla> {
+    pub(crate) fn background_color_inline(&self) -> Option<Hsla> {
         if self.state.is_selected {
             Some(self.theme.bg_selected)
         } else if self.state.is_marked {

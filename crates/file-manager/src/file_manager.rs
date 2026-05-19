@@ -352,6 +352,16 @@ pub struct FileManager {
     pub(crate) custom_dirty_parent: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
     pub(crate) custom_dirty_current: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
     pub(crate) custom_dirty_preview: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    /// Per-column `RowGlyphCache` — holds the resolved row payloads
+    /// across paints so a scroll/selection move repaints only the
+    /// rows that actually changed. Cleared by `clear_row_glyph_caches`
+    /// on theme changes and on directory rotation.
+    pub(crate) custom_row_cache_parent:
+        std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
+    pub(crate) custom_row_cache_current:
+        std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
+    pub(crate) custom_row_cache_preview:
+        std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
 }
 
 #[derive(Clone)]
@@ -495,6 +505,15 @@ impl FileManager {
             custom_dirty_parent: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
             custom_dirty_current: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
             custom_dirty_preview: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
+            custom_row_cache_parent: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::row_glyph_cache::RowGlyphCache::new(512),
+            )),
+            custom_row_cache_current: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::row_glyph_cache::RowGlyphCache::new(512),
+            )),
+            custom_row_cache_preview: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::row_glyph_cache::RowGlyphCache::new(512),
+            )),
         };
         // Kick off the initial listing via the same async path that
         // navigation uses — the FM renders briefly empty (one frame at

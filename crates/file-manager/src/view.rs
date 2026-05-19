@@ -17,6 +17,7 @@ use crate::file_manager::{
 use crate::prefs::LineMode;
 use crate::render::column::{ColumnKind, ColumnTheme, DirtyRows, FmColumnElement};
 use crate::render::row::{FmRowElement, RowDisplayState, RowMetrics, resolve_row_theme};
+use crate::render::row_glyph_cache::RowGlyphCache;
 use crate::render::shaped_line_cache::ShapedLineCache;
 use crate::theme::FmThemeStore;
 use std::cell::RefCell;
@@ -30,6 +31,17 @@ impl FileManager {
     /// `codon.toml`. Off by default while the harness stabilises.
     pub(crate) fn custom_render_enabled(&self) -> bool {
         crate::prefs::FmPrefs::load().custom_render
+    }
+
+    /// Clear every per-column row-glyph cache. Called when the
+    /// theme changes (composes with `ShapedLineCache::invalidate_for_font`)
+    /// or when the directory listing rotates wholesale — the
+    /// cached payloads contain resolved colours + shaped glyphs
+    /// that must not survive across theme rebuilds.
+    pub(crate) fn clear_row_glyph_caches(&self) {
+        self.custom_row_cache_parent.borrow_mut().clear();
+        self.custom_row_cache_current.borrow_mut().clear();
+        self.custom_row_cache_preview.borrow_mut().clear();
     }
 }
 
@@ -220,6 +232,7 @@ pub(crate) fn build_fm_column(
     column_kind: ColumnKind,
     scroll_offset: &Rc<RefCell<f32>>,
     dirty_rows: &Rc<RefCell<DirtyRows>>,
+    row_glyph_cache: &Rc<RefCell<RowGlyphCache>>,
     cx: &App,
 ) -> FmColumnElement {
     let row_theme = resolve_row_theme(cx);
@@ -256,6 +269,7 @@ pub(crate) fn build_fm_column(
         line_mode: site.line_mode,
         scroll_offset: scroll_offset.clone(),
         shaped_line_cache: cache,
+        row_glyph_cache: row_glyph_cache.clone(),
         dirty_rows: dirty_rows.clone(),
         dimmed: site.dimmed,
     }
@@ -300,20 +314,22 @@ impl FileManager {
         };
 
         if custom_render {
-            // Determine which scroll/dirty cell to use based on
-            // `list_id`. The two static-column call sites pass
+            // Determine which scroll/dirty/cache cell to use based
+            // on `list_id`. The two static-column call sites pass
             // "fm-parent-list" or "fm-preview-dir-list" — anything
             // else lands on the current-column cells.
-            let (scroll_cell, dirty_cell, kind) = if list_id == "fm-parent-list" {
+            let (scroll_cell, dirty_cell, glyph_cache, kind) = if list_id == "fm-parent-list" {
                 (
                     &self.custom_scroll_parent,
                     &self.custom_dirty_parent,
+                    &self.custom_row_cache_parent,
                     ColumnKind::Parent,
                 )
             } else {
                 (
                     &self.custom_scroll_preview,
                     &self.custom_dirty_preview,
+                    &self.custom_row_cache_preview,
                     ColumnKind::Preview,
                 )
             };
@@ -325,6 +341,7 @@ impl FileManager {
                 kind,
                 scroll_cell,
                 dirty_cell,
+                glyph_cache,
                 cx,
             )
             .into_any_element();
@@ -391,6 +408,7 @@ impl FileManager {
                         ColumnKind::Preview,
                         &self.custom_scroll_preview,
                         &self.custom_dirty_preview,
+                        &self.custom_row_cache_preview,
                         cx,
                     )
                     .into_any_element()
@@ -702,6 +720,7 @@ impl Render for FileManager {
                 ColumnKind::Current,
                 &self.custom_scroll_current,
                 &self.custom_dirty_current,
+                &self.custom_row_cache_current,
                 cx,
             )
             .into_any_element()

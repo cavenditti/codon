@@ -9,7 +9,7 @@ summary: >
   by `(0, dy)` and emit untouched. On selection move, only the
   background quad of the two affected rows is recomputed.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-row-glyph-cache
 aspects: [paint-cache, translation-only, scroll-reuse]
