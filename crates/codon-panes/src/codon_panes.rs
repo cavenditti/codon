@@ -17,8 +17,8 @@ pub mod peek;
 mod registry;
 
 pub use actions::{
-    OpenAgent, OpenDebug, OpenGit, OpenOutline, PeekAgent, PeekDebug, PeekDismiss, PeekGit,
-    PeekOutline,
+    OpenAgent, OpenDebug, OpenFromRegister, OpenGit, OpenOutline, PeekAgent, PeekDebug,
+    PeekDismiss, PeekGit, PeekOutline,
 };
 pub use adapter::{PanelItemAdapter, PanelItemEvent};
 pub use peek::{PeekSide, peek_panel};
@@ -151,6 +151,60 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     outline::register_for_workspace(workspace);
     debug::register_for_workspace(workspace);
     workspace.register_action(peek::handle_peek_dismiss);
+    workspace.register_action(handle_open_from_register);
+}
+
+/// `codon_panes::OpenFromRegister` — read the armed register, expect a
+/// `Selection::Files` payload, open each path in the workspace.
+///
+/// This is the proof point for the `"<char>` *read* side of the
+/// register prefix: the action handler pulls the pending name out of
+/// the [`codon_session::RegisterStore`], reads the named register, and
+/// dispatches a normal "open path" verb per file. Non-`Files`
+/// selections + unarmed prefixes are debug-logged no-ops so a
+/// keystroke without a primed register can't crash.
+fn handle_open_from_register(
+    workspace: &mut Workspace,
+    _: &OpenFromRegister,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let store = codon_session::RegisterStore::global(cx);
+    let Some(pending) = store.take_pending() else {
+        log::debug!("codon-panes: OpenFromRegister without armed register — noop");
+        return;
+    };
+    let Some(selection) = store.read(pending.name) else {
+        log::debug!(
+            "codon-panes: OpenFromRegister register '{}' is empty",
+            pending.name
+        );
+        return;
+    };
+    let codon_mode::Selection::Files(paths) = selection else {
+        log::debug!(
+            "codon-panes: OpenFromRegister register '{}' does not hold files \
+             (helix-text-register interop is the follow-up task)",
+            pending.name
+        );
+        return;
+    };
+    for path in paths {
+        // Reuse Zed's `workspace::OpenVisible` path-open verb. Each path
+        // becomes its own dispatch so a multi-file register prompts the
+        // workspace's regular conflict-resolution UI for each.
+        workspace
+            .open_abs_path(
+                path.clone(),
+                workspace::OpenOptions {
+                    visible: Some(workspace::OpenVisible::All),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+    }
 }
 
 #[cfg(test)]

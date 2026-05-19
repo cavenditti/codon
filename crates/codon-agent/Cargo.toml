@@ -13,6 +13,7 @@ path = "src/codon_agent.rs"
 [dependencies]
 agent_ui.workspace = true
 codon-mode.workspace = true
+codon-session.workspace = true
 command_palette_hooks.workspace = true
 gpui.workspace = true
 log.workspace = true

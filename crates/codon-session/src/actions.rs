@@ -120,7 +120,34 @@ pub struct WindowGoto(pub usize);
 #[serde(deny_unknown_fields)]
 pub struct MovePaneToWindow(pub usize);
 
-pub fn register(_cx: &mut App) {}
+/// Write the focused pane's [`codon_mode::SelectionSource::current_selection`]
+/// to the register armed via a `"<char>` prefix, or — when no prefix
+/// is armed — clear the slot. The action is the phase-19 proof point
+/// that selection-producing verbs honour the register prefix; the
+/// follow-up tasks add more producers (`MarkAll` in fm,
+/// `SelectByPattern` in git, etc.).
+///
+/// No-op when no register is armed *and* no payload is supplied, so
+/// binding it to a bare key (e.g. `Y`) without a prefix doesn't crash
+/// — it just logs a debug line.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = codon_session)]
+#[serde(deny_unknown_fields)]
+pub struct YankSelection;
+
+pub fn register(cx: &mut App) {
+    // `YankSelection` is a selection-producer — when paired with a
+    // `"<char>` arming, its output gets routed into the named
+    // register. Producer kind is the pane's primary kind; the
+    // file-manager produces `File` selections so we register that.
+    // Future task work (when other panes implement SelectionSource +
+    // YankSelection paths) will register additional producer kinds
+    // — the registry holds one kind per action type, so polymorphic
+    // producers will need a wrapper-per-pane or a dispatcher-side
+    // override.
+    let registry = cx.global_mut::<command_palette_hooks::ActionAcceptsRegistry>();
+    registry.register_produces::<YankSelection>(command_palette_hooks::ObjectKind::File);
+}
 
 /// Wire workspace-scoped action handlers. Call from the workspace
 /// initialization hook (e.g. `cx.observe_new(|workspace, _, cx| ...)`).
@@ -148,6 +175,46 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     crate::goto_or_open::register_for_workspace(workspace);
     crate::diff_open::register_for_workspace(workspace);
     crate::contextual_split::register_for_workspace(workspace);
+    crate::registers::register_for_workspace(workspace);
+    workspace.register_action(handle_yank_selection);
+}
+
+fn handle_yank_selection(
+    workspace: &mut Workspace,
+    _: &YankSelection,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    use codon_mode::SelectionSource as _;
+    let store = crate::registers::RegisterStore::global(cx);
+    let Some(pending) = store.take_pending() else {
+        log::debug!("codon-session: YankSelection without armed register — noop");
+        return;
+    };
+    // The only `SelectionSource` impl shipped this task is `file-manager`.
+    // Look at the workspace's active pane and ask the trait for the
+    // current selection if it's hosting an FM. Cross-pane SelectionSource
+    // discovery (editor / git / diagnostics / agent) is the follow-up
+    // task — see `phase-19/selection-registers-helix-interop` for the
+    // editor side specifically.
+    let active_item = workspace.active_pane().read(cx).active_item();
+    let selection = active_item
+        .and_then(|item| item.downcast::<file_manager::FileManager>())
+        .map(|fm| fm.read(cx).current_selection());
+    let Some(selection) = selection else {
+        log::debug!(
+            "codon-session: YankSelection target pane has no SelectionSource impl — \
+             cross-pane lookup is a follow-up"
+        );
+        return;
+    };
+    if !store.write(pending.name, selection) {
+        log::warn!(
+            "codon-session: YankSelection wrote register '{}' but no active session — \
+             call SessionRegistry::set_active first",
+            pending.name
+        );
+    }
 }
 
 fn handle_resize_pane_left(

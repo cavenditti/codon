@@ -545,6 +545,7 @@ pub fn load_codon_keymap(cx: &mut App) {
         apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx);
     }
     apply_raw_bindings(cx);
+    apply_register_prefix_bindings(cx);
 
     let Some(codon_dir) = codon_config_dir() else {
         return;
@@ -778,6 +779,53 @@ fn apply_bindings(bindings: Vec<(String, String, Option<String>)>, cx: &mut App)
 
     cx.bind_keys(key_bindings);
 }
+
+/// Register the `"<char>` Normal-mode register-prefix bindings.
+///
+/// Each printable name in [`REGISTER_NAME_ALPHABET`] is bound to its
+/// own `codon_registers::SelectRegister("<char>")` payload — the
+/// dispatcher consumes it via the workspace action handler installed
+/// in `codon-session::registers::register_for_workspace`.
+///
+/// We enumerate rather than parse on-demand so the binding sits in the
+/// regular `cx.bind_keys` pipeline (and shows up in the cheatsheet);
+/// the alphabet is small enough (~40 entries) that the size cost is
+/// trivial. The named slots (`"`, `_`, `+`, `*`, `-`) are bound only
+/// when their keystroke representation is stable across keyboards —
+/// `_`, `+`, `*`, `-` are. The unnamed default register `"`-then-`"`
+/// is deferred to the follow-up task that owns the default-register
+/// semantics (`REQ:codon/selection-registers#c-default-register`).
+fn apply_register_prefix_bindings(cx: &mut App) {
+    let mut bindings = Vec::new();
+    for c in REGISTER_NAME_ALPHABET {
+        let keystroke = format!("\" {c}");
+        let action_payload = format!("codon_registers::SelectRegister(\"{c}\")");
+        // Bound at the global predicate — codon's Normal-mode handling
+        // is per-pane in `[bindings.*.normal]` but the register arming
+        // is genuinely workspace-level (the next verb can land in any
+        // pane). The dispatcher consumes the arming itself; there's no
+        // pane-mode predicate to scope here.
+        if let Some(binding) = build_binding(cx, &keystroke, &action_payload, None) {
+            bindings.push(binding);
+        }
+    }
+    if !bindings.is_empty() {
+        cx.bind_keys(bindings);
+    }
+}
+
+/// Single-char register-name alphabet bound by [`apply_register_prefix_bindings`].
+/// Lowercase + uppercase ASCII + digits + the small Helix-named slots
+/// the register store allows (see `RegisterName::try_new`). The unnamed
+/// `"` default register is deferred — see the function's doc.
+const REGISTER_NAME_ALPHABET: &[char] = &[
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+    'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    '_', '+', '*', '-',
+];
 
 /// Bindings whose context predicate doesn't fit the
 /// `[bindings.<pane>.<mode>]` shape get applied directly here. Kept small

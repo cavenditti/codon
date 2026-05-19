@@ -58,6 +58,17 @@ pub struct Session {
     pub previous_window: Option<usize>,
     /// Unix epoch millis. Stored as i64 so the persisted format is portable.
     pub last_attached_ms: i64,
+    /// Per-session selection registers — the named-`"<char>` slots the
+    /// `codon_registers::SelectRegister` prefix arms. The runtime view
+    /// lives on [`crate::registers::RegisterStore`] (a `gpui::Global`);
+    /// this field is the *persistence surface* for the per-session map.
+    ///
+    /// Skipped during serialisation in this task — `swap_session`
+    /// rebuilds an empty map on rehydrate. Per-session contents
+    /// persistence + the `[registers]` TOML named-persistent variant
+    /// land in `phase-19/selection-registers-persistent`.
+    #[serde(default, skip)]
+    pub registers: std::collections::HashMap<String, codon_mode::Selection>,
 }
 
 impl Session {
@@ -71,6 +82,7 @@ impl Session {
             active_window: 0,
             previous_window: None,
             last_attached_ms: now_ms(),
+            registers: std::collections::HashMap::new(),
         }
     }
 

@@ -9,6 +9,7 @@ pub mod git_branch_indicator;
 pub mod overview;
 pub mod pane_context_label;
 pub mod picker;
+pub mod registers;
 pub mod registry;
 pub mod resize_sticky;
 pub mod runtime;
@@ -23,6 +24,9 @@ pub use actions::*;
 pub use git_branch_indicator::GitBranchIndicator;
 pub use pane_context_label::PaneContextLabel;
 pub use picker::SessionSwitchModal;
+pub use registers::{
+    PendingRegister, RegisterName, RegisterNameError, RegisterStore, SelectRegister,
+};
 pub use registry::{SessionRegistry, SessionRegistryError};
 pub use session::{Session, SessionId, Window, WindowId};
 pub use status_item::SessionStatusItem;
@@ -38,5 +42,6 @@ pub fn init(cx: &mut App) {
     workspace::pane::set_close_window_on_last_tab(false);
     actions::register(cx);
     registry::init(cx);
+    registers::init(cx);
     runtime::init(cx);
 }

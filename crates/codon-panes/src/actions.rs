@@ -31,5 +31,13 @@ actions!(
         PeekDebug,
         /// Dismiss the currently visible peek, if any.
         PeekDismiss,
+        /// Consume a `Selection::Files` from the register armed via
+        /// the `"<char>` prefix and open each file in the workspace.
+        /// No-op when no register is armed or the register doesn't
+        /// hold a `Files` selection (the dispatcher logs a debug
+        /// message; the user sees no visible change).
+        ///
+        /// `"f` then `OpenFromRegister` is the canonical flow.
+        OpenFromRegister,
     ]
 );

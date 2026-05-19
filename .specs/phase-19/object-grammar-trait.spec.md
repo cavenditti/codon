@@ -10,7 +10,7 @@ summary: >
   proof. Other pane impls + the predicate mini-language follow
   in separate tasks.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/object-grammar#c-grammar-trait
   - REQ:codon/object-grammar#c-shell-driven-keys

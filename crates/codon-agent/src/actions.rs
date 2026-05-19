@@ -100,9 +100,61 @@ fn seed_agent(
             panel.focus_handle(cx).focus(window, cx);
         }
     }
+    // Phase-19: when a `"<char>` prefix has armed a register, expand
+    // that register's contents into the seed string before calling
+    // `seed_explain_with_selection`. The agent panel still calls
+    // `insert_selections` for whatever the focused pane reports
+    // (Helix-text-register interop is the follow-up task); this hook
+    // just gets the register name + a one-line summary into the seed
+    // so the user can see *which* register the verb is consuming.
+    let resolved_prefix = resolve_register_prefix(prefix, cx);
     panel.update(cx, |panel, cx| {
-        panel.seed_explain_with_selection(Some(prefix.to_string()), window, cx);
+        panel.seed_explain_with_selection(Some(resolved_prefix), window, cx);
     });
+}
+
+/// Resolve any armed `"<char>` register into a human-readable line
+/// appended to the seed prefix. Single-file registers print the path
+/// inline; multi-file registers print the count and let the agent
+/// prompt enumerate them on a follow-up turn.
+///
+/// Non-`Files` registers / no-arming returns the prefix unchanged so
+/// the path is fully no-op-friendly. Helix-text-register interop and
+/// full selection-injection are out of scope for this task — see
+/// `phase-19/selection-registers-helix-interop`.
+fn resolve_register_prefix(prefix: &str, cx: &gpui::App) -> String {
+    let store = codon_session::RegisterStore::global(cx);
+    let Some(pending) = store.take_pending() else {
+        return prefix.to_string();
+    };
+    let Some(selection) = store.read(pending.name) else {
+        log::debug!(
+            "codon-agent: register '{}' is empty; proceeding with focused selection",
+            pending.name
+        );
+        return prefix.to_string();
+    };
+    let codon_mode::Selection::Files(paths) = selection else {
+        log::debug!(
+            "codon-agent: register '{}' does not hold files; proceeding with focused selection",
+            pending.name
+        );
+        return prefix.to_string();
+    };
+    if paths.is_empty() {
+        return prefix.to_string();
+    }
+    let mut buf = String::from(prefix);
+    buf.push_str("[register \"");
+    buf.push(pending.name.as_char());
+    buf.push_str("\" — ");
+    if paths.len() == 1 {
+        buf.push_str(&paths[0].display().to_string());
+    } else {
+        buf.push_str(&format!("{} files", paths.len()));
+    }
+    buf.push_str("]\n\n");
+    buf
 }
 
 /// Walk every pane in the workspace looking for a `PanelItemAdapter<AgentPanel>`
