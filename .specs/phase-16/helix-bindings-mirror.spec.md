@@ -10,7 +10,7 @@ summary: >
   "bindable-now" gaps (`q`/`Q`, `(`/`)`, `&`, `g f`, `g d`/`g i`/`g y`).
   The cheatsheet starts surfacing them automatically.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/helix-keymap-coverage#c-mirror-vim-json-helix
   - REQ:codon/helix-keymap-coverage#c-macro-bindings

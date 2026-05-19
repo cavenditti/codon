@@ -315,13 +315,151 @@ const DEFAULT_KEYMAP: &str = r#"
 
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
-# Helix jump-to-word: visible-region overlay labels, two keystrokes
-# jump the cursor. Implementation lives in vendored Zed
-# (`vim::HelixJumpToWord`); the upstream `vim.json` already binds
-# `g w`, but we list it here so it shows up in the codon cheatsheet
-# and can be rebound from `~/.config/codon/codon.toml`. In Visual
-# mode the same action extends the selection — no separate binding.
-"g w" = "vim::HelixJumpToWord"
+
+# Helix-mode mirror. Every binding below is already wired in
+# `vendor/zed/assets/keymaps/vim.json` under a helix_normal /
+# helix_select context — re-binding the same chord to the same
+# action under codon's `vim_mode == normal || helix_normal ||
+# helix_select` predicate is a no-op for GPUI's binding table
+# (it's keyed on predicate + chord), but `codon_default_bindings`
+# re-parses this TOML each time the cheatsheet opens, so mirroring
+# the bindings here surfaces them in the editor cheatsheet tab.
+# See TASK:phase-16/helix-bindings-mirror.
+
+# Motion (display-line variants of j/k; `g j` / `g k` are the
+# logical-line escape hatch).
+"j"      = "vim::Down({\"display_lines\":true})"
+"down"   = "vim::Down({\"display_lines\":true})"
+"k"      = "vim::Up({\"display_lines\":true})"
+"up"     = "vim::Up({\"display_lines\":true})"
+"g j"    = "vim::Down"
+"g down" = "vim::Down"
+"g k"    = "vim::Up"
+"g up"   = "vim::Up"
+"h"      = "vim::WrappingLeft"
+"left"   = "vim::WrappingLeft"
+"l"      = "vim::WrappingRight"
+"right"  = "vim::WrappingRight"
+"t"       = "vim::PushFindForward({\"before\":true,\"multiline\":true})"
+"f"       = "vim::PushFindForward({\"before\":false,\"multiline\":true})"
+"shift-t" = "vim::PushFindBackward({\"after\":true,\"multiline\":true})"
+"shift-f" = "vim::PushFindBackward({\"after\":false,\"multiline\":true})"
+"alt-."   = "vim::RepeatFind"
+
+# Mode entry (helix-flavoured insert/append variants).
+"escape"   = "vim::SwitchToHelixNormalMode"
+"i"        = "vim::HelixInsert"
+"a"        = "vim::HelixAppend"
+"shift-a"  = "vim::HelixInsertEndOfLine"
+"ctrl-["   = "editor::Cancel"
+
+# Changes
+"shift-r" = "editor::Paste"
+"`"       = "vim::ConvertToLowerCase"
+"alt-`"   = "vim::ConvertToUpperCase"
+"insert"  = "vim::InsertBefore"
+"shift-u" = "editor::Redo"
+"ctrl-r"  = "vim::Redo"
+"y"       = "vim::HelixYank"
+"p"       = "vim::HelixPaste"
+"shift-p" = "vim::HelixPaste({\"before\":true})"
+">"       = "vim::Indent"
+"<"       = "vim::Outdent"
+"="       = "vim::AutoIndent"
+"d"       = "vim::HelixDelete"
+"alt-d"   = "editor::Delete"
+"c"       = "vim::HelixSubstitute"
+"alt-c"   = "vim::HelixSubstituteNoYank"
+
+# Selection manipulation
+"s"            = "vim::HelixSelectRegex"
+"alt-s"        = "editor::SplitSelectionIntoLines({\"keep_selections\":true})"
+";"            = "vim::HelixCollapseSelection"
+"alt-;"        = "vim::OtherEnd"
+","            = "vim::HelixKeepNewestSelection"
+"shift-c"      = "vim::HelixDuplicateBelow"
+"alt-shift-c"  = "vim::HelixDuplicateAbove"
+"%"            = "editor::SelectAll"
+"x"            = "vim::HelixSelectLine"
+"shift-x"      = "editor::SelectLine"
+"ctrl-c"       = "editor::ToggleComments"
+"alt-o"        = "editor::SelectLargerSyntaxNode"
+"alt-i"        = "editor::SelectSmallerSyntaxNode"
+"alt-p"        = "editor::SelectPreviousSyntaxNode"
+"alt-n"        = "editor::SelectNextSyntaxNode"
+
+# Search
+"n"       = "vim::HelixSelectNext"
+"shift-n" = "vim::HelixSelectPrevious"
+
+# Goto-mode chords (`g <verb>`). Helix jump-to-word: visible-region
+# overlay labels, two keystrokes jump the cursor. Implementation
+# lives in vendored Zed (`vim::HelixJumpToWord`).
+"g e"        = "vim::EndOfDocument"
+"g h"        = "vim::StartOfLine"
+"g l"        = "vim::EndOfLine"
+"g s"        = "vim::FirstNonWhitespace"
+"g t"        = "vim::WindowTop"
+"g c"        = "vim::WindowMiddle"
+"g b"        = "vim::WindowBottom"
+"g r"        = "editor::FindAllReferences"
+"g n"        = "pane::ActivateNextItem"
+"shift-l"    = "pane::ActivateNextItem"
+"g p"        = "pane::ActivatePreviousItem"
+"shift-h"    = "pane::ActivatePreviousItem"
+"g w"        = "vim::HelixJumpToWord"
+"g ."        = "vim::HelixGotoLastModification"
+"g o"        = "editor::ToggleSelectedDiffHunks"
+"g shift-o"  = "git::ToggleStaged"
+"g shift-r"  = "git::Restore"
+"g u"        = "git::StageAndNext"
+"g shift-u"  = "git::UnstageAndNext"
+"g q"        = "vim::PushRewrap"
+
+# Window mode (helix `space w …`).
+"space w v"  = "pane::SplitRight"
+"space w s"  = "pane::SplitDown"
+"space w h"  = "workspace::ActivatePaneLeft"
+"space w j"  = "workspace::ActivatePaneDown"
+"space w k"  = "workspace::ActivatePaneUp"
+"space w l"  = "workspace::ActivatePaneRight"
+"space w q"  = "pane::CloseActiveItem"
+"space w r"  = "pane::SplitRight"
+"space w d"  = "pane::SplitDown"
+
+# Space mode (helix `space …`).
+"space f"        = "file_finder::Toggle"
+"space k"        = "editor::Hover"
+"space s"        = "outline::Toggle"
+"space shift-s"  = "project_symbols::Toggle"
+"space d"        = "editor::GoToDiagnostic"
+"space r"        = "editor::Rename"
+"space a"        = "editor::ToggleCodeActions"
+"space h"        = "editor::SelectAllMatches"
+"space c"        = "editor::ToggleComments"
+"space p"        = "editor::Paste"
+"space y"        = "editor::Copy"
+"space /"        = "pane::DeploySearch"
+
+# Other
+"m"       = "vim::PushHelixMatch"
+"]"       = "vim::PushHelixNext({\"around\":true})"
+"["       = "vim::PushHelixPrevious({\"around\":true})"
+"ctrl-s"  = "editor::SaveLocation"
+
+# Bindable-now gaps — actions already exist in vendored Zed but
+# vim.json doesn't bind them under a helix context. Surfacing
+# them here is what TASK:phase-16/helix-bindings-mirror lists as
+# the "five gaps" (q/Q, ()/), &, g f, g d/g i/g y).
+"q"        = "vim::ToggleRecord"
+"shift-q"  = "vim::ReplayLastRecording"
+"("        = "editor::RotateSelectionsBackward"
+")"        = "editor::RotateSelectionsForward"
+"&"        = "editor::AlignSelections"
+"g f"      = "editor::OpenSelectedFilename"
+"g d"      = "editor::GoToDefinition"
+"g i"      = "editor::GoToImplementation"
+"g y"      = "editor::GoToTypeDefinition"
 
 # Git panel — Helix-style verbs for the existing Zed git dock. The
 # panel publishes pane_mode == normal when the changes list is
@@ -819,6 +957,42 @@ mod tests {
         let parsed: CodonKeymap = toml::from_str(toml).expect("parses");
         assert_eq!(parsed.keymap.prefix.as_deref(), Some("ctrl-x"));
         assert_eq!(parsed.bindings.global.len(), 1);
+    }
+
+    /// Mirroring helix-mode bindings into `[bindings.editor.normal]`
+    /// (see TASK:phase-16/helix-bindings-mirror) lifted the editor
+    /// section from a handful of entries to north of 60. Lock the
+    /// floor in so a future trim doesn't silently strip the
+    /// cheatsheet back to "`:` and `g w`".
+    #[test]
+    fn mirrored_helix_bindings_appear_in_default_bindings() {
+        let parsed = parse_keymap(DEFAULT_KEYMAP).expect("DEFAULT_KEYMAP parses");
+        let editor_normal_pred = mode_predicates("Editor").0;
+        let editor_normal_count = parsed
+            .iter()
+            .filter(|(_, _, ctx)| ctx.as_deref() == Some(editor_normal_pred.as_str()))
+            .count();
+        assert!(
+            editor_normal_count >= 60,
+            "expected ≥60 mirrored editor.normal bindings, got {editor_normal_count}"
+        );
+
+        // Spot-check a handful of representative chords to catch a
+        // wholesale rewrite that happens to keep the count up.
+        let editor_normal_keys: Vec<&str> = parsed
+            .iter()
+            .filter(|(_, _, ctx)| ctx.as_deref() == Some(editor_normal_pred.as_str()))
+            .map(|(k, _, _)| k.as_str())
+            .collect();
+        for expected in [
+            "d", "c", "y", "p", "s", ";", ",", "x", "m", "]", "[", "g e", "g h",
+            "space f", "space d", "q", "(", ")", "&", "g f", "g d", "g i", "g y",
+        ] {
+            assert!(
+                editor_normal_keys.contains(&expected),
+                "editor.normal should contain '{expected}'; got {editor_normal_keys:?}"
+            );
+        }
     }
 
     /// An empty `prefix = ""` falls back to the default — guards against
