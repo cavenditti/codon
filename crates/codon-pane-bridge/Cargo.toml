@@ -12,6 +12,8 @@ path = "src/codon_pane_bridge.rs"
 
 [dependencies]
 gpui.workspace = true
+schemars.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

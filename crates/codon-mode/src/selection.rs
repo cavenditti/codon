@@ -42,6 +42,22 @@ impl Selection {
 pub trait SelectionSource {
     fn current_selection(&self) -> Selection;
     fn object_kinds(&self) -> &'static [ObjectKind];
+
+    /// The pane's *natural* object kind — what `w` / `b` / `%` operate on
+    /// when no explicit kind suffix is given. Used by the
+    /// `codon-pane-bridge::ObjectGrammar` dispatcher so it knows which
+    /// kind to pass to `ObjectNext` / `ObjectPrev` / `SelectAll` from
+    /// the focused pane. File-manager = `File`, git = `Hunk`,
+    /// diagnostics = `Diagnostic`, etc.
+    ///
+    /// Default returns the first entry of `object_kinds()`, falling
+    /// back to `ObjectKind::Text` for impls that haven't yet been
+    /// updated. Override in pane impls that own multiple kinds where
+    /// the *first listed* isn't the natural target (e.g. an editor
+    /// pane returning `Text` even though it also produces hunks).
+    fn primary_object_kind(&self) -> ObjectKind {
+        self.object_kinds().first().copied().unwrap_or(ObjectKind::Text)
+    }
 }
 
 /// Reference to a git hunk (placeholder — will be fleshed out in Phase 3).

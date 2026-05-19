@@ -650,6 +650,11 @@ impl Render for FileManager {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
+            .on_action(cx.listener(Self::handle_object_next))
+            .on_action(cx.listener(Self::handle_object_prev))
+            .on_action(cx.listener(Self::handle_inner_container))
+            .on_action(cx.listener(Self::handle_around_container))
+            .on_action(cx.listener(Self::handle_select_all_kind))
             .on_action(cx.listener(|this, _: &crate::file_manager::SortByName, window, cx| {
                 this.set_sort_mode(crate::prefs::SortMode::Name, window, cx);
             }))

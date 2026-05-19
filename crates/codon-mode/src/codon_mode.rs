@@ -4,8 +4,9 @@ pub mod mode_indicator;
 pub mod selection;
 
 pub use codon_pane_bridge::{
-    CodonModeTracker, PaneMode, PaneModeBridge, SwitchToCommand, SwitchToInsert, SwitchToNormal,
-    install_pane_mode_dispatcher, register_pane_mode_bridge,
+    AroundContainer, CodonModeTracker, GrammarKind, GrammarSelection, InnerContainer,
+    ObjectGrammar, ObjectNext, ObjectPrev, PaneMode, PaneModeBridge, SelectAll, SwitchToCommand,
+    SwitchToInsert, SwitchToNormal, install_pane_mode_dispatcher, register_pane_mode_bridge,
 };
 pub use command_palette_hooks::{ActionAcceptsRegistry, ObjectKind};
 pub use mode_indicator::CodonModeIndicator;

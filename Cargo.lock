@@ -3539,6 +3539,8 @@ name = "codon-pane-bridge"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "schemars 1.2.1",
+ "serde",
 ]
 
 [[package]]

@@ -1713,6 +1713,141 @@ impl FileManager {
         cx.stop_propagation();
     }
 
+    /// `codon_panes::ObjectNext` — drives `w` in fm-normal mode. Reads
+    /// the focused pane's primary kind off [`ObjectGrammar`], consults
+    /// the trait for the next selection, then applies the resulting
+    /// index move via the existing [`navigate_down`] code path so the
+    /// preview / scroll / git-status follow-up code keeps running.
+    pub(crate) fn handle_object_next(
+        &mut self,
+        _: &codon_mode::ObjectNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use codon_mode::ObjectGrammar as _;
+        let kind = self.primary_grammar_kind();
+        let next = self.next(kind, &codon_mode::GrammarSelection::Empty);
+        self.apply_grammar_cursor(next, window, cx);
+        cx.stop_propagation();
+    }
+
+    /// `codon_panes::ObjectPrev` — drives `b` in fm-normal mode.
+    pub(crate) fn handle_object_prev(
+        &mut self,
+        _: &codon_mode::ObjectPrev,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use codon_mode::ObjectGrammar as _;
+        let kind = self.primary_grammar_kind();
+        let prev = self.prev(kind, &codon_mode::GrammarSelection::Empty);
+        self.apply_grammar_cursor(prev, window, cx);
+        cx.stop_propagation();
+    }
+
+    /// `codon_panes::InnerContainer(kind)` — `mi<x>`. Selects every
+    /// entry in the current directory.
+    pub(crate) fn handle_inner_container(
+        &mut self,
+        action: &codon_mode::InnerContainer,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use codon_mode::ObjectGrammar as _;
+        let kind = action.0;
+        let result = self.inner_container(kind, &codon_mode::GrammarSelection::Empty);
+        self.apply_grammar_marks(result);
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    /// `codon_panes::AroundContainer(kind)` — `ma<x>`.
+    pub(crate) fn handle_around_container(
+        &mut self,
+        action: &codon_mode::AroundContainer,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use codon_mode::ObjectGrammar as _;
+        let kind = action.0;
+        let result = self.around_container(kind, &codon_mode::GrammarSelection::Empty);
+        self.apply_grammar_marks(result);
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    /// `codon_panes::SelectAll(kind)` — `%<x>`.
+    pub(crate) fn handle_select_all_kind(
+        &mut self,
+        action: &codon_mode::SelectAll,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use codon_mode::ObjectGrammar as _;
+        let kind = action.0;
+        let result = self.select_all(kind);
+        self.apply_grammar_marks(result);
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    /// Apply a `GrammarSelection::FileIndices` (cursor-move semantics)
+    /// or a `Files`/`Empty` (no-op for cursor moves). For index moves
+    /// the FM re-uses [`navigate_down`] / direct `selected_index`
+    /// assignment so all the side-effects (scroll-to-item, preview
+    /// debounce, visual-anchor maintenance) line up with the manual
+    /// `j` / `k` path.
+    fn apply_grammar_cursor(
+        &mut self,
+        sel: codon_mode::GrammarSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let codon_mode::GrammarSelection::FileIndices(indices) = sel else {
+            return;
+        };
+        let Some(&target) = indices.first() else {
+            return;
+        };
+        if self.entries.is_empty() {
+            return;
+        }
+        let clamped = cmp::min(target, self.entries.len() - 1);
+        let strategy = if clamped >= self.selected_index {
+            ScrollStrategy::Bottom
+        } else {
+            ScrollStrategy::Top
+        };
+        self.selected_index = clamped;
+        self.scroll_handle.scroll_to_item(self.selected_index, strategy);
+        self.refresh_visual_marks();
+        self.request_preview_update(cx);
+        cx.notify();
+        self.notify_workspace_scrolled(cx);
+    }
+
+    /// Apply a `GrammarSelection::Files` to the FM's mark set. We map
+    /// each path back to its index in `entries` and replace the
+    /// marked-set — same shape as `select_all_visible` but driven by
+    /// the trait result rather than a fixed full-range.
+    fn apply_grammar_marks(&mut self, sel: codon_mode::GrammarSelection) {
+        let paths = match sel {
+            codon_mode::GrammarSelection::Files(paths) => paths,
+            _ => return,
+        };
+        if paths.is_empty() {
+            return;
+        }
+        let path_set: std::collections::HashSet<PathBuf> = paths.into_iter().collect();
+        self.visual_anchor = None;
+        self.marked = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| path_set.contains(&e.path).then_some(i))
+            .collect();
+    }
+
     pub(crate) fn handle_cancel(
         &mut self,
         _: &menu::Cancel,
@@ -3844,6 +3979,116 @@ impl SelectionSource for FileManager {
     fn object_kinds(&self) -> &'static [ObjectKind] {
         &[ObjectKind::File, ObjectKind::Dir]
     }
+
+    fn primary_object_kind(&self) -> ObjectKind {
+        ObjectKind::File
+    }
+}
+
+/// `ObjectGrammar` impl — wires `w` / `b` / `mip` / `map` / `%f` (and
+/// the directory variants) on the focused FM pane.
+///
+/// The trait is pure (`&self`): each method computes the next
+/// [`codon_mode::GrammarSelection`] from the current cursor / mark
+/// state. Applying the move — updating `selected_index`, refilling
+/// `marked`, scrolling, kicking off a preview — happens in the
+/// action handlers in [`crate::view`], which call into FM methods
+/// like `navigate_down` / `select_all_visible` after consulting the
+/// trait.
+///
+/// The fm only owns `File` and `Directory` from the
+/// [`codon_mode::GrammarKind`] vocabulary; every other kind falls
+/// through to the trait's `GrammarSelection::Empty` default.
+impl codon_mode::ObjectGrammar for FileManager {
+    fn primary_grammar_kind(&self) -> codon_mode::GrammarKind {
+        codon_mode::GrammarKind::File
+    }
+
+    fn next(
+        &self,
+        kind: codon_mode::GrammarKind,
+        _from: &codon_mode::GrammarSelection,
+    ) -> codon_mode::GrammarSelection {
+        if !matches!(
+            kind,
+            codon_mode::GrammarKind::File | codon_mode::GrammarKind::Directory
+        ) {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        if self.entries.is_empty() {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        let next = cmp::min(self.selected_index + 1, self.entries.len() - 1);
+        codon_mode::GrammarSelection::FileIndices(vec![next])
+    }
+
+    fn prev(
+        &self,
+        kind: codon_mode::GrammarKind,
+        _from: &codon_mode::GrammarSelection,
+    ) -> codon_mode::GrammarSelection {
+        if !matches!(
+            kind,
+            codon_mode::GrammarKind::File | codon_mode::GrammarKind::Directory
+        ) {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        if self.entries.is_empty() {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        let prev = self.selected_index.saturating_sub(1);
+        codon_mode::GrammarSelection::FileIndices(vec![prev])
+    }
+
+    fn inner_container(
+        &self,
+        of: codon_mode::GrammarKind,
+        _from: &codon_mode::GrammarSelection,
+    ) -> codon_mode::GrammarSelection {
+        if !matches!(
+            of,
+            codon_mode::GrammarKind::File | codon_mode::GrammarKind::Directory
+        ) {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        let paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+        if paths.is_empty() {
+            codon_mode::GrammarSelection::Empty
+        } else {
+            codon_mode::GrammarSelection::Files(paths)
+        }
+    }
+
+    fn around_container(
+        &self,
+        of: codon_mode::GrammarKind,
+        _from: &codon_mode::GrammarSelection,
+    ) -> codon_mode::GrammarSelection {
+        if !matches!(
+            of,
+            codon_mode::GrammarKind::File | codon_mode::GrammarKind::Directory
+        ) {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        let mut paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+        paths.insert(0, self.current_dir.clone());
+        codon_mode::GrammarSelection::Files(paths)
+    }
+
+    fn select_all(&self, kind: codon_mode::GrammarKind) -> codon_mode::GrammarSelection {
+        if !matches!(
+            kind,
+            codon_mode::GrammarKind::File | codon_mode::GrammarKind::Directory
+        ) {
+            return codon_mode::GrammarSelection::Empty;
+        }
+        let paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+        if paths.is_empty() {
+            codon_mode::GrammarSelection::Empty
+        } else {
+            codon_mode::GrammarSelection::Files(paths)
+        }
+    }
 }
 
 fn is_subsequence(needle: &[char], haystack: &str) -> bool {
@@ -5106,6 +5351,201 @@ mod tests {
             }
         }
         dir
+    }
+
+    /// Pure shadow of [`FileManager`]'s `ObjectGrammar` impl, exposed
+    /// for testing without a `Window` / `Context`. Mirrors the trait
+    /// methods 1:1; the real impl on `FileManager` reads the same
+    /// three fields (`entries`, `selected_index`, `current_dir`) so a
+    /// regression here is a regression there.
+    struct GrammarShadow<'a> {
+        entries: &'a [DirEntry],
+        selected_index: usize,
+        current_dir: PathBuf,
+    }
+
+    impl<'a> GrammarShadow<'a> {
+        fn next(&self) -> codon_mode::GrammarSelection {
+            if self.entries.is_empty() {
+                return codon_mode::GrammarSelection::Empty;
+            }
+            let next = cmp::min(self.selected_index + 1, self.entries.len() - 1);
+            codon_mode::GrammarSelection::FileIndices(vec![next])
+        }
+
+        fn prev(&self) -> codon_mode::GrammarSelection {
+            if self.entries.is_empty() {
+                return codon_mode::GrammarSelection::Empty;
+            }
+            codon_mode::GrammarSelection::FileIndices(vec![self.selected_index.saturating_sub(1)])
+        }
+
+        fn inner_container(&self) -> codon_mode::GrammarSelection {
+            let paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+            if paths.is_empty() {
+                codon_mode::GrammarSelection::Empty
+            } else {
+                codon_mode::GrammarSelection::Files(paths)
+            }
+        }
+
+        fn around_container(&self) -> codon_mode::GrammarSelection {
+            let mut paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+            paths.insert(0, self.current_dir.clone());
+            codon_mode::GrammarSelection::Files(paths)
+        }
+
+        fn select_all(&self) -> codon_mode::GrammarSelection {
+            let paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+            if paths.is_empty() {
+                codon_mode::GrammarSelection::Empty
+            } else {
+                codon_mode::GrammarSelection::Files(paths)
+            }
+        }
+    }
+
+    fn synth_entries(dir: &std::path::Path, names: &[&str]) -> Vec<DirEntry> {
+        names
+            .iter()
+            .map(|name| DirEntry {
+                name: (*name).to_string(),
+                path: dir.join(name),
+                is_dir: false,
+                is_hidden: name.starts_with('.'),
+                is_symlink: false,
+                size: 0,
+                git_status: None,
+                mtime: None,
+                btime: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                child_count: None,
+                labels: EntryLabels::default(),
+                icon_path: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn object_grammar_fm_next_advances_and_saturates_at_end() {
+        let root = PathBuf::from("/tmp/fm-test");
+        let entries = synth_entries(&root, &["a", "b", "c"]);
+        // From index 0 → 1.
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 0,
+            current_dir: root.clone(),
+        };
+        match shadow.next() {
+            codon_mode::GrammarSelection::FileIndices(v) => assert_eq!(v, vec![1]),
+            _ => panic!("expected FileIndices"),
+        }
+        // From index 2 (last) → saturates at 2.
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 2,
+            current_dir: root.clone(),
+        };
+        match shadow.next() {
+            codon_mode::GrammarSelection::FileIndices(v) => assert_eq!(v, vec![2]),
+            _ => panic!("expected FileIndices"),
+        }
+        // From index 1 → prev = 0.
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 1,
+            current_dir: root.clone(),
+        };
+        match shadow.prev() {
+            codon_mode::GrammarSelection::FileIndices(v) => assert_eq!(v, vec![0]),
+            _ => panic!("expected FileIndices"),
+        }
+        // From index 0 → prev = 0 (saturate).
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 0,
+            current_dir: root.clone(),
+        };
+        match shadow.prev() {
+            codon_mode::GrammarSelection::FileIndices(v) => assert_eq!(v, vec![0]),
+            _ => panic!("expected FileIndices"),
+        }
+    }
+
+    #[test]
+    fn object_grammar_fm_inner_returns_all_entries() {
+        let root = PathBuf::from("/tmp/fm-inner");
+        let entries = synth_entries(&root, &["a", "b"]);
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 0,
+            current_dir: root.clone(),
+        };
+        match shadow.inner_container() {
+            codon_mode::GrammarSelection::Files(paths) => {
+                assert_eq!(paths, vec![root.join("a"), root.join("b")]);
+            }
+            _ => panic!("expected Files"),
+        }
+    }
+
+    #[test]
+    fn object_grammar_fm_around_prepends_current_dir() {
+        let root = PathBuf::from("/tmp/fm-around");
+        let entries = synth_entries(&root, &["x"]);
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 0,
+            current_dir: root.clone(),
+        };
+        match shadow.around_container() {
+            codon_mode::GrammarSelection::Files(paths) => {
+                assert_eq!(paths, vec![root.clone(), root.join("x")]);
+            }
+            _ => panic!("expected Files"),
+        }
+    }
+
+    #[test]
+    fn object_grammar_fm_select_all_returns_every_visible_path() {
+        let root = PathBuf::from("/tmp/fm-all");
+        let entries = synth_entries(&root, &["one", "two", "three"]);
+        let shadow = GrammarShadow {
+            entries: &entries,
+            selected_index: 0,
+            current_dir: root.clone(),
+        };
+        match shadow.select_all() {
+            codon_mode::GrammarSelection::Files(paths) => {
+                assert_eq!(
+                    paths,
+                    vec![root.join("one"), root.join("two"), root.join("three")]
+                );
+            }
+            _ => panic!("expected Files"),
+        }
+    }
+
+    #[test]
+    fn object_grammar_fm_next_on_empty_returns_empty() {
+        let root = PathBuf::from("/tmp/fm-empty");
+        let shadow = GrammarShadow {
+            entries: &[],
+            selected_index: 0,
+            current_dir: root,
+        };
+        assert!(matches!(shadow.next(), codon_mode::GrammarSelection::Empty));
+        assert!(matches!(shadow.prev(), codon_mode::GrammarSelection::Empty));
+        assert!(matches!(
+            shadow.select_all(),
+            codon_mode::GrammarSelection::Empty
+        ));
+        assert!(matches!(
+            shadow.inner_container(),
+            codon_mode::GrammarSelection::Empty
+        ));
     }
 
     #[test]

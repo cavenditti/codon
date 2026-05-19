@@ -320,6 +320,19 @@ const DEFAULT_KEYMAP: &str = r#"
 # in the cheatsheet and lets users rebind it from `codon.toml`.
 "shift-o" = "file_manager::ChooseOpener"
 
+# Phase-19 object-grammar verbs. The fm is the proof-of-concept pane
+# implementation — `w` / `b` cursor-step over files; `mip` / `map` mark
+# the whole containing directory; `%f` marks every visible row. See
+# `crates/codon-pane-bridge/src/object_grammar.rs` for the trait and
+# `REQ:codon/object-grammar` for the cross-pane design. Other pane
+# kinds opt in by implementing `ObjectGrammar` + wiring their own
+# `on_action` handlers (follow-up tasks).
+"w"     = "codon_panes::ObjectNext"
+"b"     = "codon_panes::ObjectPrev"
+"m i p" = "codon_panes::InnerContainer(\"file\")"
+"m a p" = "codon_panes::AroundContainer(\"file\")"
+"% f"   = "codon_panes::SelectAll(\"file\")"
+
 [bindings.editor.normal]
 ":" = "codon_command_palette::Toggle"
 

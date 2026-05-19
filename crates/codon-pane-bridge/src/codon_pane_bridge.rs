@@ -27,6 +27,13 @@
 //! See `REQ:codon/code-quality#c-mode-dispatch-hook` and
 //! `TASK:phase-14/mode-bridge-trait` for the rationale.
 
+pub mod object_grammar;
+
+pub use object_grammar::{
+    AroundContainer, DiagnosticRef, GrammarKind, GrammarSelection, InnerContainer, ObjectGrammar,
+    ObjectNext, ObjectPrev, SelectAll,
+};
+
 use gpui::{App, BorrowAppContext, Focusable, Global, SharedString, actions};
 
 /// The three-state mode the status bar reports about the focused
