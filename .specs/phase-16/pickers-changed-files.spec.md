@@ -9,7 +9,7 @@ summary: >
   with non-`Unmodified` state). Confirming a row opens the file
   at its first changed hunk. Bound to `prefix p g`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/helix-pickers#c-changed-files-picker
 ---
