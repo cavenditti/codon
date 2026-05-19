@@ -1143,7 +1143,15 @@ impl FileManager {
 
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
+            let prev = self.selected_index;
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
+            // Tell the custom-render column that only these two
+            // rows changed visually — composes with the row-glyph
+            // cache (REQ:codon/fm-render#c-dirty-rect-repaint).
+            crate::render::column::FmColumnElement::mark_rows_dirty(
+                &self.custom_dirty_current,
+                &[prev, self.selected_index],
+            );
             self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.refresh_visual_marks();
             self.request_preview_update(cx);
@@ -1153,7 +1161,12 @@ impl FileManager {
     }
 
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
+        let prev = self.selected_index;
         self.selected_index = self.selected_index.saturating_sub(1);
+        crate::render::column::FmColumnElement::mark_rows_dirty(
+            &self.custom_dirty_current,
+            &[prev, self.selected_index],
+        );
         self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.refresh_visual_marks();
         self.request_preview_update(cx);
@@ -1245,6 +1258,19 @@ impl FileManager {
                 self.selected_index = 0;
                 self.entries = children;
                 self.parent_entries = new_parent_entries;
+                // Directory rotation: every visible row's payload
+                // is stale (different path set). Mark all three
+                // custom-render columns dirty so the row-glyph
+                // cache rebuilds on the next paint.
+                crate::render::column::FmColumnElement::mark_all_dirty(
+                    &self.custom_dirty_parent,
+                );
+                crate::render::column::FmColumnElement::mark_all_dirty(
+                    &self.custom_dirty_current,
+                );
+                crate::render::column::FmColumnElement::mark_all_dirty(
+                    &self.custom_dirty_preview,
+                );
                 self.spawn_git_status_fill(cx);
                 self.ensure_visible();
                 self.spawn_child_count_fill(cx);

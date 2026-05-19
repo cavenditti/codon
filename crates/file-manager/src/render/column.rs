@@ -90,20 +90,33 @@ pub(crate) struct FmColumnElement {
     pub dimmed: bool,
 }
 
-/// Hint set populated by `mark_rows_dirty`. Semantics are advisory —
-/// the column may still issue a full repaint when GPUI's scene
-/// composition requires it. The shape is a small `Vec` rather than
-/// a `HashSet` because the typical caller passes 1-2 indices.
+/// Hint set populated by `mark_rows_dirty` / `mark_all_dirty`.
+///
+/// `indices` are the row positions whose cached payload must be
+/// rebuilt on the next paint — typically the previous + new
+/// selection on a `j` / `k` move. `all` is the "everything is
+/// stale" override (e.g. theme change, directory rotation).
+///
+/// Investigation note for `fm-render-dirty-rect`: GPUI's
+/// `Scene::replay` (`vendor/zed/crates/gpui/src/scene.rs:127`) can
+/// only replay an entire range of the previous scene's
+/// `paint_operations`; there's no public API to combine a partial
+/// replay with new contributions inside a custom `Element::paint`
+/// (Path A in the spec). The reachable shape today is Path B:
+/// emit a full scene each frame, but make the row-glyph cache the
+/// authority for the per-row payload so non-dirty rows are
+/// O(1) lookups while dirty rows pay the full prepaint cost.
 #[derive(Default, Debug)]
 pub(crate) struct DirtyRows {
     pub indices: Vec<usize>,
+    pub all: bool,
 }
 
 impl FmColumnElement {
-    /// Hint that only the listed rows changed since the last paint.
-    /// Wired by `fm-render-dirty-rect`; before that lands, the
-    /// column treats every paint as a full repaint.
-    #[allow(dead_code)]
+    /// Hint that the listed rows' cached payloads are stale and
+    /// must be rebuilt on the next paint. The typical caller is
+    /// the FM view's `j` / `k` selection move, which passes
+    /// `&[prev_selection, new_selection]`.
     pub fn mark_rows_dirty(dirty: &Rc<RefCell<DirtyRows>>, indices: &[usize]) {
         let mut state = dirty.borrow_mut();
         for &i in indices {
@@ -111,6 +124,16 @@ impl FmColumnElement {
                 state.indices.push(i);
             }
         }
+    }
+
+    /// Hint that every row's cached payload is stale — used on
+    /// theme change, directory rotation, and mark-set changes
+    /// (since the mark-set flips bg colours across many rows at
+    /// once, an all-clear is cheaper than enumerating).
+    pub fn mark_all_dirty(dirty: &Rc<RefCell<DirtyRows>>) {
+        let mut state = dirty.borrow_mut();
+        state.all = true;
+        state.indices.clear();
     }
 
     fn first_last_visible(&self, bounds: Bounds<Pixels>) -> (usize, usize) {
@@ -204,6 +227,23 @@ impl Element for FmColumnElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
+        // Consume the dirty-rows hint up front so the next frame
+        // starts clean unless the view re-marks. `all` clears the
+        // row-glyph cache wholesale; individual dirty indices are
+        // collected into a `HashSet` and used to bypass the cache
+        // per-row below.
+        let (dirty_all, dirty_set) = {
+            let mut state = self.dirty_rows.borrow_mut();
+            let all = state.all;
+            state.all = false;
+            let set: std::collections::HashSet<usize> =
+                std::mem::take(&mut state.indices).into_iter().collect();
+            (all, set)
+        };
+        if dirty_all {
+            self.row_glyph_cache.borrow_mut().clear();
+        }
+
         let (first, last) = self.first_last_visible(bounds);
         let row_h = self.row_metrics.row_height;
         let mut visible_rows = Vec::with_capacity(last.saturating_sub(first));
@@ -251,7 +291,10 @@ impl Element for FmColumnElement {
                 state,
                 icon_path: icon_path_key,
             };
-            let cached = {
+            let force_rebuild = dirty_set.contains(&i);
+            let cached = if force_rebuild {
+                None
+            } else {
                 let mut cache = self.row_glyph_cache.borrow_mut();
                 cache.get(&key)
             };
@@ -325,24 +368,18 @@ impl Element for FmColumnElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        // Resolve dirty-row hint snapshot, then clear so the next
-        // frame either repopulates or defaults to a full repaint.
-        let dirty = {
-            let mut state = self.dirty_rows.borrow_mut();
-            std::mem::take(&mut state.indices)
-        };
-        let dirty_only = !dirty.is_empty();
-        let dirty_set: std::collections::HashSet<usize> = dirty.into_iter().collect();
-
         let visible_rows = std::mem::take(&mut prepaint.visible_rows);
         let mut painted = 0u64;
+        // Path B (per the spec's investigation note): GPUI's
+        // `Scene::replay` can only replay an entire range of a
+        // previous scene's `paint_operations`, with no public API
+        // to mix partial replay with new contributions inside a
+        // custom `Element::paint`. So every visible row paints
+        // each frame — but the row-glyph cache makes non-dirty
+        // rows an O(1) lookup. Dirty rows pay the prepaint cost
+        // (handled upstream in `prepaint`); paint itself is
+        // uniform.
         for (row_bounds, mut row, lite, payload) in visible_rows {
-            if dirty_only && !dirty_set.contains(&row.row_index) {
-                continue;
-            }
-            // Hand the cached payload to the row's inline paint —
-            // no re-shape, no run construction, no colour
-            // resolution. A pure translation + scene insert.
             let mut prepaint_row = RowInlinePrepaint {
                 name_line: payload.name_line.clone(),
                 meta_line: payload.meta_line.clone(),

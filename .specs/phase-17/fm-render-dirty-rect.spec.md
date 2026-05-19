@@ -11,7 +11,7 @@ summary: >
   the row-glyph cache. Expose `mark_rows_dirty(&[usize])` on the
   column Element.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-render#c-dirty-rect-repaint
 aspects: [partial-repaint, scene-replay, dirty-set]
