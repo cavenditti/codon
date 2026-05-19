@@ -10,7 +10,7 @@ summary: >
   Foundation task — heuristic detection, navigation, and
   cross-pane verbs ride on top in follow-up tasks.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/terminal-blocks#c-block-object
   - REQ:codon/terminal-blocks#c-osc-133-parser
