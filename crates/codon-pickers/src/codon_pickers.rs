@@ -12,7 +12,7 @@ pub use dir_picker::{
     DirPickerDelegate, DirPickerModal, DirSelected, FilesSelected, ToggleMark,
 };
 pub use jumplist::JumplistPicker;
-pub use last_picker::{record_dismissed, take_query_for};
+pub use last_picker::{LastPicker, record_dismissed, take_query_for};
 pub use scaffold::{ModalModeTag, ModalScaffold};
 
 use gpui::App;
@@ -22,4 +22,5 @@ pub fn init(cx: &mut App) {
     open_rewire::init(cx);
     changed_files::init(cx);
     jumplist::init(cx);
+    last_picker::init(cx);
 }

@@ -8,7 +8,7 @@ summary: >
   singleton and add a `codon_pickers::LastPicker` action that
   reopens it with the prior query intact. Bound to `prefix p '`.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/helix-pickers#c-last-picker
 ---

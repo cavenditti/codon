@@ -278,12 +278,13 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix p d"       = "diagnostics::Deploy"
 "prefix p shift-d" = "diagnostics::Deploy"
 "prefix p r"       = "projects::OpenRecent"
-# Codon-owned pickers (Phase 16). `g` / `j` mirror Helix's `space g`
-# / `space j` — fuzzy-match over `git status` or over the active
-# pane's jumplist + workspace pane history. Companion binding
-# `prefix p '` (reopen last picker) lands in the follow-up task.
+# Codon-owned pickers (Phase 16). `g` / `j` / `'` mirror Helix's
+# `space g` / `space j` / `space '`. The actions are registered by
+# `codon-pickers`; the singleton stash backing `LastPicker` lives in
+# `codon_pickers::last_picker`.
 "prefix p g" = "codon_pickers::ChangedFilesPicker"
 "prefix p j" = "codon_pickers::JumplistPicker"
+"prefix p '" = "codon_pickers::LastPicker"
 
 # Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
 # covers every visible word / URL / clickable; the URL-only variant

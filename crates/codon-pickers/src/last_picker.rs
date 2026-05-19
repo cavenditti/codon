@@ -1,10 +1,12 @@
-//! Last-picker singleton — record/take API.
+//! Last-picker singleton — `codon_pickers::LastPicker`.
 //!
 //! Helix's `space '` reopens the most recently dismissed picker with its
-//! prior query intact. This file ships the *recording* half so codon-owned
-//! pickers can stash their dismissed state from
-//! `PickerDelegate::dismissed`. The `LastPicker` reopen action that
-//! consumes the singleton lands in `TASK:phase-16/pickers-last-picker`.
+//! prior query intact. Codon-owned pickers stash their dismissed state
+//! into the singleton via [`record_dismissed`] from their
+//! `PickerDelegate::dismissed` impl; the [`LastPicker`] action reads the
+//! singleton and dispatches the recorded action through the focused
+//! window, which lets the picker's toggle handler seed its own query
+//! via [`take_query_for`].
 //!
 //! Scope (matches the spec):
 //!
@@ -23,8 +25,18 @@
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Global, SharedString};
+use gpui::{App, Context, Global, SharedString, Window, actions};
 use parking_lot::Mutex;
+use workspace::Workspace;
+
+actions!(
+    codon_pickers,
+    [
+        /// Reopen the most recently dismissed codon picker with the
+        /// previous query restored.
+        LastPicker,
+    ]
+);
 
 /// Stash of the last codon picker that closed.
 ///
@@ -80,6 +92,43 @@ pub fn take_query_for(cx: &mut App, action_name: &str) -> Option<SharedString> {
     }
     let query = std::mem::take(&mut guard.query);
     if query.is_empty() { None } else { Some(query) }
+}
+
+/// Read the action name + query verbatim without clearing. The
+/// `LastPicker` reopen handler uses this to look up which picker
+/// action to dispatch; the picker's own toggle handler then calls
+/// [`take_query_for`] to actually consume the query.
+fn recorded_action_name(cx: &mut App) -> Option<SharedString> {
+    let state = store(cx);
+    let guard = state.lock();
+    guard.action_name.clone()
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(handle_reopen);
+    })
+    .detach();
+}
+
+fn handle_reopen(
+    _workspace: &mut Workspace,
+    _: &LastPicker,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(action_name) = recorded_action_name(cx) else {
+        return;
+    };
+    // GPUI looks up actions by their qualified name (e.g.
+    // `codon_pickers::JumplistPicker`). `build_action` returns the
+    // typed `Box<dyn Action>` ready for dispatch. Unknown names — i.e.
+    // a picker that recorded a name but never registered an action —
+    // fall through to a no-op rather than panicking.
+    let Ok(action) = cx.build_action(&action_name, None) else {
+        return;
+    };
+    window.dispatch_action(action, cx);
 }
 
 #[cfg(test)]
