@@ -11,7 +11,7 @@ summary: >
   FM redraw cycle must measure ≤ 5 ms / frame at p95, ≤ 3 ms
   typical with cache hits.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/fm-render#c-frame-budget-harness
 aspects: [instrumentation, render-trace, acceptance-gate]
