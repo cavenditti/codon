@@ -69,7 +69,23 @@ actions!(
         /// codon-session window, then replacing the center with an empty
         /// pane. Never closes the OS window — that's reserved for
         /// `cmd-shift-w` / `cmd-shift-q`.
+        ///
+        /// Renamed from `SafeCloseActiveItem` in phase 20 — see
+        /// REQ:codon/keymap-vocabulary#c-verb-collapse-close. The
+        /// previous name remains registered as a deprecated alias
+        /// (`SafeCloseActiveItem` below) for one release cycle so
+        /// existing `~/.config/codon/codon.toml` overrides keep parsing;
+        /// new defaults bind `codon_session::Close` everywhere.
+        Close,
+        /// Deprecated alias for [`Close`] — kept for one release cycle
+        /// so user keymap overrides that still reference the old name
+        /// keep parsing. Re-uses the same dispatch path.
         SafeCloseActiveItem,
+        /// Bypass the close cascade and just close the active item.
+        /// Unbound by default — exists only for the rare case where a
+        /// user wants the raw `pane::CloseActiveItem` semantics without
+        /// the codon item → pane → window → empty-pane fall-through.
+        CloseForce,
         /// Hold-to-quit guard for `cmd-q`. Single tap shows a toast asking
         /// the user to hold; continued auto-repeat invocations over ~1.5s
         /// dispatch `zed::Quit`. Releasing before the threshold leaves the
@@ -168,7 +184,9 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_window_rename);
     workspace.register_action(handle_break_pane_to_window);
     workspace.register_action(handle_move_pane_to_window);
+    workspace.register_action(handle_close);
     workspace.register_action(handle_safe_close_active_item);
+    workspace.register_action(handle_close_force);
     workspace.register_action(handle_hold_quit);
     workspace.register_action(handle_resize_pane_left);
     workspace.register_action(handle_resize_pane_down);
@@ -811,12 +829,59 @@ fn registry_window_count(cx: &gpui::App, active_id: crate::session::SessionId) -
         .unwrap_or(0)
 }
 
+/// Bypass the close cascade — just close the active item using Zed's
+/// raw `pane::CloseActiveItem`. Wired for the optional
+/// `codon_session::CloseForce` action; not bound by default. See
+/// REQ:codon/keymap-vocabulary#c-verb-collapse-close.
+fn handle_close_force(
+    workspace: &mut Workspace,
+    _: &CloseForce,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let active_pane = workspace.active_pane().clone();
+    active_pane.update(cx, |pane, cx| {
+        pane.close_active_item(
+            &CloseActiveItem {
+                save_intent: None,
+                close_pinned: false,
+            },
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
+    });
+}
+
+/// `codon_session::Close` handler — the phase-20 rename of the close
+/// cascade verb. Delegates to the shared implementation so the
+/// deprecated `SafeCloseActiveItem` alias keeps the same semantics.
+fn handle_close(
+    workspace: &mut Workspace,
+    _: &Close,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    close_cascade(workspace, window, cx);
+}
+
 /// Close the active item, falling back through increasingly broad scopes —
 /// pane, codon-session window, then an empty-pane reset — so the OS window
 /// never disappears as a side effect of a close-tab keystroke.
 fn handle_safe_close_active_item(
     workspace: &mut Workspace,
     _: &SafeCloseActiveItem,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    log::info!(
+        "codon_session::SafeCloseActiveItem is deprecated; rebind to codon_session::Close"
+    );
+    close_cascade(workspace, window, cx);
+}
+
+fn close_cascade(
+    workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {

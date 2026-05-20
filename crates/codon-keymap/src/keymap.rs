@@ -1,4 +1,5 @@
-use gpui::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate};
+use codon_pane_bridge::CodonGlanceTable;
+use gpui::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate, SharedString};
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
@@ -46,6 +47,49 @@ struct CodonKeymap {
     bindings: KeymapBindings,
     #[serde(default)]
     keymap: KeymapTopLevel,
+    #[serde(default)]
+    glance: GlanceTable,
+}
+
+/// `[glance.<pane>.<mode>]` table — curated 3–5-verb hints surfaced by
+/// the status-bar mode indicator on every pane focus / mode transition
+/// (REQ:codon/discoverability#c-status-bar-mode-glance).
+///
+/// Shape:
+/// ```toml
+/// [glance.editor.normal]
+/// verbs = ["d (delete)", "c (change)", "y (yank)", "s (select)", "?"]
+/// ```
+///
+/// Each pane carries optional `normal` / `insert` sub-tables; absent
+/// pairs render no glance. An explicit empty `verbs = []` is the
+/// user-visible escape hatch for "hide the glance here".
+#[derive(Debug, Deserialize, Default, Clone)]
+struct GlanceTable {
+    #[serde(default)]
+    editor: Option<GlancePane>,
+    #[serde(default)]
+    terminal: Option<GlancePane>,
+    #[serde(default)]
+    file_manager: Option<GlancePane>,
+    #[serde(default)]
+    git_panel: Option<GlancePane>,
+    #[serde(default)]
+    peek_dock: Option<GlancePane>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+struct GlancePane {
+    #[serde(default)]
+    normal: Option<GlanceVerbs>,
+    #[serde(default)]
+    insert: Option<GlanceVerbs>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+struct GlanceVerbs {
+    #[serde(default)]
+    verbs: Vec<String>,
 }
 
 /// Top-level `[keymap]` table in `codon.toml`. Currently carries
@@ -67,8 +111,12 @@ const DEFAULT_PREFIX: &str = "cmd-k";
 
 #[derive(Debug, Deserialize, Default)]
 struct KeymapBindings {
+    /// `[bindings.global]` — chords with no pane-mode predicate; fire
+    /// anywhere (including modal contexts that don't publish a
+    /// `pane_mode`). Bare keystrokes plus the nested `[bindings.global.normal]`
+    /// table live here; the loader splits them in `add_global_bindings`.
     #[serde(default)]
-    global: HashMap<String, String>,
+    global: GlobalTable,
     #[serde(default)]
     editor: Option<ModeBindings>,
     #[serde(default)]
@@ -79,6 +127,51 @@ struct KeymapBindings {
     git_panel: Option<ModeBindings>,
     #[serde(default)]
     peek_dock: Option<ModeBindings>,
+}
+
+/// `[bindings.global]` table. Bare chord entries live in `flat`;
+/// `[bindings.global.normal]` lands in `normal` and compiles to the
+/// union Normal-mode predicate so a single chord covers every pane
+/// kind's Normal mode (editor's vim/helix Normal + every codon
+/// `pane_mode == normal`). See `global_normal_predicate`.
+#[derive(Debug, Default)]
+struct GlobalTable {
+    flat: HashMap<String, String>,
+    normal: HashMap<String, String>,
+}
+
+impl<'de> Deserialize<'de> for GlobalTable {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // TOML lets us mix `key = "value"` rows with nested tables in
+        // the same section. Deserialize as a permissive map, then split
+        // the `normal` sub-table out from the flat entries.
+        let raw: HashMap<String, toml::Value> = HashMap::deserialize(deserializer)?;
+        let mut flat = HashMap::new();
+        let mut normal = HashMap::new();
+        for (k, v) in raw {
+            match v {
+                toml::Value::String(s) => {
+                    flat.insert(k, s);
+                }
+                toml::Value::Table(t) if k == "normal" => {
+                    for (kk, vv) in t {
+                        if let Some(s) = vv.as_str() {
+                            normal.insert(kk, s.to_string());
+                        }
+                    }
+                }
+                _ => {
+                    // Skip unknown shapes (e.g. nested non-normal tables)
+                    // silently; load_codon_keymap surfaces a single warn
+                    // per-keymap parse if the whole table fails.
+                }
+            }
+        }
+        Ok(GlobalTable { flat, normal })
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -140,30 +233,38 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix h" = "workspace::ActivatePaneLeft"
 "prefix k" = "workspace::ActivatePaneUp"
 
-# Pane splitting — contextual on the active pane's current path.
-# `\` and `-` open a terminal; `|` and `_` open a file manager. The
-# new pane is seeded to the active terminal's shell cwd, the active
-# file manager's `current_dir`, or the project's first worktree if
-# the active item exposes no path.
-"prefix \\" = "codon_session::SplitTerminalRight"
-"prefix |"  = "codon_session::SplitFileManagerRight"
-"prefix -"  = "codon_session::SplitTerminalDown"
-"prefix _"  = "codon_session::SplitFileManagerDown"
+# Pane splitting — contextual on the active pane's focus and current
+# path. `\` / `-` open whatever kind the active pane already is
+# (terminal-focused → terminal, fm-focused → fm, editor-focused →
+# editor). `|` / `_` flip the kind in the terminal ↔ file-manager
+# pair (editor focus resolves to terminal). New pane is seeded to the
+# active terminal's shell cwd, the active file manager's `current_dir`,
+# or the project's first worktree if the active item exposes no path.
+"prefix \\" = "codon_session::SplitRight"
+"prefix |"  = "codon_session::SplitRightOther"
+"prefix -"  = "codon_session::SplitDown"
+"prefix _"  = "codon_session::SplitDownOther"
 
-# Pane management
-"prefix t" = "workspace::NewTerminal"
-"prefix e" = "file_manager::Open"
+# Pane management — `prefix t` / `prefix e` mirror `cmd-t` / `cmd-e`
+# (goto-or-open). `prefix shift-t` / `prefix shift-e` are the
+# always-new variants for users who want a fresh pane regardless of
+# whether one already exists.
+"prefix t"       = "codon_session::GotoOrOpenTerminal"
+"prefix e"       = "codon_session::GotoOrOpenFileManager"
+"prefix shift-t" = "workspace::NewTerminal"
+"prefix shift-e" = "file_manager::OpenNew"
 
 # Goto-or-open: single chord lands on the most-recently-active pane of
 # the requested kind, or opens one in the active pane if none exists.
 "cmd-t"       = "codon_session::GotoOrOpenTerminal"
 "cmd-e"       = "codon_session::GotoOrOpenFileManager"
 "cmd-shift-e" = "codon_session::GotoOrOpenEditor"
-# Both cmd-w and cmd-k w fall through codon's safe close cascade (close
-# item -> close pane -> close session window -> empty pane). The OS
-# window is only ever closed by cmd-shift-w or cmd-shift-q.
-"cmd-w"   = "codon_session::SafeCloseActiveItem"
-"prefix w" = "codon_session::SafeCloseActiveItem"
+# `cmd-w` is the single user-facing close verb across pane kinds.
+# Falls through codon's safe close cascade (close item -> close pane
+# -> close session window -> empty pane). The OS window is only ever
+# closed by `cmd-shift-w` or `cmd-shift-q`. The previous `prefix w`
+# close binding is gone — `prefix w` is now the windows sub-prefix.
+"cmd-w"   = "codon_session::Close"
 
 # Hold cmd-q to quit (Chrome-style). cmd-shift-q is the unconditional
 # escape hatch — keep it on hand the first time a process is wedged.
@@ -176,23 +277,26 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix s o" = "codon_session::SessionOverview"
 "prefix s c" = "codon_session::SessionClose"
 
-# Windows (cmd-k W prefix — capital W, lowercase w is "close active item")
-"prefix shift-w n" = "codon_session::WindowNew"
-"prefix shift-w l" = "codon_session::WindowNext"
-"prefix shift-w h" = "codon_session::WindowPrev"
-"prefix shift-w shift-l" = "codon_session::WindowLast"
-"prefix shift-w c" = "codon_session::WindowClose"
-"prefix shift-w w" = "codon_session::WindowSwitch"
-"prefix shift-w o" = "codon_session::WindowOverview"
-"prefix shift-w r" = "codon_session::WindowRename"
-"prefix shift-w !" = "codon_session::BreakPaneToWindow"
+# Windows (`prefix w …` sub-prefix). The single chord `prefix shift-w`
+# opens the window overview directly; the discoverable menu lives
+# under `prefix w …`.
+"prefix shift-w" = "codon_session::WindowOverview"
+"prefix w n"         = "codon_session::WindowNew"
+"prefix w l"         = "codon_session::WindowNext"
+"prefix w h"         = "codon_session::WindowPrev"
+"prefix w shift-l"   = "codon_session::WindowLast"
+"prefix w c"         = "codon_session::WindowClose"
+"prefix w w"         = "codon_session::WindowSwitch"
+"prefix w r"         = "codon_session::WindowRename"
+"prefix w !"         = "codon_session::BreakPaneToWindow"
 
-# 2-key motion (muscle-memory path, mirrors tmux prefix n/p/l). The 3-key
-# `cmd-k shift-w …` chords above remain the discoverable "windows menu"
-# entry point for users browsing the cheatsheet.
+# 2-key motion (muscle-memory path, mirrors tmux prefix n/p). `prefix l`
+# (the WindowLast bare-leaf) was dropped per
+# REQ:codon/keymap-vocabulary#c-chord-window-nav-leaves — WindowLast
+# remains reachable via `prefix w shift-l`. The 3-key `prefix w …`
+# chords above are the discoverable "windows menu" entry point.
 "prefix n" = "codon_session::WindowNext"
 "prefix p" = "codon_session::WindowPrev"
-"prefix l" = "codon_session::WindowLast"
 "prefix r" = "codon_session::WindowRename"
 "prefix !" = "codon_session::BreakPaneToWindow"
 
@@ -263,28 +367,12 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix d d" = "codon_session::DiffOpen"
 "prefix d g" = "diagnostics::Deploy"
 
-# Pickers (`prefix p` prefix — Helix space-mode mirror).
-# `p` is the codon mnemonic for "pickers"; the global chord namespace
-# makes these reachable from terminal / file-manager panes too, not just
-# editors. The letter map matches Helix's `space <letter>` pickers
-# (space f / b / s / S / d / D / r). The 2-key `prefix p` leaf above
-# (WindowPrev) is shadowed by these chords once the next key arrives,
-# mirroring the same `prefix a/g/o/d` leaf-plus-chord pattern used by
-# the panes-from-panels section.
-"prefix p f"       = "file_finder::Toggle"
-"prefix p b"       = "tab_switcher::Toggle"
-"prefix p s"       = "outline::Toggle"
-"prefix p shift-s" = "project_symbols::Toggle"
-"prefix p d"       = "diagnostics::Deploy"
-"prefix p shift-d" = "diagnostics::Deploy"
-"prefix p r"       = "projects::OpenRecent"
-# Codon-owned pickers (Phase 16). `g` / `j` / `'` mirror Helix's
-# `space g` / `space j` / `space '`. The actions are registered by
-# `codon-pickers`; the singleton stash backing `LastPicker` lives in
-# `codon_pickers::last_picker`.
-"prefix p g" = "codon_pickers::ChangedFilesPicker"
-"prefix p j" = "codon_pickers::JumplistPicker"
-"prefix p '" = "codon_pickers::LastPicker"
+# Pickers live under the global `space`-leader flow below
+# (`[bindings.global.normal]`), so they fire from every pane kind whose
+# Normal mode is published — terminal, file-manager, git-panel, editor.
+# The previous `prefix p X` chain was removed in phase 20; the bare
+# `prefix p` leaf above (WindowPrev) stays as the tmux muscle-memory
+# path.
 
 # Jump-hint overlay (Vimium-style two-keystroke targeting). `cmd-k j`
 # covers every visible word / URL / clickable; the URL-only variant
@@ -308,6 +396,36 @@ const DEFAULT_KEYMAP: &str = r#"
 # Command palette
 "cmd-shift-p" = "codon_command_palette::Toggle"
 
+# Action-history picker — `prefix ;` opens a fuzzy picker over the
+# last ~10 non-motion actions; arrow-keys + enter re-fires the
+# highlighted one against the currently focused pane. The 1-key
+# repeat `.` lives in `[bindings.global.normal]` below so it fires
+# in every pane kind whose Normal mode is published.
+"prefix ;" = "codon_history::HistoryPicker"
+
+# Global Normal-mode bindings — fire in every pane kind whose Normal
+# mode is published (editor's vim/helix Normal + each codon
+# `pane_mode == normal`). See REQ:codon/keymap-vocabulary#c-leader-pickers.
+[bindings.global.normal]
+# Action-history repeat. Re-fires the last non-motion action against
+# the currently focused pane. The bare `.` chord is freed across
+# every Normal-mode pane by REQ:codon/keymap-vocabulary#c-fm-hidden-rebind
+# (the file-manager toggle-hidden binding moved to `, h`).
+"." = "codon_history::RepeatLast"
+
+# Space-leader pickers. The letter map matches Helix's `space <letter>`
+# pickers (`space f / b / s / S / d / r`) plus the codon-owned
+# `space g / j / '` chords introduced in Phase 16.
+"space f"       = "file_finder::Toggle"
+"space b"       = "tab_switcher::Toggle"
+"space s"       = "outline::Toggle"
+"space shift-s" = "project_symbols::Toggle"
+"space d"       = "diagnostics::Deploy"
+"space r"       = "projects::OpenRecent"
+"space g"       = "codon_pickers::ChangedFilesPicker"
+"space j"       = "codon_pickers::JumplistPicker"
+"space '"       = "codon_pickers::LastPicker"
+
 # `:` in Normal mode opens the codon palette (Helix-style)
 [bindings.terminal.normal]
 ":" = "codon_command_palette::Toggle"
@@ -319,6 +437,13 @@ const DEFAULT_KEYMAP: &str = r#"
 # handling already triggers the picker; this binding keeps `O` visible
 # in the cheatsheet and lets users rebind it from `codon.toml`.
 "shift-o" = "file_manager::ChooseOpener"
+# `, h` toggles the show-hidden flag. Joined the `,` view-options
+# sub-prefix that already hosts the sort chords so the bare `.` chord
+# is free for the global action-history repeat. The fm's raw `,` chord
+# handler routes through `handle_sort_chord` which now dispatches `h`
+# to ToggleHidden. The binding here exists for cheatsheet visibility
+# and to let users rebind from `codon.toml`.
+", h" = "file_manager::ToggleHidden"
 
 # Phase-19 object-grammar verbs. The fm is the proof-of-concept pane
 # implementation — `w` / `b` cursor-step over files; `mip` / `map` mark
@@ -436,24 +561,33 @@ const DEFAULT_KEYMAP: &str = r#"
 "g shift-u"  = "git::UnstageAndNext"
 "g q"        = "vim::PushRewrap"
 
-# Window mode (helix `space w …`).
-"space w v"  = "pane::SplitRight"
-"space w s"  = "pane::SplitDown"
+# Window mode (helix `space w …`). `space w q` rebound to the codon
+# safe-close cascade per REQ:codon/keymap-vocabulary#c-verb-collapse-close
+# so the Helix mirror and `cmd-w` produce identical behaviour.
+# `space w v` / `space w s` route through the contextual split actions
+# so the new pane's kind tracks the active pane's focus.
+"space w v"  = "codon_session::SplitRight"
+"space w s"  = "codon_session::SplitDown"
 "space w h"  = "workspace::ActivatePaneLeft"
 "space w j"  = "workspace::ActivatePaneDown"
 "space w k"  = "workspace::ActivatePaneUp"
 "space w l"  = "workspace::ActivatePaneRight"
-"space w q"  = "pane::CloseActiveItem"
-"space w r"  = "pane::SplitRight"
-"space w d"  = "pane::SplitDown"
+"space w q"  = "codon_session::Close"
+"space w r"  = "codon_session::SplitRight"
+"space w d"  = "codon_session::SplitDown"
 
-# Space mode (helix `space …`).
-"space f"        = "file_finder::Toggle"
+# Space mode (helix `space …`). Picker letters (f / b / s / S / d / r /
+# g / j / ') are bound under `[bindings.global.normal]` below so they
+# fire from every pane Normal mode, not just the editor; the editor-
+# specific chords below are the verbs that need an editor cursor.
+# `space d` (previously `editor::GoToDiagnostic`) is unbound here so
+# the global `space d` picker wins; `]d` / `[d` cover the next/prev-
+# diagnostic motion via Helix's standard `]/[` chord vocabulary.
+# `space r` (previously `editor::Rename`) is unbound here so the
+# global `space r` recent-projects picker wins; LSP rename remains
+# reachable from the code-actions chord (`space a`) and the command
+# palette.
 "space k"        = "editor::Hover"
-"space s"        = "outline::Toggle"
-"space shift-s"  = "project_symbols::Toggle"
-"space d"        = "editor::GoToDiagnostic"
-"space r"        = "editor::Rename"
 "space a"        = "editor::ToggleCodeActions"
 "space h"        = "editor::SelectAllMatches"
 "space c"        = "editor::ToggleComments"
@@ -525,6 +659,23 @@ const DEFAULT_KEYMAP: &str = r#"
 # safe escape hatch.
 [bindings.peek_dock.normal]
 "escape" = "codon_panes::PeekDismiss"
+
+# Status-bar mode glance — curated 3–5-verb hints rendered on every
+# pane focus / mode transition. Decays after ~2 s or the next
+# non-motion keypress. Override per pane × mode in
+# ~/.config/codon/codon.toml; set `verbs = []` to hide the glance for
+# a given pane × mode. See REQ:codon/discoverability#c-status-bar-mode-glance.
+[glance.editor.normal]
+verbs = ["d (delete)", "c (change)", "y (yank)", "s (select)", "?"]
+
+[glance.terminal.normal]
+verbs = ["w (next block)", "b (prev block)", "y (copy)", ":"]
+
+[glance.file_manager.normal]
+verbs = ["j/k (move)", "enter (open)", "y (yank path)", ", h (hidden)", ":"]
+
+[glance.git_panel.normal]
+verbs = ["j/k (move)", "s (stage)", "u (unstage)", "i (msg)", ":"]
 "#;
 
 /// Load Codon keybindings. Called from reload_keymaps so it survives keymap reloads.
@@ -546,6 +697,7 @@ pub fn load_codon_keymap(cx: &mut App) {
     }
     apply_raw_bindings(cx);
     apply_register_prefix_bindings(cx);
+    publish_glance_table(cx);
 
     let Some(codon_dir) = codon_config_dir() else {
         return;
@@ -674,6 +826,96 @@ pub fn codon_default_bindings() -> Vec<CuratedBinding> {
     expand_prefix_in_bindings(parse_keymap(DEFAULT_KEYMAP).unwrap_or_default(), &prefix)
 }
 
+/// Status-bar mode-glance verbs for the given `pane_kind` × `mode`
+/// pair. The keys are the snake-case forms used in the `[glance]`
+/// TOML table — pane kinds are `editor`, `terminal`, `file_manager`,
+/// `git_panel`, `peek_dock`; modes are `normal` and `insert`.
+///
+/// Resolution order matches `load_codon_keymap`:
+///   1. Embedded `DEFAULT_KEYMAP` `[glance.*]` block — the curated
+///      starting point shipped with codon.
+///   2. User `~/.config/codon/codon.toml` (with legacy `keymap.toml`
+///      as a fall-back) — last writer wins, so an explicit empty
+///      `verbs = []` row hides the glance for that pair (the
+///      user-visible escape hatch per the spec).
+///
+/// Returns an empty vec when no entry exists or when the user
+/// explicitly emptied the row.
+pub fn codon_glance_verbs(pane_kind: &str, mode: &str) -> Vec<String> {
+    let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+    for content in glance_sources() {
+        let Ok(parsed) = toml::from_str::<CodonKeymap>(&content) else {
+            continue;
+        };
+        merge_glance(&mut merged, &parsed.glance);
+    }
+    let key = format!("{pane_kind}.{mode}");
+    merged.remove(&key).unwrap_or_default()
+}
+
+/// Source TOML strings consulted by `codon_glance_verbs` and
+/// `publish_glance_table`, ordered embedded-first so user files take
+/// precedence.
+fn glance_sources() -> Vec<String> {
+    let mut sources = vec![DEFAULT_KEYMAP.to_string()];
+    let Some(codon_dir) = codon_config_dir() else {
+        return sources;
+    };
+    for filename in ["codon.toml", "keymap.toml"] {
+        let path = codon_dir.join(filename);
+        if !path.exists() {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            sources.push(content);
+        }
+    }
+    sources
+}
+
+fn merge_glance(acc: &mut HashMap<String, Vec<String>>, table: &GlanceTable) {
+    let pairs = [
+        ("editor", &table.editor),
+        ("terminal", &table.terminal),
+        ("file_manager", &table.file_manager),
+        ("git_panel", &table.git_panel),
+        ("peek_dock", &table.peek_dock),
+    ];
+    for (pane, pane_table) in pairs {
+        let Some(pane_table) = pane_table else {
+            continue;
+        };
+        if let Some(normal) = &pane_table.normal {
+            acc.insert(format!("{pane}.normal"), normal.verbs.clone());
+        }
+        if let Some(insert) = &pane_table.insert {
+            acc.insert(format!("{pane}.insert"), insert.verbs.clone());
+        }
+    }
+}
+
+/// Resolve the merged glance table and publish it to the
+/// `CodonGlanceTable` App global so the status-bar mode indicator
+/// (in `codon-mode`) can read it without a cyclic dep on this crate.
+/// Called from `load_codon_keymap` after bindings are applied.
+fn publish_glance_table(cx: &mut App) {
+    let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+    for content in glance_sources() {
+        let Ok(parsed) = toml::from_str::<CodonKeymap>(&content) else {
+            continue;
+        };
+        merge_glance(&mut merged, &parsed.glance);
+    }
+    let entries = merged
+        .into_iter()
+        .map(|(k, v)| {
+            let verbs: Vec<SharedString> = v.into_iter().map(SharedString::from).collect();
+            (k, verbs)
+        })
+        .collect();
+    cx.set_global(CodonGlanceTable { entries });
+}
+
 /// Curated user overrides — every `[bindings.*]` entry in the user's
 /// `~/.config/codon/codon.toml` (with legacy `keymap.toml` as a fallback),
 /// with the `prefix` sentinel expanded using the user's resolved chord
@@ -705,8 +947,16 @@ fn parse_keymap(content: &str) -> Option<Vec<(String, String, Option<String>)>> 
     let keymap: CodonKeymap = toml::from_str(content).ok()?;
     let mut result = Vec::new();
 
-    for (keystroke, action) in &keymap.bindings.global {
+    for (keystroke, action) in &keymap.bindings.global.flat {
         result.push((keystroke.clone(), action.clone(), None));
+    }
+    let global_normal_pred = global_normal_predicate();
+    for (keystroke, action) in &keymap.bindings.global.normal {
+        result.push((
+            keystroke.clone(),
+            action.clone(),
+            Some(global_normal_pred.clone()),
+        ));
     }
 
     if let Some(editor) = &keymap.bindings.editor {
@@ -740,6 +990,29 @@ fn add_mode_bindings(
     for (keystroke, action) in &modes.insert {
         result.push((keystroke.clone(), action.clone(), Some(insert_pred.clone())));
     }
+}
+
+/// Union of Normal-mode predicates across every pane kind that publishes
+/// one. Used to compile `[bindings.global.normal]` chords so a single
+/// `space f` chord works from a terminal, file-manager, git-panel,
+/// agent / outline / debug pane, or editor without per-pane
+/// duplication. Centralised here so the `space`-leader pickers don't
+/// drift from the rest of the `global.normal` surface.
+fn global_normal_predicate() -> String {
+    let editor = "(Editor && (vim_mode == normal || vim_mode == helix_normal || vim_mode == helix_select))";
+    let panes = [
+        "Terminal",
+        "FileManager",
+        "GitPanel",
+        "AgentPanel",
+        "OutlinePanel",
+        "DebugPanel",
+    ];
+    let mut parts = vec![editor.to_string()];
+    for p in panes {
+        parts.push(format!("({p} && pane_mode == normal)"));
+    }
+    parts.join(" || ")
 }
 
 /// Map a pane-kind name to the codon Normal / Insert key-context predicates.
@@ -1071,6 +1344,50 @@ mod tests {
                 "editor.normal should contain '{expected}'; got {editor_normal_keys:?}"
             );
         }
+    }
+
+    /// The embedded `[glance.*]` table parses and exposes verbs for
+    /// every curated pane × mode pair listed in the spec. Locks in
+    /// the curated starting point so a future trim of DEFAULT_KEYMAP
+    /// doesn't silently zero out the status-bar glance.
+    #[test]
+    fn glance_embedded_defaults_have_verbs() {
+        let parsed: CodonKeymap = toml::from_str(DEFAULT_KEYMAP).expect("DEFAULT_KEYMAP parses");
+        let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+        merge_glance(&mut merged, &parsed.glance);
+        for key in ["editor.normal", "terminal.normal", "file_manager.normal", "git_panel.normal"] {
+            let verbs = merged.get(key).unwrap_or_else(|| panic!("missing glance row for {key}"));
+            assert!(
+                !verbs.is_empty(),
+                "embedded glance row '{key}' should ship with verbs, got empty"
+            );
+            assert!(
+                verbs.len() <= 5,
+                "embedded glance row '{key}' should have at most 5 verbs, got {}",
+                verbs.len()
+            );
+        }
+    }
+
+    /// A user `[glance.editor.normal] verbs = []` overrides the
+    /// embedded default — the escape-hatch contract.
+    #[test]
+    fn glance_user_empty_overrides_default() {
+        let user = r#"
+            [glance.editor.normal]
+            verbs = []
+        "#;
+        let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+        let default: CodonKeymap = toml::from_str(DEFAULT_KEYMAP).expect("DEFAULT_KEYMAP parses");
+        merge_glance(&mut merged, &default.glance);
+        let user_parsed: CodonKeymap = toml::from_str(user).expect("user toml parses");
+        merge_glance(&mut merged, &user_parsed.glance);
+        assert!(
+            merged.get("editor.normal").expect("row exists").is_empty(),
+            "user empty verbs = [] should win and zero the row"
+        );
+        // Unrelated rows untouched by the override.
+        assert!(!merged.get("terminal.normal").expect("row exists").is_empty());
     }
 
     /// An empty `prefix = ""` falls back to the default — guards against

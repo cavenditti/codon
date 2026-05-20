@@ -30,6 +30,13 @@ actions!(
     file_manager,
     [
         Open,
+        /// Always open a fresh file manager in the active pane, even when
+        /// one already exists in the session. Sibling to [`Open`] but skips
+        /// the goto-existing lookup that lives on the `cmd-e` /
+        /// `codon_session::GotoOrOpenFileManager` path. Bound to
+        /// `prefix shift-e` in the embedded defaults — see
+        /// REQ:codon/keymap-vocabulary#c-verb-collapse-open-or-focus.
+        OpenNew,
         NavigateUp,
         NavigateDown,
         EnterDirectory,
@@ -3421,8 +3428,11 @@ impl FileManager {
             "r" if ctrl => { self.invert_marks_visible(cx); true }
             "r" if !shift => { self.rename_entry(window, cx); true }
             "r" if shift => { self.start_bulk_rename(window, cx); true }
-            // Toggles
-            "." if !shift && !ctrl => { self.toggle_hidden(&ToggleHidden, window, cx); true }
+            // Toggles. The bare `.` chord is no longer bound — it's
+            // reserved for the global action-history repeat (see
+            // REQ:codon/keymap-vocabulary#c-fm-hidden-rebind). The
+            // toggle-hidden binding moved to the `,` view-options
+            // sub-prefix (`, h`), handled by `handle_sort_chord`.
             "f" if !shift && !ctrl => { self.start_filter(window, cx); true }
             "/" if !ctrl => { self.start_find_forward(window, cx); true }
             "?" if !ctrl => { self.start_find_backward(window, cx); true }
@@ -3812,7 +3822,7 @@ impl FileManager {
         &mut self,
         key: &str,
         shift: bool,
-        _ctrl: bool,
+        ctrl: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3833,6 +3843,13 @@ impl FileManager {
         }
         if key == "," && !shift {
             self.toggle_sort_reverse(window, cx);
+            return;
+        }
+        // `, h` toggles show-hidden — moved off bare `.` so that chord
+        // is free for the global action-history repeat. See
+        // REQ:codon/keymap-vocabulary#c-fm-hidden-rebind.
+        if key == "h" && !shift && !ctrl {
+            self.toggle_hidden(&ToggleHidden, window, cx);
         }
     }
 
@@ -3941,6 +3958,10 @@ impl codon_mode::PaneModeBridge for FileManager {
         // FM tracks for its own keybinding contexts; the status-bar
         // mode indicator stays on NORMAL while the FM is focused.
         PaneMode::Normal
+    }
+
+    fn pane_kind(&self) -> Option<&'static str> {
+        Some("file_manager")
     }
 }
 
@@ -5337,6 +5358,9 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &Open, window, cx| {
+            open_file_manager(workspace, window, cx);
+        });
+        workspace.register_action(|workspace, _: &OpenNew, window, cx| {
             open_file_manager(workspace, window, cx);
         });
         workspace.register_action(

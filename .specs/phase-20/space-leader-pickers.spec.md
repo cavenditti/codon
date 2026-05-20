@@ -12,7 +12,7 @@ summary: >
   compiles to a union predicate covering Editor (vim/helix normal) +
   every codon `pane_mode == normal` pane.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-leader-pickers
 ---

@@ -10,7 +10,7 @@ summary: >
   Normal-mode pane for the action-history repeat introduced by
   the sibling task.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-fm-hidden-rebind
 blocked_by: []

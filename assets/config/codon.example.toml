@@ -152,18 +152,26 @@ format_on_save = "on"
 "prefix shift-l" = "codon_session::ResizePaneRight"
 
 # Pane splitting (tmux-flavoured)
-"prefix |"  = "pane::SplitRight"
-"prefix -"  = "pane::SplitDown"
-"prefix \\" = "pane::SplitRight"
+# Contextual split — `\` / `-` open whatever kind the active pane is
+# (terminal-focused → terminal, fm-focused → fm, editor-focused →
+# editor); `|` / `_` flip the terminal ↔ file-manager pair. See
+# REQ:codon/keymap-vocabulary#c-verb-collapse-split.
+"prefix \\" = "codon_session::SplitRight"
+"prefix |"  = "codon_session::SplitRightOther"
+"prefix -"  = "codon_session::SplitDown"
+"prefix _"  = "codon_session::SplitDownOther"
 
-# Pane lifecycle. Both cmd-w and prefix w fall through codon's safe
-# close cascade (close item → close pane → close session window →
-# empty pane reset). The OS window is only ever closed via
-# `cmd-shift-w` or `cmd-shift-q`.
-"prefix t" = "workspace::NewTerminal"
-"prefix e" = "file_manager::Open"
-"cmd-w"   = "codon_session::SafeCloseActiveItem"
-"prefix w" = "codon_session::SafeCloseActiveItem"
+# Pane lifecycle. `cmd-w` is the single user-facing close verb,
+# falling through codon's safe close cascade (close item → close pane
+# → close session window → empty pane reset). The OS window is only
+# ever closed via `cmd-shift-w` or `cmd-shift-q`. `prefix t / e` mirror
+# `cmd-t / cmd-e` (goto-or-open); `prefix shift-t / shift-e` are the
+# always-new variants.
+"prefix t"       = "codon_session::GotoOrOpenTerminal"
+"prefix e"       = "codon_session::GotoOrOpenFileManager"
+"prefix shift-t" = "workspace::NewTerminal"
+"prefix shift-e" = "file_manager::OpenNew"
+"cmd-w"          = "codon_session::Close"
 
 # Goto-or-open: single chord lands on the most-recently-active pane of
 # the requested kind, or opens one in the active pane if none exists.
@@ -183,25 +191,25 @@ format_on_save = "on"
 "prefix s s" = "codon_session::SessionSwitch"
 "prefix s c" = "codon_session::SessionClose"
 
-# Windows within a session (`prefix shift-w …` family — capital W;
-# lowercase w is "close active item" above). `ctrl-w` is intentionally
-# left unbound — it's reserved for delete-word in insert mode. The
-# `prefix shift-w …` block is the discoverable "menu" entry point.
-"prefix shift-w n"       = "codon_session::WindowNew"
-"prefix shift-w l"       = "codon_session::WindowNext"
-"prefix shift-w h"       = "codon_session::WindowPrev"
-"prefix shift-w shift-l" = "codon_session::WindowLast"
-"prefix shift-w c"       = "codon_session::WindowClose"
-"prefix shift-w w"       = "codon_session::WindowSwitch"
-"prefix shift-w r"       = "codon_session::WindowRename"
-"prefix shift-w !"       = "codon_session::BreakPaneToWindow"
+# Windows within a session — `prefix w …` is the discoverable menu;
+# `prefix shift-w` opens the window overview as a single chord.
+# `ctrl-w` is intentionally left unbound — reserved for delete-word in
+# insert mode.
+"prefix shift-w"     = "codon_session::WindowOverview"
+"prefix w n"         = "codon_session::WindowNew"
+"prefix w l"         = "codon_session::WindowNext"
+"prefix w h"         = "codon_session::WindowPrev"
+"prefix w shift-l"   = "codon_session::WindowLast"
+"prefix w c"         = "codon_session::WindowClose"
+"prefix w w"         = "codon_session::WindowSwitch"
+"prefix w r"         = "codon_session::WindowRename"
+"prefix w !"         = "codon_session::BreakPaneToWindow"
 
 # 2-key window motion — muscle-memory path that mirrors tmux's
-# `prefix n` / `prefix p` / `prefix l`. The 3-key chords above remain
-# the discoverable menu entry.
+# `prefix n` / `prefix p`. (`prefix l` was dropped in phase 20 — use
+# `prefix w shift-l` for WindowLast.)
 "prefix n" = "codon_session::WindowNext"
 "prefix p" = "codon_session::WindowPrev"
-"prefix l" = "codon_session::WindowLast"
 "prefix r" = "codon_session::WindowRename"
 "prefix !" = "codon_session::BreakPaneToWindow"
 

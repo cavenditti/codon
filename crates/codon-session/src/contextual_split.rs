@@ -38,6 +38,21 @@ actions!(
         /// in the new bottom pane, seeded to the active pane's
         /// current directory.
         SplitFileManagerDown,
+        /// Contextual split-right: the new pane's kind is picked from
+        /// the active pane's focus (terminal → terminal, fm → fm,
+        /// editor → editor / new buffer). Empty / unrecognised focus
+        /// falls back to a terminal. See
+        /// REQ:codon/keymap-vocabulary#c-verb-collapse-split.
+        SplitRight,
+        /// Contextual split-down — vertical sibling of [`SplitRight`].
+        SplitDown,
+        /// Contextual split-right, flipping the kind in the terminal ↔
+        /// file-manager pair. Editor focus resolves to a terminal (no
+        /// editor↔terminal pairing today). Used by the `prefix |`
+        /// chord.
+        SplitRightOther,
+        /// Contextual split-down — vertical sibling of [`SplitRightOther`].
+        SplitDownOther,
     ]
 );
 
@@ -54,6 +69,55 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &SplitFileManagerDown, window, cx| {
         split_with_file_manager(workspace, SplitDirection::Down, window, cx);
     });
+    workspace.register_action(|workspace, _: &SplitRight, window, cx| {
+        contextual_split(workspace, SplitDirection::Right, /*flip=*/ false, window, cx);
+    });
+    workspace.register_action(|workspace, _: &SplitDown, window, cx| {
+        contextual_split(workspace, SplitDirection::Down, /*flip=*/ false, window, cx);
+    });
+    workspace.register_action(|workspace, _: &SplitRightOther, window, cx| {
+        contextual_split(workspace, SplitDirection::Right, /*flip=*/ true, window, cx);
+    });
+    workspace.register_action(|workspace, _: &SplitDownOther, window, cx| {
+        contextual_split(workspace, SplitDirection::Down, /*flip=*/ true, window, cx);
+    });
+}
+
+/// Pick the new pane's kind from the active pane's focus, then split.
+/// `flip` swaps terminal ↔ file-manager (editor → terminal); used for
+/// the `prefix | / _` "other primary kind" chords. Empty / unrecognised
+/// focus falls back to a terminal so `prefix \` always succeeds.
+fn contextual_split(
+    workspace: &mut Workspace,
+    direction: SplitDirection,
+    flip: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    enum Kind {
+        Terminal,
+        FileManager,
+    }
+    let mut kind = Kind::Terminal;
+    if let Some(item) = workspace.active_pane().read(cx).active_item() {
+        if item.act_as::<TerminalView>(cx).is_some() {
+            kind = Kind::Terminal;
+        } else if item.act_as::<FileManager>(cx).is_some() {
+            kind = Kind::FileManager;
+        }
+        // Editor / other items fall through to the Terminal default;
+        // codon doesn't have an editor↔terminal pairing convention.
+    }
+    if flip {
+        kind = match kind {
+            Kind::Terminal => Kind::FileManager,
+            Kind::FileManager => Kind::Terminal,
+        };
+    }
+    match kind {
+        Kind::Terminal => split_with_terminal(workspace, direction, window, cx),
+        Kind::FileManager => split_with_file_manager(workspace, direction, window, cx),
+    }
 }
 
 /// Resolve the directory that a freshly spawned terminal / file

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 codon-mode.workspace = true
+codon-pane-bridge.workspace = true
 codon-pickers.workspace = true
 command_palette.workspace = true
 diagnostics.workspace = true
@@ -29,7 +30,6 @@ toml.workspace = true
 ui.workspace = true
 vim.workspace = true
 workspace.workspace = true
-file-manager.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 zed_actions.workspace = true

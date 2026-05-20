@@ -12,7 +12,7 @@ summary: >
   `workspace::NewTerminal` and a new `file_manager::OpenNew` that
   skips the goto-or-open lookup.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-verb-collapse-open-or-focus
 ---

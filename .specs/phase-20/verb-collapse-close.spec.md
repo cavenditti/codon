@@ -11,7 +11,7 @@ summary: >
   cascade). Add an optional `codon_session::CloseForce` action for
   the rare bypass case; do not bind it by default.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-verb-collapse-close
 ---

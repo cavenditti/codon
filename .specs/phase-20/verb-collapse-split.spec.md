@@ -13,7 +13,7 @@ summary: >
   chord shapes `\ | - _` stable, but reroute them through the
   collapsed actions.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-verb-collapse-split
 ---

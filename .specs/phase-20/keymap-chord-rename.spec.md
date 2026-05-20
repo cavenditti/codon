@@ -11,7 +11,7 @@ summary: >
   the sibling task). Keep `prefix n` / `prefix p` as bare-leaf
   WindowNext / WindowPrev muscle-memory chords.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/keymap-vocabulary#c-chord-window-prefix
   - REQ:codon/keymap-vocabulary#c-chord-window-nav-leaves
