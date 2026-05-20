@@ -445,29 +445,37 @@ fn handle_window_new(
         return;
     };
     let registry = SessionRegistry::global(cx);
-    let Some(mut session) = registry.get(active_id) else {
+    let Some(session) = registry.get(active_id) else {
         return;
     };
 
-    let outgoing_id = session.active().map(|w| w.id);
-    let snapshot = swap::capture(workspace, window, cx);
-    let runtime = capture_runtime(workspace, cx);
-    if let Some(active_window) = session.active_mut() {
-        active_window.layout = Some(snapshot);
+    // Windows always exist (one slot per digit binding) — `WindowNew`
+    // just hops the user to the first slot that isn't in use yet. If
+    // every slot is populated, surface a toast and stay put: the user
+    // either has to free a slot via `WindowClose` or pick an existing
+    // one explicitly.
+    let Some(target_idx) = session.first_empty_window_index() else {
+        workspace.show_notification(
+            workspace::notifications::NotificationId::unique::<WindowNew>(),
+            cx,
+            |cx| {
+                cx.new(|cx| {
+                    workspace::notifications::simple_message_notification::MessageNotification::new(
+                        "All window slots are in use — close one before opening another.",
+                        cx,
+                    )
+                })
+            },
+        );
+        return;
+    };
+    if target_idx == session.active_window {
+        return;
     }
-    if let (Some(outgoing_window_id), Some(rt)) = (outgoing_id, runtime) {
-        WindowRuntimeCache::global(cx).insert(active_id, outgoing_window_id, rt);
-    }
-
-    session.add_window(None);
-    let new_index = session.windows.len() - 1;
-    session.set_active_window(new_index);
-    if let Err(err) = registry.upsert(session) {
-        log::warn!("could not save new window: {err:?}");
-    }
-    persist_lifecycle(cx);
-
-    workspace.replace_center_with_empty_pane(window, cx);
+    let Some(target_id) = session.windows.get(target_idx).map(|w| w.id) else {
+        return;
+    };
+    crate::window_indicator::switch_to_window(workspace, target_id, window, cx);
 }
 
 fn handle_window_next(
@@ -528,7 +536,10 @@ fn handle_window_close(
     let Some(session) = registry.get(active_id) else {
         return;
     };
-    if session.windows.len() <= 1 {
+    let active_idx = session.active_window;
+    if !session.windows[active_idx].has_user_content(active_idx) {
+        // Slot is already empty — `WindowClose` is a no-op rather than
+        // a confusing pseudo-action that does nothing visible.
         return;
     }
 
@@ -558,9 +569,15 @@ fn handle_window_close(
     .detach();
 }
 
-/// Actually remove the active window from the session and switch the
-/// pane tree to the previous (or next) window's layout. Caller has
-/// already cleared any dirty-item save prompts.
+/// Clear the active window's slot — drop its layout, reset its name,
+/// evict the runtime cache entry — and hand the user off to the
+/// last-active populated slot (or slot 0 if every slot is now empty).
+/// Caller has already cleared the dirty-item save prompt.
+///
+/// Codon's windows always exist conceptually; "close" really means
+/// "vacate this slot back to its untouched state", which is the
+/// closest analogue to tmux's `kill-window` under the always-N-slots
+/// invariant.
 fn finish_window_close(
     workspace: &mut Workspace,
     active_id: crate::session::SessionId,
@@ -571,35 +588,41 @@ fn finish_window_close(
     let Some(mut session) = registry.get(active_id) else {
         return;
     };
-    if session.windows.len() <= 1 {
+
+    let cleared_idx = session.active_window;
+    let Some(cleared_id) = session.windows.get(cleared_idx).map(|w| w.id) else {
         return;
-    }
-
-    let removed_idx = session.active_window;
-    let removed_id = session.windows[removed_idx].id;
-
-    // Pick a target to land on after the removal. Prefer the last-active
-    // window (tmux behavior) when valid; otherwise fall back to the
-    // sibling at the same index (which post-removal points at the next
-    // window) or the new last index if we were closing the tail.
-    let target_after = match session.previous_window {
-        Some(p) if p != removed_idx && p < session.windows.len() => {
-            if p > removed_idx { p - 1 } else { p }
-        }
-        _ => removed_idx.min(session.windows.len().saturating_sub(2)),
     };
 
-    // Drop the in-memory runtime cache entry for the doomed window so we
-    // don't restore it later by accident. `take` returns the evicted
-    // entry (if any) which we intentionally discard — the cache miss is
-    // the desired outcome.
-    let _evicted = WindowRuntimeCache::global(cx).take(active_id, removed_id);
+    let _evicted = WindowRuntimeCache::global(cx).take(active_id, cleared_id);
 
-    session.remove_window(removed_id);
-    if target_after < session.windows.len() {
+    session.clear_window(cleared_idx);
+
+    // Prefer the last-active populated slot for the post-close landing —
+    // mirrors tmux's "kill-window jumps to the previous window" feel. If
+    // the previous slot is itself empty (or unset), find any other
+    // populated slot; failing that, stay on slot 0 with the welcome pane.
+    let prev_populated = session
+        .previous_window
+        .filter(|p| *p != cleared_idx)
+        .and_then(|p| {
+            session
+                .windows
+                .get(p)
+                .filter(|w| w.has_user_content(p))
+                .map(|_| p)
+        });
+    let any_populated = session
+        .windows
+        .iter()
+        .enumerate()
+        .find_map(|(i, w)| (i != cleared_idx && w.has_user_content(i)).then_some(i));
+    let target_after = prev_populated.or(any_populated).unwrap_or(0);
+
+    session.previous_window = None;
+    if target_after != cleared_idx {
         session.active_window = target_after;
     }
-    session.previous_window = None;
 
     let incoming_window_id = session.windows.get(session.active_window).map(|w| w.id);
     let incoming_layout = session
@@ -674,26 +697,36 @@ fn handle_break_pane_to_window(
         return;
     };
 
+    // Pick the destination slot before mutating anything: the broken
+    // pane needs a previously-empty slot to live in. With every slot
+    // pre-existing under the always-N invariant, "create a new window"
+    // becomes "claim the first empty slot".
+    let Some(target_idx) = session.first_empty_window_index() else {
+        workspace.show_notification(
+            workspace::notifications::NotificationId::unique::<BreakPaneToWindow>(),
+            cx,
+            |cx| {
+                cx.new(|cx| {
+                    workspace::notifications::simple_message_notification::MessageNotification::new(
+                        "All window slots are in use — cannot break out a new window.",
+                        cx,
+                    )
+                })
+            },
+        );
+        return;
+    };
+
     // Stash the remaining layout on the *current* window before we move
     // off it — same pattern as cycle_window/switch_to_window.
     if let Some(active) = session.active_mut() {
-        active.layout = Some(remaining.clone());
+        active.layout = Some(remaining);
     }
 
-    // Append the new window seeded with just the broken pane, and mark
-    // it active. Reuses set_active_window so previous_window is set to
-    // the outgoing index automatically.
-    let new_window_id = session.add_window(None);
-    if let Some(idx) = session.windows.iter().position(|w| w.id == new_window_id) {
-        if let Some(slot) = session.windows.get_mut(idx) {
-            slot.layout = Some(broken.clone());
-        }
-        let outgoing = session.active_window;
-        session.set_active_window(idx);
-        // set_active_window leaves previous_window pointing at the
-        // outgoing window, which is what we want for `WindowLast`.
-        let _ = outgoing;
+    if let Some(slot) = session.windows.get_mut(target_idx) {
+        slot.layout = Some(broken.clone());
     }
+    session.set_active_window(target_idx);
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save after break-pane: {err:?}");
     }
@@ -730,22 +763,14 @@ fn handle_move_pane_to_window(
         log::trace!("MovePaneToWindow: target index {target_idx} == active, no-op");
         return;
     }
+    // Every slot in `0..WINDOW_SLOTS` is materialised under the
+    // always-N invariant, so an out-of-range target only happens when a
+    // keymap binding emits an index past the slot count — that's an
+    // installation bug, not a user error.
     if target_idx >= session.windows.len() {
-        workspace.show_notification(
-            workspace::notifications::NotificationId::unique::<MovePaneToWindow>(),
-            cx,
-            move |cx| {
-                cx.new(|cx| {
-                    workspace::notifications::simple_message_notification::MessageNotification::new(
-                        format!(
-                            "Window {} does not exist (active session has {}).",
-                            target_idx + 1,
-                            registry_window_count(cx, active_id),
-                        ),
-                        cx,
-                    )
-                })
-            },
+        log::warn!(
+            "MovePaneToWindow: target index {target_idx} out of bounds for session with {} slots",
+            session.windows.len()
         );
         return;
     }
@@ -804,12 +829,12 @@ fn handle_move_pane_to_window(
         return;
     }
 
-    // Single-pane source — close it. `remove_window` shifts indexes
-    // for us; resolve the target's new position by id afterwards.
-    session.remove_window(source_window_id);
-    if let Some(new_target_idx) = session.windows.iter().position(|w| w.id == target_window_id) {
-        session.set_active_window(new_target_idx);
-    }
+    // Single-pane source — clear the slot the move emptied. Slot
+    // indices stay stable under the always-N invariant, so we can
+    // switch directly to the original target index without re-resolving
+    // by id.
+    session.clear_window(source_idx);
+    session.set_active_window(target_idx);
     session.previous_window = None;
 
     if let Err(err) = registry.upsert(session) {
@@ -820,13 +845,6 @@ fn handle_move_pane_to_window(
 
     let weak = workspace.weak_handle();
     swap::apply(workspace, merged, window, cx).detach_and_notify_err(weak, window, cx);
-}
-
-fn registry_window_count(cx: &gpui::App, active_id: crate::session::SessionId) -> usize {
-    SessionRegistry::global(cx)
-        .get(active_id)
-        .map(|s| s.windows.len())
-        .unwrap_or(0)
 }
 
 /// Bypass the close cascade — just close the active item using Zed's
@@ -961,11 +979,21 @@ fn cycle_window(
     let Some(mut session) = registry.get(active_id) else {
         return;
     };
-    if session.windows.len() < 2 {
+    // Cycle through the *displayed* windows only — empty slots that
+    // exist conceptually but aren't shown in the indicator would be a
+    // confusing cycle target. `displayed_window_indices` always includes
+    // the active slot, so the resulting list has length >= 1.
+    let displayed = session.displayed_window_indices();
+    if displayed.len() < 2 {
         return;
     }
-    let len = session.windows.len() as i32;
-    let new_idx = ((session.active_window as i32 + delta).rem_euclid(len)) as usize;
+    let active_pos = displayed
+        .iter()
+        .position(|i| *i == session.active_window)
+        .unwrap_or(0);
+    let len = displayed.len() as i32;
+    let next_pos = (active_pos as i32 + delta).rem_euclid(len) as usize;
+    let new_idx = displayed[next_pos];
 
     let outgoing_id = session.active().map(|w| w.id);
     let _ = take_restore_timing();

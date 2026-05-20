@@ -155,8 +155,16 @@ impl SessionRegistry {
     }
 
     fn load_from(&self, payload: &str) -> Result<()> {
-        let data: PersistedRegistry =
+        let mut data: PersistedRegistry =
             serde_json::from_str(payload).context("parsing persisted session registry")?;
+        // Sessions persisted under the pre-slots model carry between 1
+        // and N windows. The current invariant pre-materialises all
+        // [`crate::session::WINDOW_SLOTS`] slots per session so the
+        // indexed bindings (`prefix 1` … `prefix 9`) and indicator
+        // filter share a single shape — pad legacy entries on load.
+        for session in &mut data.sessions {
+            session.pad_to_window_slots();
+        }
         *self.inner.write() = data;
         Ok(())
     }

@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use workspace::codon_bridge::LayoutSnapshot;
 
+/// Fixed number of window slots per session. Codon's "windows always
+/// exist" model mirrors the digit-keyed bindings `prefix 1` … `prefix 9`
+/// in the default keymap — every slot is reachable by index, materialised
+/// on demand. Visibility in the indicator/picker/overview is filtered to
+/// non-empty slots (plus the active one), so an unused slot stays
+/// invisible until the user puts something in it.
+pub const WINDOW_SLOTS: usize = 9;
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -58,6 +66,33 @@ impl Window {
             layout_stale: false,
         }
     }
+
+    /// Default name codon assigns to slot `idx` (zero-based) on a fresh
+    /// session — the 1-based digit users press. A window that still has
+    /// this name is considered "untouched" by [`Self::has_user_content`].
+    pub fn default_name_for(idx: usize) -> String {
+        (idx + 1).to_string()
+    }
+
+    /// `true` when the persisted layout snapshot contains at least one
+    /// item. The cache-fast-path leaves `layout_stale` set on the most
+    /// recent outgoing window, so callers that need a runtime-truthful
+    /// answer for *that* window should also consult
+    /// [`crate::runtime::WindowRuntimeCache::peek_has_items`] before
+    /// trusting this result.
+    pub fn layout_has_items(&self) -> bool {
+        self.layout
+            .as_ref()
+            .is_some_and(LayoutSnapshot::has_any_items)
+    }
+
+    /// `true` when this window is "in use" — either it holds at least
+    /// one item, or its slot has been renamed away from the default.
+    /// Renaming an empty window is a legitimate "I'm planning to use
+    /// this slot" signal, so the indicator surfaces it.
+    pub fn has_user_content(&self, idx: usize) -> bool {
+        self.layout_has_items() || self.name != Self::default_name_for(idx)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,16 +125,86 @@ pub struct Session {
 
 impl Session {
     pub fn new(name: impl Into<String>, cwd: PathBuf) -> Self {
-        let initial_window = Window::new(WindowId(1), "1");
+        let windows = (0..WINDOW_SLOTS)
+            .map(|i| Window::new(WindowId(i as u64 + 1), Window::default_name_for(i)))
+            .collect();
         Self {
             id: SessionId::new(),
             name: name.into(),
             cwd,
-            windows: vec![initial_window],
+            windows,
             active_window: 0,
             previous_window: None,
             last_attached_ms: now_ms(),
             registers: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Pad an existing session's `windows` vec up to [`WINDOW_SLOTS`]
+    /// entries, preserving every existing window in place. Used by the
+    /// registry loader so sessions persisted under the pre-slots model
+    /// (1..N windows) transparently grow to the always-9 invariant on
+    /// startup. Each appended slot gets the default name and a unique
+    /// `WindowId` (incrementing past the current `next_window_id`).
+    pub fn pad_to_window_slots(&mut self) {
+        while self.windows.len() < WINDOW_SLOTS {
+            let idx = self.windows.len();
+            let id = self.next_window_id();
+            self.windows
+                .push(Window::new(id, Window::default_name_for(idx)));
+        }
+    }
+
+    /// Smallest index whose window has no user content. Returns `None`
+    /// only when every slot is already in use, which is also the cap
+    /// for `WindowNew` / `BreakPaneToWindow` materialisation.
+    pub fn first_empty_window_index(&self) -> Option<usize> {
+        self.windows
+            .iter()
+            .enumerate()
+            .find_map(|(idx, w)| (!w.has_user_content(idx)).then_some(idx))
+    }
+
+    /// Indices visible in the windows indicator/picker/overview — every
+    /// slot that has user content, plus the currently-active slot (so
+    /// the user can always see where they are, even when the active
+    /// window is itself empty).
+    ///
+    /// Note: this is layout-only. For the brief window between
+    /// `cycle_window` setting `layout_stale = true` and a subsequent
+    /// evict-and-persist, the most recently outgoing window may not yet
+    /// reflect runtime emptiness. The runtime cache holds the live
+    /// `Member` tree in that case; callers that care can additionally
+    /// consult `WindowRuntimeCache::peek_has_items`.
+    pub fn displayed_window_indices(&self) -> Vec<usize> {
+        let mut out = Vec::with_capacity(self.windows.len());
+        for (idx, w) in self.windows.iter().enumerate() {
+            if idx == self.active_window || w.has_user_content(idx) {
+                out.push(idx);
+            }
+        }
+        out
+    }
+
+    /// `true` when no window in the session has user content. The
+    /// active slot's emptiness still counts — a brand-new session
+    /// trips this even though slot 0 is "active".
+    pub fn is_entirely_empty(&self) -> bool {
+        self.windows
+            .iter()
+            .enumerate()
+            .all(|(idx, w)| !w.has_user_content(idx))
+    }
+
+    /// Clear the slot at `idx` back to its untouched state — drop any
+    /// persisted layout and reset the name to the default. The
+    /// `WindowId` is preserved so cache lookups and `previous_window`
+    /// references stay valid.
+    pub fn clear_window(&mut self, idx: usize) {
+        if let Some(slot) = self.windows.get_mut(idx) {
+            slot.layout = None;
+            slot.layout_stale = false;
+            slot.name = Window::default_name_for(idx);
         }
     }
 
@@ -175,48 +280,78 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workspace::codon_bridge::{ItemSnapshot, PaneSnapshot};
 
     fn session(name: &str) -> Session {
         Session::new(name, PathBuf::from("/tmp"))
     }
 
+    fn non_empty_pane() -> LayoutSnapshot {
+        LayoutSnapshot::Pane(PaneSnapshot {
+            items: vec![ItemSnapshot {
+                kind: "Editor".into(),
+                item_id: 1,
+                active: true,
+                preview: false,
+            }],
+            active: true,
+            pinned_count: 0,
+        })
+    }
+
     #[test]
-    fn new_session_has_one_window_and_no_previous() {
+    fn new_session_pre_materialises_window_slots() {
         let s = session("alpha");
-        assert_eq!(s.windows.len(), 1);
+        assert_eq!(s.windows.len(), WINDOW_SLOTS);
         assert_eq!(s.active_window, 0);
         assert_eq!(s.previous_window, None);
-        assert_eq!(s.windows[0].id, WindowId(1));
+        for (i, w) in s.windows.iter().enumerate() {
+            assert_eq!(w.id, WindowId(i as u64 + 1));
+            assert_eq!(w.name, Window::default_name_for(i));
+            assert!(w.layout.is_none());
+        }
     }
 
     #[test]
     fn next_window_id_increments_above_max_existing_id() {
         let mut s = session("alpha");
         // Force a non-contiguous id to confirm we use max + 1.
-        s.windows.push(Window::new(WindowId(7), "seven"));
-        assert_eq!(s.next_window_id(), WindowId(8));
+        s.windows.push(Window::new(WindowId(42), "scratch"));
+        assert_eq!(s.next_window_id(), WindowId(43));
     }
 
     #[test]
-    fn add_window_returns_unique_id_each_time() {
+    fn pad_to_window_slots_grows_legacy_sessions() {
         let mut s = session("alpha");
-        let a = s.add_window(None);
-        let b = s.add_window(None);
-        assert_ne!(a, b);
-        assert_eq!(s.windows.len(), 3);
+        // Mimic an old persisted session that only carried 2 windows.
+        s.windows.truncate(2);
+        assert_eq!(s.windows.len(), 2);
+        s.pad_to_window_slots();
+        assert_eq!(s.windows.len(), WINDOW_SLOTS);
+        // Padding preserves existing ids and appends fresh ones.
+        assert_eq!(s.windows[0].id, WindowId(1));
+        assert_eq!(s.windows[1].id, WindowId(2));
+        for (i, w) in s.windows.iter().enumerate().skip(2) {
+            assert_eq!(w.name, Window::default_name_for(i));
+            assert!(w.layout.is_none());
+        }
+    }
+
+    #[test]
+    fn pad_to_window_slots_is_idempotent_on_full_sessions() {
+        let mut s = session("alpha");
+        let len_before = s.windows.len();
+        s.pad_to_window_slots();
+        assert_eq!(s.windows.len(), len_before);
     }
 
     #[test]
     fn set_active_window_records_previous() {
         let mut s = session("alpha");
-        s.add_window(None);
-        s.add_window(None);
-        // Move from window 0 to window 2.
         s.set_active_window(2);
         assert_eq!(s.active_window, 2);
         assert_eq!(s.previous_window, Some(0));
 
-        // Move again from 2 to 1 — previous shifts to 2, not 0.
         s.set_active_window(1);
         assert_eq!(s.active_window, 1);
         assert_eq!(s.previous_window, Some(2));
@@ -225,7 +360,6 @@ mod tests {
     #[test]
     fn set_active_window_noop_for_out_of_range_or_already_active() {
         let mut s = session("alpha");
-        s.add_window(None);
         s.set_active_window(0); // already active
         assert_eq!(s.previous_window, None);
         s.set_active_window(99); // out of range
@@ -234,67 +368,68 @@ mod tests {
     }
 
     #[test]
-    fn remove_window_refuses_to_drop_the_last_one() {
-        let mut s = session("alpha");
-        let only_id = s.windows[0].id;
-        assert!(!s.remove_window(only_id));
-        assert_eq!(s.windows.len(), 1);
+    fn first_empty_window_index_returns_zero_for_fresh_session() {
+        let s = session("alpha");
+        assert_eq!(s.first_empty_window_index(), Some(0));
     }
 
     #[test]
-    fn remove_window_shifts_active_index_when_earlier_window_removed() {
+    fn first_empty_window_index_skips_filled_slots() {
         let mut s = session("alpha");
-        let _b = s.add_window(None); // window 1
-        let _c = s.add_window(None); // window 2
-        s.set_active_window(2);
-        assert_eq!(s.active_window, 2);
-        // Drop the very first window — active should slide from 2 down to 1.
-        let first_id = s.windows[0].id;
-        assert!(s.remove_window(first_id));
-        assert_eq!(s.windows.len(), 2);
-        assert_eq!(s.active_window, 1);
+        s.windows[0].layout = Some(non_empty_pane());
+        s.windows[1].layout = Some(non_empty_pane());
+        assert_eq!(s.first_empty_window_index(), Some(2));
     }
 
     #[test]
-    fn remove_window_clamps_active_when_tail_removed() {
+    fn first_empty_window_index_treats_rename_as_use() {
         let mut s = session("alpha");
-        s.add_window(None);
-        s.set_active_window(1);
-        let last_id = s.windows[1].id;
-        assert!(s.remove_window(last_id));
-        // Active index must point at the surviving window, not past it.
-        assert_eq!(s.active_window, 0);
+        s.windows[0].name = "scratch".into();
+        // Slot 0 has a custom name but no layout — still "in use".
+        assert_eq!(s.first_empty_window_index(), Some(1));
     }
 
     #[test]
-    fn remove_window_clears_previous_when_it_pointed_at_removed() {
+    fn first_empty_window_index_none_when_full() {
         let mut s = session("alpha");
-        s.add_window(None);
-        s.add_window(None);
-        s.set_active_window(2);
-        // previous_window now = Some(0).
-        assert_eq!(s.previous_window, Some(0));
-        // Remove the window at index 0 (the one previous_window points at).
-        let removed_id = s.windows[0].id;
-        s.remove_window(removed_id);
-        assert_eq!(s.previous_window, None);
+        for w in &mut s.windows {
+            w.layout = Some(non_empty_pane());
+        }
+        assert_eq!(s.first_empty_window_index(), None);
     }
 
     #[test]
-    fn remove_window_clears_previous_when_aliasing_active_after_shift() {
+    fn displayed_window_indices_always_includes_active() {
+        let s = session("alpha");
+        // Brand-new session: every slot is empty. Only the active one shows.
+        assert_eq!(s.displayed_window_indices(), vec![0]);
+    }
+
+    #[test]
+    fn displayed_window_indices_surfaces_non_empty_slots() {
         let mut s = session("alpha");
-        s.add_window(None);
-        s.add_window(None);
-        // Sequence: active=0 → set_active(1) (prev=0) → set_active(2) (prev=1).
-        s.set_active_window(1);
-        s.set_active_window(2);
-        assert_eq!(s.previous_window, Some(1));
-        // Remove window at index 1 (the previous). After removal active=1.
-        // previous would also be 1 after the shift, so it must be cleared.
-        let removed_id = s.windows[1].id;
-        s.remove_window(removed_id);
-        assert_eq!(s.previous_window, None);
-        assert_eq!(s.active_window, 1);
+        s.windows[3].layout = Some(non_empty_pane());
+        s.windows[6].layout = Some(non_empty_pane());
+        assert_eq!(s.displayed_window_indices(), vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn clear_window_restores_default_name_and_drops_layout() {
+        let mut s = session("alpha");
+        s.windows[2].layout = Some(non_empty_pane());
+        s.windows[2].name = "renamed".into();
+        s.clear_window(2);
+        assert!(s.windows[2].layout.is_none());
+        assert_eq!(s.windows[2].name, Window::default_name_for(2));
+        assert!(!s.windows[2].has_user_content(2));
+    }
+
+    #[test]
+    fn is_entirely_empty_distinguishes_used_vs_fresh() {
+        let mut s = session("alpha");
+        assert!(s.is_entirely_empty());
+        s.windows[4].layout = Some(non_empty_pane());
+        assert!(!s.is_entirely_empty());
     }
 
     #[test]

@@ -2,12 +2,12 @@
 id: REQ:codon/windows
 type: requirement
 status: accepted
-version: 0.2.0
+version: 0.3.0
 level: MUST
 summary: >
-  Each session contains an ordered list of windows; one is visible at
-  a time and the rest are reachable via keyboard / mouse, with
-  tmux-parity verbs for direct, last, rename, and break-pane motion.
+  Each session contains a fixed set of window slots — all conceptually
+  present, only visible when populated — reachable via keyboard / mouse,
+  with tmux-parity verbs for direct, last, rename, and break-pane motion.
 owners: [carlo]
 refines: [REQ:codon/sessions#c-data-model]
 categorized_under: [TOPIC:topics/phase-2]
@@ -19,16 +19,46 @@ categorized_under: [TOPIC:topics/phase-2]
 
 Sessions group windows the way tmux does: each window holds its own
 center pane group. Switching windows is layout swap with no cwd change.
+Codon's mental model is that **windows always exist** — every session
+carries a fixed pool of slots, one per digit-keyed binding (`prefix 1`
+… `prefix 9`). A slot is materialised the first time the user puts
+something into it and stays visible only while it is in use; the rest
+remain invisible scaffolding until claimed.
 
 :::{requirement id="windows" level="MUST"}
 The system MUST manage windows-within-session:
 
 - {#c-data-model} `Window { id, name, layout: Option<LayoutSnapshot> }`
   stored in `Session.windows`
+- {#c-fixed-slots} every session MUST carry exactly `WINDOW_SLOTS`
+  windows (currently 9, matching the digit-keyed bindings 1-9) from
+  the moment `Session::new` runs. Persisted sessions saved under
+  earlier models MUST be padded up to this invariant on load. Slots
+  are addressed by 0-based index; ids stay stable so cache lookups,
+  `previous_window`, and the runtime cache key remain valid across
+  pad-on-load and clear operations.
+- {#c-emptiness-rule} a window slot is "in use" iff its persisted
+  layout contains at least one item OR its name has been changed
+  from the default-for-index (`(idx+1).to_string()`). Every other
+  slot is "empty" and excluded from the indicator, picker, overview,
+  and cycle navigation. The active slot is *always* shown even when
+  empty so the user can tell where they are.
 - {#c-actions} actions `WindowNew`, `WindowNext`, `WindowPrev`,
-  `WindowClose`, and parameterized `WindowGoto(usize)`
-- {#c-status-bar} a tab-bar-shaped status bar indicator with one tab
-  per window, no close-X, with click-to-switch
+  `WindowClose`, and parameterized `WindowGoto(usize)`. Under the
+  fixed-slots invariant the verbs MUST behave as follows:
+  - `WindowNew` hops to the lowest-indexed empty slot. If every
+    slot is in use, it surfaces a toast and stays put.
+  - `WindowNext` / `WindowPrev` cycle through the **displayed**
+    slots only (so empty scaffolding is invisible to cycling).
+  - `WindowGoto(N)` always switches — empty targets materialise as
+    a welcome pane on arrival.
+  - `WindowClose` clears the active slot (drops its layout, resets
+    its name to the default, evicts the runtime cache entry) and
+    lands on the most-recently-active populated slot, or slot 0 if
+    none. The slot itself never disappears.
+- {#c-status-bar} a tab-bar-shaped status bar indicator that shows
+  every populated slot (plus the active slot when empty), no close-X,
+  with click-to-switch. Empty slots stay hidden until claimed.
 - {#c-swap-on-switch} switching captures the outgoing window's layout
   snapshot before applying the incoming window's snapshot
 - {#c-switch-picker} a fuzzy picker action (`WindowSwitch`) for
@@ -50,8 +80,9 @@ The system MUST manage windows-within-session:
   cycle, goto, or status-bar click — updates it.
 - {#c-direct-index} `WindowGoto(usize)` MUST be reachable from the
   default keymap at indices 1–9. Indices are 1-based to match tmux;
-  the action stores zero-based internally. Out-of-range indices are
-  no-ops with a debug log, never a panic.
+  the action stores zero-based internally. Indices in `0..WINDOW_SLOTS`
+  always resolve to a real slot (empty slots are materialised on
+  arrival); higher indices are no-ops with a debug log, never a panic.
 - {#c-ergonomic-motion} default keymap MUST expose 2-key motion for
   `WindowNext` / `WindowPrev` / `WindowLast`. The existing 3-key
   `cmd-k shift-w …` chords stay as the discoverable "windows menu",
@@ -61,18 +92,21 @@ The system MUST manage windows-within-session:
   Duplicate names within the same session are allowed (windows are
   identified by id, not name); the indicator appends a short `#id`
   suffix when names collide.
-- {#c-safe-close-confirm} `WindowClose` MUST prompt before closing a
-  window that contains panes with dirty (unsaved) items. The prompt
+- {#c-safe-close-confirm} `WindowClose` MUST prompt before clearing
+  a slot that contains panes with dirty (unsaved) items. The prompt
   reuses workspace's existing save-prompt machinery rather than a
-  bespoke dialog. Clean windows close without confirmation.
+  bespoke dialog. Clean slots clear without confirmation; already-
+  empty slots are an explicit no-op rather than a confusing
+  pseudo-action.
 - {#c-break-pane} a `BreakPaneToWindow` action that promotes the
-  active pane in the current window into a new window of its own.
+  active pane in the current window into the next empty slot.
   Implemented at the `LayoutSnapshot` level: split the current
   layout into (remaining, broken) trees, write the remaining tree
-  back to the current window, create a new window whose layout is
-  the broken-out pane, switch to it. The broken pane's items
+  back to the current window, plant the broken pane into the
+  lowest-indexed empty slot, switch to it. The broken pane's items
   re-hydrate via `SerializableItemRegistry`, so editor buffers and
-  terminal connections survive intact. Mirrors tmux's `prefix !`.
+  terminal connections survive intact. If every slot is in use, the
+  action surfaces a toast and stays put. Mirrors tmux's `prefix !`.
 :::
 
 ## Implementation

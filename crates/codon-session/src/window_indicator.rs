@@ -37,15 +37,22 @@ impl Render for WindowsStatusItem {
             return h_flex();
         }
         let active = session.active_window;
-        let total = session.windows.len();
+        // Windows always exist conceptually (one slot per digit binding);
+        // the indicator only shows the slots that hold user content,
+        // plus the active slot so the user can always see where they
+        // are. This keeps a brand-new session showing a single tab and
+        // a half-used session showing only the used + active tabs.
+        let displayed = session.displayed_window_indices();
+        let last_displayed = displayed.last().copied();
 
         let workspace = self.workspace.clone();
         let mut bar = TabBar::new("codon-windows-indicator");
-        for (idx, win) in session.windows.iter().enumerate() {
+        for &idx in &displayed {
+            let win = &session.windows[idx];
             let id: ElementId = ElementId::Name(format!("codon-window-{}", win.id.0).into());
-            let position = if idx == 0 {
+            let position = if idx == displayed[0] {
                 TabPosition::First
-            } else if idx + 1 == total {
+            } else if Some(idx) == last_displayed {
                 TabPosition::Last
             } else {
                 let cmp = idx.cmp(&active);

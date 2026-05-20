@@ -581,7 +581,10 @@ fn build_rows(sessions: &[Session], expanded: &[bool]) -> Vec<Row> {
     for (si, session) in sessions.iter().enumerate() {
         rows.push(Row::Session { session: si });
         if expanded.get(si).copied().unwrap_or(false) {
-            for wi in 0..session.windows.len() {
+            // Only the slots that have user content (plus the active
+            // slot) get a row — keeps the always-9-window model from
+            // burying the user under empty entries in the tree view.
+            for wi in session.displayed_window_indices() {
                 rows.push(Row::Window {
                     session: si,
                     window: wi,
@@ -716,14 +719,18 @@ mod tests {
     use workspace::codon_bridge::{ItemSnapshot, PaneSnapshot};
 
     fn session_with(name: &str, window_names: &[&str]) -> Session {
+        // The always-9-slots invariant means `Session::new` pre-seeds
+        // every slot. The fixture marks the first `window_names.len()`
+        // slots as user-populated by giving them a non-empty layout
+        // (`displayed_window_indices` filters on that) and renames them
+        // so the rendered labels match the test expectations.
         let mut s = Session::new(name, PathBuf::from("/tmp"));
-        // `Session::new` seeds one window; rename it and add the rest.
-        s.windows[0].name = window_names.first().map(|n| n.to_string()).unwrap_or_default();
-        for n in window_names.iter().skip(1) {
-            let id = s.add_window(Some((*n).to_string()));
-            // `add_window` appends; the just-added one is last.
-            let last = s.windows.len() - 1;
-            assert_eq!(s.windows[last].id, id);
+        for (idx, label) in window_names.iter().enumerate() {
+            let Some(slot) = s.windows.get_mut(idx) else {
+                break;
+            };
+            slot.name = (*label).to_string();
+            slot.layout = Some(pane("Editor"));
         }
         s
     }

@@ -40,8 +40,13 @@ impl WindowPickerDelegate {
         let candidates: Vec<WindowCandidate> = SessionRegistry::global(cx)
             .active()
             .map(|s| {
-                s.windows
-                    .iter()
+                // Match the indicator's "non-empty + active" filter so the
+                // picker only offers slots the user has populated. The
+                // active window stays selectable even when empty so the
+                // user can confirm where they are without leaving it.
+                s.displayed_window_indices()
+                    .into_iter()
+                    .filter_map(|idx| s.windows.get(idx))
                     .map(|w| WindowCandidate {
                         id: w.id,
                         name: w.name.clone(),
