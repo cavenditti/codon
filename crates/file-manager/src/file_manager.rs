@@ -4,9 +4,10 @@ use git::status::{
     FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
 };
 use gpui::{
-    actions, point, prelude::*, Action, App, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task,
-    UniformListScrollHandle, WeakEntity, Window,
+    actions, point, prelude::*, Action, App, Bounds, ClipboardEntry, ClipboardItem,
+    ClipboardString, Context, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task, UniformListScrollHandle,
+    WeakEntity, Window,
 };
 use language::{Buffer, LanguageRegistry};
 use schemars::JsonSchema;
@@ -135,16 +136,29 @@ pub(crate) enum FmClipboard {
 }
 
 impl FmClipboard {
-    fn is_empty(&self) -> bool {
-        matches!(self, FmClipboard::Empty)
-    }
-
     fn paths(&self) -> &[PathBuf] {
         match self {
             FmClipboard::Empty => &[],
             FmClipboard::Yank(paths) | FmClipboard::Cut(paths) => paths,
         }
     }
+}
+
+/// Resolved source for the next paste action. The internal FmClipboard
+/// always wins when populated; everything else falls through from the
+/// OS clipboard. Cross-app sources never carry cut semantics — the
+/// pasteboard does not advertise that out of the box (Finder/Wayland
+/// keep cut-vs-copy a *paste-time* decision in their own UIs).
+enum PasteSource {
+    Internal { paths: Vec<PathBuf>, is_cut: bool },
+    Os(OsPasteSource),
+    Empty,
+}
+
+enum OsPasteSource {
+    ExternalPaths(Vec<PathBuf>),
+    Image { format: gpui::ImageFormat, bytes: Vec<u8> },
+    StringOnly,
 }
 
 #[derive(Clone)]
@@ -1725,16 +1739,17 @@ impl FileManager {
     }
 
     /// `y` in Normal mode: store the current entry — or the whole marked
-    /// set if any — in the file-manager-local "yank" clipboard. `p` then
-    /// copies; `P` copies with overwrite confirmation. The OS clipboard is
-    /// not touched so terminal/agent panes can paste real text instead of
-    /// a path string.
+    /// set if any — in the file-manager-local "yank" clipboard, and also
+    /// publish the same paths to the OS clipboard as `ExternalPaths` (with
+    /// a joined-text companion) so Finder and other native apps can `⌘V`
+    /// the actual files. See REQ:codon/fm-os-clipboard#c-fm-publishes-to-os.
     fn yank_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.current_targets();
         if paths.is_empty() {
             return;
         }
         let count = paths.len();
+        self.write_paths_to_os_clipboard(&paths, cx);
         self.clipboard = FmClipboard::Yank(paths);
         self.marked.clear();
         self.surface_error(format!("Yanked {count} entr{}", plural_y(count)), cx);
@@ -1742,14 +1757,22 @@ impl FileManager {
     }
 
     /// `d` in Normal mode: mark the current entry (or marked set) for cut.
-    /// Actual filesystem rename happens on `p`/`P`. Deletion is bound to
-    /// `D` (shift-d) instead — see `delete_entry`.
+    /// The actual filesystem rename happens on `p`/`P`. Deletion is bound
+    /// to `D` (shift-d) instead — see `delete_entry`.
+    ///
+    /// The path list is also published to the OS clipboard as `ExternalPaths`
+    /// (always copy semantics — the OS clipboard never carries codon's
+    /// private cut flag, per REQ:codon/fm-os-clipboard context). The
+    /// internal `FmClipboard::Cut` still drives move-vs-copy when codon's
+    /// own paste consumes the clipboard, so `d` → `p` in codon stays a
+    /// rename; cross-app pastes always copy.
     fn cut_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.current_targets();
         if paths.is_empty() {
             return;
         }
         let count = paths.len();
+        self.write_paths_to_os_clipboard(&paths, cx);
         self.clipboard = FmClipboard::Cut(paths);
         self.marked.clear();
         self.surface_error(format!("Cut {count} entr{}", plural_y(count)), cx);
@@ -1757,7 +1780,9 @@ impl FileManager {
     }
 
     /// `Y` (shift-y): write the current path(s) to the OS clipboard as a
-    /// newline-joined string. Useful for pasting into a terminal pane.
+    /// newline-joined string only — no file-URL entry. Useful for pasting
+    /// the path *as text* into a terminal pane; the file-URL surface is
+    /// the job of `y` (`yank_to_clipboard`).
     fn copy_path_to_os_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.current_targets();
         if paths.is_empty() {
@@ -1769,6 +1794,31 @@ impl FileManager {
             .collect::<Vec<_>>()
             .join("\n");
         cx.write_to_clipboard(ClipboardItem::new_string(joined));
+    }
+
+    /// Publish a path list to the OS clipboard as a `ClipboardItem` with
+    /// two entries: `ExternalPaths(paths)` so file-aware apps (Finder etc.)
+    /// can paste the actual files, and a joined-text `String` companion
+    /// so plain-text consumers (terminals, editors) receive the path text.
+    /// Called from both `yank_to_clipboard` and `cut_to_clipboard`; the
+    /// OS side always carries copy semantics — see the REQ context for
+    /// why codon does not advertise a cross-app cut.
+    fn write_paths_to_os_clipboard(&self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        let joined = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let item = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::ExternalPaths(ExternalPaths(paths.iter().cloned().collect())),
+                ClipboardEntry::String(ClipboardString::new(joined)),
+            ],
+        };
+        cx.write_to_clipboard(item);
     }
 
     /// Snapshot of which paths the next clipboard / file operation should
@@ -2813,19 +2863,87 @@ impl FileManager {
         self.start_paste(window, cx, true);
     }
 
+    /// Resolve the effective paste source. The internal `FmClipboard` wins
+    /// when it's non-empty so codon's own cut/yank semantics survive
+    /// regardless of what else has been written to the OS pasteboard in
+    /// the meantime; the OS clipboard only acts as the fallback for
+    /// cross-app pastes. See REQ:codon/fm-os-clipboard#c-fm-paste-from-os.
+    ///
+    /// `OsPasteSource::ExternalPaths` carries paths (always copy, never
+    /// cut — cross-app cut isn't a thing on the OS pasteboard); `Image`
+    /// carries raw bytes for the image-paste handler; `StringOnly` is
+    /// surfaced as a dismissal toast — codon never turns clipboard text
+    /// into a new file on the user's behalf.
+    fn resolve_paste_source(&self, cx: &App) -> PasteSource {
+        let internal = self.clipboard.paths();
+        if !internal.is_empty() {
+            let is_cut = matches!(self.clipboard, FmClipboard::Cut(_));
+            return PasteSource::Internal {
+                paths: internal.to_vec(),
+                is_cut,
+            };
+        }
+
+        let Some(item) = cx.read_from_clipboard() else {
+            return PasteSource::Empty;
+        };
+
+        let mut external_paths: Option<Vec<PathBuf>> = None;
+        let mut image: Option<(gpui::ImageFormat, Vec<u8>)> = None;
+        let mut has_string = false;
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::ExternalPaths(paths) if !paths.0.is_empty() => {
+                    external_paths.get_or_insert_with(|| paths.0.iter().cloned().collect());
+                }
+                ClipboardEntry::Image(img) if image.is_none() => {
+                    image = Some((img.format, img.bytes.clone()));
+                }
+                ClipboardEntry::String(_) => {
+                    has_string = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(paths) = external_paths {
+            return PasteSource::Os(OsPasteSource::ExternalPaths(paths));
+        }
+        if let Some((format, bytes)) = image {
+            return PasteSource::Os(OsPasteSource::Image { format, bytes });
+        }
+        if has_string {
+            return PasteSource::Os(OsPasteSource::StringOnly);
+        }
+        PasteSource::Empty
+    }
+
     fn start_paste(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         prompt_on_conflict: bool,
     ) {
-        if self.clipboard.is_empty() {
-            self.surface_error("Clipboard is empty", cx);
-            return;
-        }
+        let (sources, is_cut) = match self.resolve_paste_source(cx) {
+            PasteSource::Internal { paths, is_cut } => (paths, is_cut),
+            PasteSource::Os(OsPasteSource::ExternalPaths(paths)) => (paths, false),
+            PasteSource::Os(OsPasteSource::Image { format, bytes }) => {
+                self.paste_image_from_os_clipboard(format, bytes, window, cx);
+                return;
+            }
+            PasteSource::Os(OsPasteSource::StringOnly) => {
+                self.surface_error(
+                    "Clipboard holds text — paste into a terminal or editor pane.".to_string(),
+                    cx,
+                );
+                return;
+            }
+            PasteSource::Empty => {
+                self.surface_error("Clipboard is empty", cx);
+                return;
+            }
+        };
 
-        let is_cut = matches!(self.clipboard, FmClipboard::Cut(_));
-        let sources: Vec<PathBuf> = self.clipboard.paths().to_vec();
         let destination_dir = self.current_dir.clone();
         let mut used: Vec<PathBuf> = Vec::with_capacity(sources.len());
         let mut plan: Vec<PasteEntry> = Vec::with_capacity(sources.len());
@@ -2862,6 +2980,55 @@ impl FileManager {
         }
 
         self.execute_paste(plan, is_cut, /* allow_overwrite */ false, window, cx);
+    }
+
+    /// `p` / `P` fallback when the OS clipboard carries an image rather
+    /// than file paths. Saves the bytes into the current directory under
+    /// `paste-YYYY-MM-DD-HHMMSS.<ext>`, picking the extension from the
+    /// image format. Same-second pastes get a `(2)` suffix from the
+    /// shared `next_available_path` helper. See
+    /// REQ:codon/fm-os-clipboard#c-fm-paste-from-os.
+    fn paste_image_from_os_clipboard(
+        &mut self,
+        format: gpui::ImageFormat,
+        bytes: Vec<u8>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let extension = image_format_extension(format);
+        let timestamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S");
+        let file_name = format!("paste-{timestamp}.{extension}");
+        let initial = self.current_dir.join(&file_name);
+        let destination = if initial.exists() {
+            next_available_path(
+                &self.current_dir,
+                std::ffi::OsStr::new(&file_name),
+                &[],
+            )
+        } else {
+            initial
+        };
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = fs.write(&destination, &bytes).await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        let displayed = destination
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| destination.display().to_string());
+                        this.surface_error(format!("Pasted image: {displayed}"), cx);
+                        this.reload_entries(window, cx);
+                    }
+                    Err(e) => {
+                        this.surface_error(format!("Couldn't paste image: {e}"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn execute_paste(
@@ -4272,6 +4439,20 @@ fn resolve_with_depth_cap(path: &Path, max_hops: usize) -> std::io::Result<PathB
 /// try `foo (2).txt`, `foo (3).txt`, etc. `used` are destinations already
 /// claimed by an in-flight paste batch so a single `p` of two files named
 /// `foo.txt` doesn't try to write both to the same target.
+fn image_format_extension(format: gpui::ImageFormat) -> &'static str {
+    match format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        gpui::ImageFormat::Svg => "svg",
+        gpui::ImageFormat::Bmp => "bmp",
+        gpui::ImageFormat::Tiff => "tiff",
+        gpui::ImageFormat::Ico => "ico",
+        gpui::ImageFormat::Pnm => "pnm",
+    }
+}
+
 fn next_available_path(
     directory: &Path,
     file_name: &std::ffi::OsStr,

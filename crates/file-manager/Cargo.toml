@@ -12,6 +12,7 @@ tempfile.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 codon-command-palette.workspace = true
 codon-config.workspace = true
 codon-jump.workspace = true
