@@ -10,7 +10,7 @@ summary: >
   log line, no focus change. The signal is purely "your keystroke
   was seen and produced no bound action."
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/discoverability#c-dead-end-flash
 ---

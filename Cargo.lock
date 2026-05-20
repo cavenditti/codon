@@ -3438,6 +3438,7 @@ name = "codon-command-palette"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codon-keymap",
  "codon-mode",
  "codon-pickers",
  "command_palette",
@@ -3523,7 +3524,6 @@ dependencies = [
  "codon-pickers",
  "command_palette",
  "diagnostics",
- "file-manager",
  "fs",
  "git",
  "git_ui",
