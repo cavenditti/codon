@@ -254,7 +254,18 @@ impl PersistScheduler {
         // duplicate write a second later.
         self.pending_timer.lock().take();
         self.dirty.store(false, Ordering::Release);
-        self.spawn_flush_task(&mut cx.to_async())
+        // Snapshot via the `&App` we already hold instead of round-
+        // tripping through `AsyncApp::update`. The Async path re-borrows
+        // the App cell and panics when `flush_now` is called from
+        // inside an entity update (window-close handler's `update_in`
+        // is the path that hit this).
+        self.flush_count.fetch_add(1, Ordering::Relaxed);
+        let snapshot = SessionRegistry::global(cx).snapshot();
+        cx.background_spawn(async move {
+            if let Err(err) = snapshot.write().await {
+                log::warn!("persist scheduler: failed to persist session registry: {err:?}");
+            }
+        })
     }
 
     fn spawn_flush_task(&self, cx: &mut gpui::AsyncApp) -> Task<()> {

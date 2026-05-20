@@ -155,6 +155,22 @@ actions!(
     ]
 );
 
+actions!(
+    codon_zoom,
+    [
+        /// Increases UI font, buffer font, and the agent panel's UI/buffer
+        /// font sizes together (non-persisted). Zed's `cmd-=` default only
+        /// bumps the buffer font, which leaves UI-font surfaces (file
+        /// manager, status bar, panels) at their original size — this
+        /// action keeps every codon pane scaling in lockstep.
+        IncreaseAll,
+        /// Decreases UI font, buffer font, and the agent panel's UI/buffer
+        /// font sizes together (non-persisted). Counterpart to
+        /// `IncreaseAll`.
+        DecreaseAll,
+    ]
+);
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -1010,6 +1026,18 @@ fn register_actions(
                     theme_settings::reset_agent_buffer_font_size(cx);
                 }
             }
+        })
+        .register_action(|_, _: &IncreaseAll, _window, cx| {
+            theme_settings::adjust_ui_font_size(cx, |size| size + px(1.0));
+            theme_settings::increase_buffer_font_size(cx);
+            theme_settings::adjust_agent_ui_font_size(cx, |size| size + px(1.0));
+            theme_settings::adjust_agent_buffer_font_size(cx, |size| size + px(1.0));
+        })
+        .register_action(|_, _: &DecreaseAll, _window, cx| {
+            theme_settings::adjust_ui_font_size(cx, |size| size - px(1.0));
+            theme_settings::decrease_buffer_font_size(cx);
+            theme_settings::adjust_agent_ui_font_size(cx, |size| size - px(1.0));
+            theme_settings::adjust_agent_buffer_font_size(cx, |size| size - px(1.0));
         })
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {

@@ -396,6 +396,21 @@ const DEFAULT_KEYMAP: &str = r#"
 # Command palette
 "cmd-shift-p" = "codon_command_palette::Toggle"
 
+# Uniform font-size zoom. Zed's defaults bind `cmd-=` / `cmd--` to
+# IncreaseBufferFontSize / DecreaseBufferFontSize, which scale the
+# editor + terminal (both buffer-font) but leave the file manager,
+# status bar, and panels at their original size (UI font). Codon
+# wraps every font knob — UI, buffer, agent-UI, agent-buffer — into
+# `codon_zoom::{Increase,Decrease}All` so every pane scales in
+# lockstep. `cmd-0` is rerouted to `zed::ResetAllZoom` so the reset
+# completes the triple (Zed's own default sends `cmd-0` to
+# ResetBufferFontSize, which would only zero out two of the four
+# font knobs and leave the UI mid-zoom).
+"cmd-=" = "codon_zoom::IncreaseAll"
+"cmd-+" = "codon_zoom::IncreaseAll"
+"cmd--" = "codon_zoom::DecreaseAll"
+"cmd-0" = "zed::ResetAllZoom"
+
 # Action-history picker — `prefix ;` opens a fuzzy picker over the
 # last ~10 non-motion actions; arrow-keys + enter re-fires the
 # highlighted one against the currently focused pane. The 1-key
