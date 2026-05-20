@@ -89,6 +89,12 @@ pub struct KeybindingsCheatsheetModal {
     /// modal fade-out render an empty body — defends against the modal
     /// layer continuing to call `render` while it animates away.
     dismissed: bool,
+    /// Global section is collapsible because it dominates the listing
+    /// (~50 bindings). Defaults to expanded so first-time users still
+    /// see it; `tab` while on the Global tab toggles it. State persists
+    /// for the lifetime of this modal instance only — each invocation
+    /// of `ShowKeymap` builds a fresh modal that resets to expanded.
+    global_collapsed: bool,
 }
 
 #[derive(Clone)]
@@ -141,14 +147,16 @@ impl KeybindingsCheatsheetModal {
         let (local_bindings, global_bindings) =
             collect_bindings(&pane_context_stack, &curated_actions, raw_bindings, cx);
 
-        // Open on whichever tab actually has bindings to show — if the
-        // current pane has no context-local bindings, jump straight to
-        // Global instead of greeting the user with an empty page.
-        let tab = if local_bindings.is_empty() {
-            KeymapCheatTab::Global
-        } else {
-            KeymapCheatTab::ThisPane
-        };
+        // Open on the focused pane's tab whenever that pane has any
+        // context-local bindings — greeting the user with "what can I
+        // do here" before "what can I do anywhere"
+        // (`REQ:codon/discoverability#c-cheatsheet-pane-context`).
+        // Fall through to Global only when ThisPane is empty.
+        // Re-instantiating the modal on each `ShowKeymap` invocation
+        // gives us "re-read on re-invoke" for free — a different
+        // focused pane on the next open recomputes both
+        // `local_bindings` and the leaf label.
+        let tab = initial_tab(leaf_context_label.as_deref(), local_bindings.len());
 
         let overdraw = px(ROW_HEIGHT_PX * (PAGE_ROWS as f32) * 3.0);
         let mut this = Self {
@@ -163,6 +171,7 @@ impl KeybindingsCheatsheetModal {
             list_state: ListState::new(0, ListAlignment::Top, overdraw),
             cursor: 0,
             dismissed: false,
+            global_collapsed: false,
         };
         this.rebuild_rows();
         this
@@ -189,7 +198,17 @@ impl KeybindingsCheatsheetModal {
         };
 
         let mut rows: Vec<RowKind> = Vec::new();
-        if filtered.is_empty() {
+        // Collapsed Global tab renders just a heading hint — no pairs.
+        // `tab` (without shift) toggles back to expanded on the Global
+        // tab; `shift-tab` cycles tabs.
+        let collapse_global =
+            matches!(self.tab, KeymapCheatTab::Global) && self.global_collapsed;
+        if collapse_global {
+            let count = self.global_bindings.len();
+            rows.push(RowKind::EmptyHint(SharedString::from(format!(
+                "Global section collapsed — {count} bindings hidden. Press Tab to expand."
+            ))));
+        } else if filtered.is_empty() {
             let hint = if !self.filter.is_empty() {
                 SharedString::from(format!("No bindings match `{}`", self.filter))
             } else if matches!(self.tab, KeymapCheatTab::ThisPane) {
@@ -212,6 +231,11 @@ impl KeybindingsCheatsheetModal {
         // an argument so adding a third set later is purely additive.
         let _ = forward;
         self.tab = self.tab.next();
+        self.rebuild_rows();
+    }
+
+    fn toggle_global_collapse(&mut self) {
+        self.global_collapsed = !self.global_collapsed;
         self.rebuild_rows();
     }
 
@@ -281,7 +305,17 @@ impl KeybindingsCheatsheetModal {
                 cx.emit(DismissEvent);
                 return;
             }
-            "tab" => self.cycle_tab(!shift),
+            "tab" => {
+                // On the Global tab, plain `tab` toggles the collapse
+                // (it's the dominant section — collapsing is the most
+                // useful affordance there). `shift-tab` still cycles
+                // back to ThisPane so the user can navigate away.
+                if matches!(self.tab, KeymapCheatTab::Global) && !shift {
+                    self.toggle_global_collapse();
+                } else {
+                    self.cycle_tab(!shift);
+                }
+            }
             "/" => self.enter_filter(),
             "j" | "down" => self.move_cursor(1),
             "k" | "up" => self.move_cursor(-1),
@@ -597,6 +631,50 @@ fn leaf_context_label(stack: &[KeyContext]) -> Option<SharedString> {
     leaf.primary().map(|entry| entry.key.clone())
 }
 
+/// Pane kinds whose context name the cheatsheet recognises for the
+/// purposes of "open with the focused pane's tab pre-selected"
+/// (`REQ:codon/discoverability#c-cheatsheet-pane-context`). The list
+/// mirrors the leaf-context keys codon panes register with GPUI; an
+/// unknown leaf is the signal to fall through to the Global tab.
+///
+/// Returns the canonical pane-kind label that the cheatsheet uses
+/// internally. Today the only consumer is the tab pre-selection check,
+/// but the explicit table also documents which pane kinds are wired
+/// up — adding a new pane kind goes here.
+fn recognised_pane_kind(leaf: &str) -> Option<&'static str> {
+    match leaf {
+        "Terminal" => Some("Terminal"),
+        "FileManager" => Some("FileManager"),
+        "GitPanel" => Some("GitPanel"),
+        "Editor" => Some("Editor"),
+        "AgentPanel" => Some("AgentPanel"),
+        "OutlinePanel" => Some("OutlinePanel"),
+        "DebugPanel" => Some("DebugPanel"),
+        _ => None,
+    }
+}
+
+/// Decide which tab the cheatsheet opens on for the focused pane.
+///
+/// Contract:
+/// - Any local bindings present → `ThisPane` (answer "what can I do
+///   here" first). Whether the leaf is a recognised pane kind is
+///   informational for now; `leaf_label` is plumbed through so a
+///   future per-pane-kind tab split (extending beyond today's
+///   ThisPane/Global pair) has a hook without another signature
+///   change.
+/// - No local bindings → `Global`.
+///
+/// Pure on the inputs so it can be exercised without a GPUI Window.
+fn initial_tab(leaf_label: Option<&str>, local_bindings_count: usize) -> KeymapCheatTab {
+    let _ = leaf_label.and_then(recognised_pane_kind);
+    if local_bindings_count == 0 {
+        KeymapCheatTab::Global
+    } else {
+        KeymapCheatTab::ThisPane
+    }
+}
+
 fn collect_bindings(
     pane_context_stack: &[KeyContext],
     curated_actions: &HashSet<String>,
@@ -724,7 +802,13 @@ impl Render for KeybindingsCheatsheetModal {
         };
 
         let help_text = match self.mode {
-            KeymapCheatMode::Browse => "Tab switch · / filter · j/k move · Enter run · Esc dismiss",
+            KeymapCheatMode::Browse => {
+                if matches!(self.tab, KeymapCheatTab::Global) {
+                    "Tab collapse · Shift-Tab switch · / filter · j/k move · Enter run · Esc dismiss"
+                } else {
+                    "Tab switch · / filter · j/k move · Enter run · Esc dismiss"
+                }
+            }
             KeymapCheatMode::Filter => "type to filter · ↑/↓ move · Enter confirm · Esc clear filter",
         };
 
@@ -1102,5 +1186,63 @@ mod tests {
     fn leaf_context_label_none_on_empty_stack() {
         let stack: Vec<KeyContext> = Vec::new();
         assert!(leaf_context_label(&stack).is_none());
+    }
+
+    /// Helper: build a one-deep context stack with the given leaf
+    /// identifier. Mirrors the shape `window.context_stack()` produces
+    /// for a focused codon pane.
+    fn stack_with_leaf(leaf: &str) -> Vec<KeyContext> {
+        let mut entry = KeyContext::new_with_defaults();
+        entry.add(leaf.to_string());
+        vec![entry]
+    }
+
+    #[test]
+    fn cheatsheet_default_tab_terminal() {
+        let stack = stack_with_leaf("Terminal");
+        let label = leaf_context_label(&stack);
+        assert_eq!(label.as_deref(), Some("Terminal"));
+        assert_eq!(recognised_pane_kind("Terminal"), Some("Terminal"));
+        // local_bindings_count > 0 — the matcher returned pane-local
+        // bindings, so the cheatsheet pre-selects ThisPane.
+        assert_eq!(
+            initial_tab(label.as_deref(), 4),
+            KeymapCheatTab::ThisPane,
+            "focused Terminal with local bindings opens on ThisPane",
+        );
+    }
+
+    #[test]
+    fn cheatsheet_default_tab_filemanager() {
+        let stack = stack_with_leaf("FileManager");
+        let label = leaf_context_label(&stack);
+        assert_eq!(label.as_deref(), Some("FileManager"));
+        assert_eq!(recognised_pane_kind("FileManager"), Some("FileManager"));
+        assert_eq!(
+            initial_tab(label.as_deref(), 7),
+            KeymapCheatTab::ThisPane,
+            "focused FileManager with local bindings opens on ThisPane",
+        );
+    }
+
+    #[test]
+    fn cheatsheet_default_tab_global_when_no_local() {
+        // Unrecognised leaf AND no local bindings — fallback is Global.
+        let stack = stack_with_leaf("SomeUnknownPane");
+        let label = leaf_context_label(&stack);
+        assert_eq!(label.as_deref(), Some("SomeUnknownPane"));
+        assert!(recognised_pane_kind("SomeUnknownPane").is_none());
+        assert_eq!(
+            initial_tab(label.as_deref(), 0),
+            KeymapCheatTab::Global,
+            "no local bindings forces Global tab regardless of leaf",
+        );
+        // Recognised leaf but no local bindings — still Global (greeting
+        // the user with an empty ThisPane tab would be hostile).
+        assert_eq!(
+            initial_tab(Some("Terminal"), 0),
+            KeymapCheatTab::Global,
+            "empty local-bindings forces Global even for a known pane kind",
+        );
     }
 }
