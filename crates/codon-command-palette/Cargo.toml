@@ -12,6 +12,7 @@ path = "src/codon_command_palette.rs"
 
 [dependencies]
 anyhow.workspace = true
+codon-keymap.workspace = true
 codon-mode.workspace = true
 codon-pickers.workspace = true
 command_palette.workspace = true

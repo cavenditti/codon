@@ -439,6 +439,31 @@ impl PickerDelegate for CodonPaletteDelegate {
             Mode::Command => {
                 let m = self.matches.get(ix)?;
                 let cmd = self.all_commands.get(m.candidate_id)?;
+                // Every palette row carries a chord column
+                // (`REQ:codon/discoverability#c-binding-hints-everywhere`).
+                // `KeyBinding::for_action_in` paints the key pills when a
+                // binding exists; when it doesn't, we drop in the codon
+                // em-dash placeholder so the column stays present and the
+                // user can tell the verb is reachable from the palette
+                // only.
+                let chord_chip: gpui::AnyElement = {
+                    let chord = codon_keymap::chord_for_action(cx, cmd.action.name(), &[]);
+                    if chord.as_ref() == codon_keymap::UNBOUND_CHORD_PLACEHOLDER {
+                        Label::new(SharedString::from(
+                            codon_keymap::UNBOUND_CHORD_PLACEHOLDER,
+                        ))
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .into_any_element()
+                    } else {
+                        KeyBinding::for_action_in(
+                            cmd.action.as_ref(),
+                            &self.previous_focus_handle,
+                            cx,
+                        )
+                        .into_any_element()
+                    }
+                };
                 Some(
                     ListItem::new(ix)
                         .inset(true)
@@ -453,11 +478,7 @@ impl PickerDelegate for CodonPaletteDelegate {
                                     cmd.name.clone(),
                                     m.positions.clone(),
                                 ))
-                                .child(KeyBinding::for_action_in(
-                                    cmd.action.as_ref(),
-                                    &self.previous_focus_handle,
-                                    cx,
-                                )),
+                                .child(chord_chip),
                         ),
                 )
             }
