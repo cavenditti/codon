@@ -1307,7 +1307,7 @@ mod tests {
         "#;
         let parsed: CodonKeymap = toml::from_str(toml).expect("parses");
         assert_eq!(parsed.keymap.prefix.as_deref(), Some("ctrl-x"));
-        assert_eq!(parsed.bindings.global.len(), 1);
+        assert_eq!(parsed.bindings.global.flat.len(), 1);
     }
 
     /// Mirroring helix-mode bindings into `[bindings.editor.normal]`

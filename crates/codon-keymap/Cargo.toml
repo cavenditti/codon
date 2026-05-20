@@ -33,3 +33,6 @@ workspace.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 zed_actions.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
