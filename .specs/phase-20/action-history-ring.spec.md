@@ -11,7 +11,7 @@ summary: >
   entry. Each action declares `is_motion: bool` (default false); only
   non-motion entries enter the ring.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/discoverability#c-action-history-ring
 blocked_by:
