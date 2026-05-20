@@ -3272,6 +3272,7 @@ dependencies = [
  "codon-agent",
  "codon-command-palette",
  "codon-config",
+ "codon-history",
  "codon-jump",
  "codon-keymap",
  "codon-mode",
@@ -3477,6 +3478,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "codon-history"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fuzzy",
+ "gpui",
+ "log",
+ "menu",
+ "picker",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "codon-jump"
 version = "0.1.0"
 dependencies = [
@@ -3501,6 +3519,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "codon-mode",
+ "codon-pane-bridge",
  "codon-pickers",
  "command_palette",
  "diagnostics",

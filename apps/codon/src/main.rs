@@ -808,6 +808,7 @@ fn main() {
         }
         codon_session::init(cx);
         codon_pickers::init(cx);
+        codon_history::init(cx);
         codon_jump::init(app_state.fs.clone(), cx);
         vim::init(cx);
         file_manager::init(app_state.fs.clone(), cx);

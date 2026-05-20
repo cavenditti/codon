@@ -1,0 +1,24 @@
+[package]
+name = "codon-history"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/codon_history.rs"
+
+[dependencies]
+anyhow.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+log.workspace = true
+menu.workspace = true
+picker.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+workspace.workspace = true
