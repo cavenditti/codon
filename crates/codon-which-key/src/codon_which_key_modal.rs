@@ -3,11 +3,12 @@
 //! Ported from `vendor/zed/crates/which_key/src/which_key_modal.rs` with
 //! three rendering changes spelled out in `REQ:codon/which-key-overlay`:
 //!
-//! 1. The HUD spans the full width of the active pane (via
-//!    `workspace::codon_bridge::active_pane_bounds`) instead of the
-//!    bottom-right 480 px corner.
+//! 1. The HUD spans the full width of the OS window instead of the
+//!    bottom-right 480 px corner. The HUD is intentionally NOT
+//!    pane-bound — a small active pane would otherwise leave the HUD
+//!    covering the very content it documents.
 //! 2. Bindings flow column-first across as many columns as fit
-//!    (`pane_width / min_column_width`), so wide chord families like
+//!    (`window_width / min_column_width`), so wide chord families like
 //!    `g …` or `space …` don't have to scroll.
 //! 3. The pending-keys title is prefixed with the current
 //!    `CodonModeTracker` pane-mode (`[NORMAL]`, `[INSERT]`,
@@ -15,7 +16,7 @@
 //!
 //! `phase-16/which-key-auto-flip` extends the render with a top-anchor
 //! variant when the natural content height would occlude more than
-//! `flip_threshold` of the pane.
+//! `flip_threshold` of the window.
 
 use std::collections::HashMap;
 
@@ -28,7 +29,7 @@ use settings::Settings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, WithScrollbar, prelude::*, text_for_keystrokes,
 };
-use workspace::{ModalView, Workspace, codon_bridge::active_pane_bounds};
+use workspace::{ModalView, Workspace};
 
 use crate::FILTERED_KEYSTROKES;
 use crate::codon_which_key_settings::CodonWhichKeySettings;
@@ -169,11 +170,9 @@ impl Render for CodonWhichKeyModal {
         let has_rows = !self.bindings.is_empty();
         let viewport_size = window.viewport_size();
 
-        let pane_bounds = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read_with(cx, |workspace, _| active_pane_bounds(workspace)));
-
+        // Always render against the full OS window — pane-bound layout
+        // was rejected because a small active pane would let the HUD
+        // cover its own host pane (and most other panes too).
         let status_height = self
             .workspace
             .upgrade()
@@ -191,15 +190,11 @@ impl Render for CodonWhichKeyModal {
             })
             .unwrap_or(px(0.));
 
-        let pane_width = pane_bounds.map(|b| b.size.width).unwrap_or(viewport_size.width);
-        let pane_height = pane_bounds
-            .map(|b| b.size.height)
-            .unwrap_or(viewport_size.height);
-        let pane_origin_x = pane_bounds.map(|b| b.origin.x).unwrap_or(px(0.));
-        let pane_origin_y = pane_bounds.map(|b| b.origin.y).unwrap_or(px(0.));
+        let window_width = viewport_size.width;
+        let window_height = viewport_size.height;
 
         let columns = compute_columns(
-            pane_width,
+            window_width,
             px(self.settings.min_column_width),
             self.bindings.len(),
         );
@@ -212,10 +207,10 @@ impl Render for CodonWhichKeyModal {
         };
         let title_height = px(28.);
         let content_height = (row_height * rows_per_column as f32) + title_height + px(8.);
-        let max_content_height = pane_height - status_height - px(12.);
+        let max_content_height = window_height - status_height - px(12.);
         let clamped_height = content_height.min(max_content_height);
 
-        let anchor = compute_anchor(content_height, pane_height, self.settings.flip_threshold);
+        let anchor = compute_anchor(content_height, window_height, self.settings.flip_threshold);
 
         let mode_label = Self::pane_mode_label(cx);
         let pending_keys = self.pending_keys.clone();
@@ -280,8 +275,8 @@ impl Render for CodonWhichKeyModal {
             .id("codon-which-key-panel")
             .occlude()
             .absolute()
-            .left(pane_origin_x)
-            .w(pane_width)
+            .left(px(0.))
+            .w(window_width)
             .elevation_3(cx)
             .px(px(8.))
             .py(px(4.))
@@ -291,10 +286,9 @@ impl Render for CodonWhichKeyModal {
             Anchor::Bottom => {
                 let margin_bottom = px(4.);
                 let bottom_offset = margin_bottom + status_height;
-                let pane_bottom = viewport_size.height - (pane_origin_y + pane_height);
-                panel.bottom(pane_bottom + bottom_offset)
+                panel.bottom(bottom_offset)
             }
-            Anchor::Top => panel.top(pane_origin_y + px(4.)),
+            Anchor::Top => panel.top(px(4.)),
         }
     }
 }
