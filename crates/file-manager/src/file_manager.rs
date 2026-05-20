@@ -2518,9 +2518,13 @@ impl FileManager {
         let workspace = self.workspace.clone();
         let total = targets.len();
         let label = format!("Trashing {total} entries");
-        let mut handle = cx.update_global::<crate::tasks::FmTaskStore, _>(|_, cx| {
-            crate::tasks::begin(workspace.clone(), crate::tasks::FmTaskKind::Delete, label, total, cx)
-        });
+        let mut handle = crate::tasks::begin(
+            workspace.clone(),
+            crate::tasks::FmTaskKind::Delete,
+            label,
+            total,
+            cx,
+        );
         let cancel_flag = handle.cancel_flag();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
