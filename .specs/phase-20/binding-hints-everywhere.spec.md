@@ -10,7 +10,7 @@ summary: >
   dock footer, toast notifications. Add a unit-test or lint that
   catches new surfaces naming verbs without chords.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/discoverability#c-binding-hints-everywhere
 ---

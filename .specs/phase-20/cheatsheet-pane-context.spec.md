@@ -10,7 +10,7 @@ summary: >
   Re-invoking from a different pane re-selects the new pane's tab.
   Answers "what can I do here" before "what can I do anywhere."
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/discoverability#c-cheatsheet-pane-context
 ---
