@@ -1248,6 +1248,11 @@ fn initialize_pane(
 ) {
     let workspace_handle = cx.weak_entity();
     pane.update(cx, |pane, cx| {
+        // Codon shows the tab bar on every pane so editor panes (e.g. the
+        // ones opened by the file manager) stay consistent with codon-panes
+        // adapter panes, regardless of the user's `tab_bar.show` setting.
+        // Zed still hides the bar when `items.len() <= 1`.
+        pane.set_should_display_tab_bar(|_, _| true);
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new(|_| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
