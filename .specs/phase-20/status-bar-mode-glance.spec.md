@@ -11,7 +11,7 @@ summary: >
   new `[glance]` TOML table — not derived from a usage histogram, so
   new-user behaviour stays predictable.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines:
   - REQ:codon/discoverability#c-status-bar-mode-glance
 ---
