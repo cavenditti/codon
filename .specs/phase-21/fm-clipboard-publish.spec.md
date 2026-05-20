@@ -10,7 +10,7 @@ summary: >
   carries a "copy"; cut-vs-copy stays a private FM concern decided
   on the FM's own paste.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-os-clipboard#c-fm-publishes-to-os
 blocked_by:

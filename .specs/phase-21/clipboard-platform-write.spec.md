@@ -10,7 +10,7 @@ summary: >
   advertised on the `wl_data_source` on Wayland (currently
   unadvertised). X11 left as-is.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-os-clipboard#c-platform-write-paths
 blocked_by: []

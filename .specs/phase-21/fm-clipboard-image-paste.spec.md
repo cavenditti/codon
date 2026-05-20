@@ -10,7 +10,7 @@ summary: >
   extension picked from the `ImageFormat`. Covers the Firefox /
   Slack "right-click → copy image → paste into FM" case.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-os-clipboard#c-fm-paste-from-os
 blocked_by:

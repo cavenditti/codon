@@ -11,7 +11,7 @@ summary: >
   non-goal); the `Image` case is handled by the sibling
   image-paste task.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/fm-os-clipboard#c-fm-paste-from-os
   - REQ:codon/fm-os-clipboard#c-cross-app-roundtrip
