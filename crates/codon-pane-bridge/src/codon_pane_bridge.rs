@@ -69,6 +69,14 @@ pub struct CodonModeTracker {
     /// whenever this is set, regardless of which pane or vim mode
     /// is otherwise focused — the modal owns the UI.
     pub command_active: bool,
+    /// Snake-case identifier for the currently focused pane kind
+    /// (`"editor"`, `"terminal"`, `"file_manager"`, `"git_panel"`,
+    /// `"peek_dock"`). Used by the status-bar mode indicator to look
+    /// up the curated glance verb row for the (pane, mode) pair on
+    /// every transition (REQ:codon/discoverability#c-status-bar-mode-glance).
+    /// `None` when no codon-aware pane is focused; the indicator then
+    /// renders no glance.
+    pub pane_kind: Option<SharedString>,
 }
 
 impl Default for CodonModeTracker {
@@ -77,11 +85,46 @@ impl Default for CodonModeTracker {
             mode: PaneMode::Normal,
             detail: None,
             command_active: false,
+            pane_kind: None,
         }
     }
 }
 
 impl Global for CodonModeTracker {}
+
+/// Curated per-pane × per-mode glance verbs surfaced by the status-bar
+/// mode indicator. Populated by `codon-keymap` at load time from the
+/// embedded `[glance.*]` table (and user `~/.config/codon/codon.toml`
+/// overrides); read by `codon-mode::mode_indicator` on every
+/// `CodonModeTracker` change to render a brief 3–5 verb hint to the
+/// right of the mode label.
+///
+/// Lives here (not in `codon-keymap`) to avoid a cyclic dep —
+/// `codon-keymap` already deps on `codon-mode`, which deps on this
+/// crate.
+#[derive(Default, Clone)]
+pub struct CodonGlanceTable {
+    /// Map from `"{pane_kind}.{mode}"` (e.g. `"editor.normal"`) to the
+    /// verb list. `pane_kind` matches the snake-case form used in the
+    /// glance TOML (`editor`, `terminal`, `file_manager`, `git_panel`).
+    /// An entry whose `Vec` is empty MUST hide the glance for that
+    /// pane × mode (escape hatch per spec).
+    pub entries: std::collections::HashMap<String, Vec<SharedString>>,
+}
+
+impl CodonGlanceTable {
+    /// Look up the verbs for a given pane × mode. Returns an empty
+    /// slice if no entry exists for the pair.
+    pub fn verbs(&self, pane_kind: &str, mode: &str) -> &[SharedString] {
+        let key = format!("{pane_kind}.{mode}");
+        self.entries
+            .get(&key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+impl Global for CodonGlanceTable {}
 
 actions!(codon_mode, [SwitchToNormal, SwitchToInsert, SwitchToCommand]);
 
@@ -95,6 +138,18 @@ pub trait PaneModeBridge: 'static {
     /// What `PaneMode` the status bar should show while this entity
     /// is focused.
     fn pane_mode(&self) -> PaneMode;
+
+    /// Optional snake-case identifier for the pane kind backing this
+    /// entity — `"editor"`, `"terminal"`, `"file_manager"`,
+    /// `"git_panel"`, `"peek_dock"`. The dispatcher writes this into
+    /// `CodonModeTracker::pane_kind` on focus-in so the status-bar
+    /// mode indicator can look up the curated glance row for the
+    /// `(pane, mode)` pair on every transition. `None` (the default)
+    /// leaves the tracker's `pane_kind` untouched — the right call
+    /// for command-class modals that don't represent a real pane.
+    fn pane_kind(&self) -> Option<&'static str> {
+        None
+    }
 
     /// Optional override for the tracker's `command_active` flag,
     /// which forces the COMMAND label in the status bar regardless
@@ -208,11 +263,15 @@ where
 {
     let mode = bridge.pane_mode();
     let command_override = bridge.command_active_override();
+    let pane_kind = bridge.pane_kind();
     cx.update_global::<CodonModeTracker, _>(|tracker, _| {
         tracker.mode = mode;
         tracker.detail = None;
         if let Some(active) = command_override {
             tracker.command_active = active;
+        }
+        if let Some(kind) = pane_kind {
+            tracker.pane_kind = Some(SharedString::from(kind));
         }
     });
 }
