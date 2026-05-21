@@ -415,7 +415,44 @@ impl ModalView for OverviewModal {
     ) -> DismissDecision {
         // Click-outside / focus-loss path: always restore the origin so
         // the user never lands on a previewed window they didn't pick.
-        self.restore_origin(window, cx);
+        //
+        // This hook can be reached from a workspace-level action handler
+        // (e.g. `Workspace::hide_modal` dispatched by project_search's
+        // present-search handler), which is already inside
+        // `workspace.update(cx, ...)`. A synchronous `restore_origin`
+        // would re-lease the workspace and panic. Defer the swap so it
+        // runs after the current effect cycle releases the lease.
+        if let (Some(session_id), Some(origin), Some(current)) = (
+            self.active_session_id,
+            self.origin_window_id,
+            self.previewed_window_id,
+        ) {
+            let target_layout = self
+                .sessions
+                .iter()
+                .find(|s| s.id == session_id)
+                .and_then(|s| s.windows.iter().find(|w| w.id == origin))
+                .and_then(|w| w.layout.clone());
+            let workspace_weak = self.workspace.clone();
+            let focus = self.focus.clone();
+            self.previewed_window_id = None;
+            window.defer(cx, move |window, cx| {
+                if let Some(workspace) = workspace_weak.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        preview_switch_to_window(
+                            workspace,
+                            session_id,
+                            current,
+                            origin,
+                            target_layout,
+                            focus,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            });
+        }
         DismissDecision::Dismiss(true)
     }
 }
