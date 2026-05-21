@@ -592,8 +592,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let session_indicator = cx.new(|_| codon_session::SessionStatusItem::new());
         let windows_indicator =
             cx.new(|_| codon_session::WindowsStatusItem::new(workspace.weak_handle()));
-        let git_branch_indicator =
-            cx.new(|cx| codon_session::GitBranchIndicator::new(workspace, cx));
         let pane_context_label = cx.new(|_| codon_session::PaneContextLabel::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             // Three zones, per REQ:codon/status-bar.
@@ -607,8 +605,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(windows_indicator, window, cx);
 
             // Centre — focused pane context. Reads left-to-right like a
-            // sentence: on branch X, file Y, language L, at line:col.
-            status_bar.add_center_item(git_branch_indicator, window, cx);
+            // sentence: file Y, language L, at line:col. The active branch
+            // lives on the right (see `project_info`), not here, to avoid
+            // duplicating the same signal across two zones.
             status_bar.add_center_item(pane_context_label, window, cx);
             status_bar.add_center_item(active_buffer_language, window, cx);
             status_bar.add_center_item(cursor_position, window, cx);
@@ -6597,6 +6596,7 @@ mod tests {
 mod project_info {
     use gpui::*;
     use ui::prelude::*;
+    use ui::{ButtonLike, Tooltip};
     use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
     pub struct ProjectInfo {
@@ -6616,49 +6616,38 @@ mod project_info {
             let Some(workspace) = self.workspace.upgrade() else {
                 return div().into_any_element();
             };
-            let workspace = workspace.read(cx);
-            let project = workspace.project().read(cx);
+            let project = workspace.read(cx).project().read(cx);
 
-            let project_name = project
-                .worktrees(cx)
-                .next()
-                .map(|wt| wt.read(cx).root_name_str().to_string())
-                .unwrap_or_default();
+            let Some(branch) = project.active_repository(cx).and_then(|repo| {
+                repo.read(cx)
+                    .snapshot()
+                    .branch
+                    .as_ref()
+                    .map(|b| b.ref_name.to_string())
+            }) else {
+                return div().into_any_element();
+            };
 
-            let branch = project
-                .active_repository(cx)
-                .and_then(|repo| {
-                    let snapshot = repo.read(cx).snapshot();
-                    snapshot
-                        .branch
-                        .as_ref()
-                        .map(|b| b.ref_name.to_string())
-                });
-
-            h_flex()
-                .gap_2()
-                .when(!project_name.is_empty(), |el| {
-                    el.child(
-                        Label::new(project_name)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+            ButtonLike::new("project-info-branch")
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            ui::Icon::new(ui::IconName::GitBranch)
+                                .size(ui::IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(branch)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .tooltip(|_window, cx| {
+                    Tooltip::for_action("Switch Branch", &zed_actions::git::Branch, cx)
                 })
-                .when_some(branch, |el, branch| {
-                    el.child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                ui::Icon::new(ui::IconName::GitBranch)
-                                    .size(ui::IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new(branch)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                 })
                 .into_any_element()
         }
