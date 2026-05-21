@@ -1,10 +1,11 @@
 use gpui::{
-    Context, ElementId, FocusHandle, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement as _, WeakEntity, Window,
+    Context, ElementId, FocusHandle, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
+    div, px,
 };
 use ui::{
-    Color, Indicator, Label, LabelCommon, LabelSize, Tab, TabBar, TabPosition,
-    Toggleable as _, h_flex,
+    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon, LabelSize, TabBar,
+    h_flex,
 };
 use workspace::{
     ItemHandle, StatusItemView, Workspace, codon_bridge::PaneSnapshot,
@@ -55,47 +56,101 @@ impl Render for WindowsStatusItem {
             .and_then(|ws| active_workspace_item_kind(&ws.read(cx), cx));
 
         let workspace = self.workspace.clone();
-        let mut bar = TabBar::new("codon-windows-indicator");
+        let bar_id: ElementId = "codon-windows-indicator".into();
+        let mut bar = TabBar::new(bar_id);
+        let _ = last_displayed;
         for &idx in &displayed {
             let win = &session.windows[idx];
-            let id: ElementId = ElementId::Name(format!("codon-window-{}", win.id.0).into());
-            let position = if idx == displayed[0] {
-                TabPosition::First
-            } else if Some(idx) == last_displayed {
-                TabPosition::Last
-            } else {
-                let cmp = idx.cmp(&active);
-                TabPosition::Middle(cmp)
-            };
             let kind = if idx == active {
                 live_active_kind.as_deref()
             } else {
                 win.layout.as_ref().and_then(active_item_kind_in_snapshot)
             };
             let tail = tab_tail_for(win, idx, kind);
-            let dot = Indicator::dot().color(color_for_kind(kind));
-            let label_text = match tail {
-                Some(tail) => format!("{} {}", idx + 1, tail),
-                None => format!("{}", idx + 1),
-            };
-            let target = win.id;
-            let workspace = workspace.clone();
-            let tab = Tab::new(id)
-                .position(position)
-                .toggle_state(idx == active)
-                .start_slot(dot)
-                .child(Label::new(label_text).size(LabelSize::Small))
-                .on_click(cx.listener(move |_, _click, window, cx| {
+            let base = base_color_for_kind(kind, cx);
+            let chip = window_chip(idx, &win.id, idx == active, base, tail, cx, {
+                let workspace = workspace.clone();
+                let target = win.id;
+                move |window, cx| {
                     if let Some(ws) = workspace.upgrade() {
                         ws.update(cx, |ws, cx| {
                             switch_to_window(ws, target, window, cx);
                         });
                     }
-                }));
-            bar = bar.child(tab);
+                }
+            });
+            bar = bar.child(chip);
         }
         h_flex().child(bar)
     }
+}
+
+/// Two-segment "chip" replacing the standard `Tab`: a slightly more
+/// intense numeral on the left, a subtler kind/name tail on the right.
+/// Splitting the surface lets the eye lock onto the jump digit without
+/// reading the rest of the chip — the user told us the dot+label combo
+/// looked dot-heavy and the digit was hard to scan against a wide tail.
+fn window_chip<F>(
+    idx: usize,
+    win_id: &WindowId,
+    is_active: bool,
+    base: Hsla,
+    tail: Option<String>,
+    cx: &Context<WindowsStatusItem>,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&mut Window, &mut Context<WindowsStatusItem>) + 'static,
+{
+    let id: ElementId = ElementId::Name(format!("codon-window-{}", win_id.0).into());
+    let intense_bg = base.opacity(if is_active { 0.85 } else { 0.55 });
+    let subtle_bg = base.opacity(if is_active { 0.30 } else { 0.18 });
+    let number_label = (idx + 1).to_string();
+
+    let number_segment = div()
+        .h_full()
+        .flex()
+        .items_center()
+        .px(px(6.))
+        .bg(intense_bg)
+        .child(
+            Label::new(number_label)
+                .size(LabelSize::Small)
+                .color(Color::Default),
+        );
+
+    let tail_segment = tail.map(|text| {
+        div()
+            .h_full()
+            .flex()
+            .items_center()
+            .px(px(6.))
+            .bg(subtle_bg)
+            .child(Label::new(text).size(LabelSize::Small).color(Color::Default))
+    });
+
+    let border = if is_active {
+        cx.theme().colors().border_selected
+    } else {
+        cx.theme().colors().border.opacity(0.0)
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .h(px(20.))
+        .my(px(2.))
+        .mx(px(1.))
+        .rounded_sm()
+        .overflow_hidden()
+        .border_1()
+        .border_color(border)
+        .gap(px(1.))
+        .cursor_pointer()
+        .child(number_segment)
+        .when_some(tail_segment, |this, seg| this.child(seg))
+        .on_click(cx.listener(move |_, _event, window, cx| on_click(window, cx)))
 }
 
 /// Map an item-kind string (as produced by `serialized_item_kind` or the
@@ -116,15 +171,22 @@ fn label_for_kind(kind: Option<&str>) -> Option<&'static str> {
     }
 }
 
-fn color_for_kind(kind: Option<&str>) -> Color {
+/// Resolve a kind to a theme-aware base hue. The chip then renders that
+/// hue at a more intense alpha behind the numeral and a subtler alpha
+/// behind the tail — see [`window_chip`]. Unrecognised / missing kinds
+/// fall back to the theme's element background so the chip still shows
+/// the jump number even when we can't characterise the pane.
+fn base_color_for_kind(kind: Option<&str>, cx: &gpui::App) -> Hsla {
+    let theme = cx.theme();
     match kind {
-        Some("Terminal") => Color::Success,
-        Some("FileManager") => Color::Info,
-        Some("GitPanel") => Color::Warning,
-        Some("AgentPanel") => Color::Accent,
-        Some("Outline Panel") => Color::Muted,
-        Some("DebugPanel") => Color::Error,
-        _ => Color::Default,
+        Some("Terminal") => theme.status().success,
+        Some("FileManager") => theme.status().info,
+        Some("GitPanel") => theme.status().warning,
+        Some("AgentPanel") => theme.colors().text_accent,
+        Some("Outline Panel") => theme.colors().text_muted,
+        Some("DebugPanel") => theme.status().error,
+        Some("Editor") => theme.colors().text,
+        _ => theme.colors().element_background,
     }
 }
 
