@@ -774,9 +774,17 @@ impl JumpOverlay {
         // (mirrors the cheatsheet's dispatch_cursor pattern).
         self.dismissed = true;
         cx.emit(DismissEvent);
-        match self.mode {
-            JumpMode::Target => (removed.candidate.action)(window, cx),
-            JumpMode::Url => self.dispatch_url_copy(removed.candidate, window, cx),
+        // URL candidates always route through `dispatch_url_copy` so the
+        // user gets the "Copied <url>" toast regardless of which chord
+        // opened the overlay. Without this, Target-mode URL jumps would
+        // silently write to the clipboard via the candidate's own
+        // closure and look like the hint did nothing.
+        match (&self.mode, &removed.candidate.kind) {
+            (_, JumpKind::Url(_)) => self.dispatch_url_copy(removed.candidate, window, cx),
+            (JumpMode::Target, _) => (removed.candidate.action)(window, cx),
+            (JumpMode::Url, _) => {
+                log::warn!("codon-jump: Url mode dispatched a non-URL candidate");
+            }
         }
     }
 
