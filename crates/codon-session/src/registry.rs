@@ -128,6 +128,24 @@ impl SessionRegistry {
         Ok(())
     }
 
+    /// Toggle the transient "needs attention" marker on a specific
+    /// window. Used by background-output signals (e.g. terminal bells)
+    /// to flag a non-active window so the status-bar indicator can
+    /// surface unseen activity. Returns `Ok(true)` when the flag
+    /// actually changed and the caller should request a redraw.
+    pub fn set_window_attention(
+        &self,
+        session_id: SessionId,
+        window_id: crate::session::WindowId,
+        on: bool,
+    ) -> Result<bool, SessionRegistryError> {
+        let mut guard = self.inner.write();
+        let Some(session) = guard.sessions.iter_mut().find(|s| s.id == session_id) else {
+            return Err(SessionRegistryError::NotFound);
+        };
+        Ok(session.set_window_attention(window_id, on))
+    }
+
     pub fn rename(&self, id: SessionId, new_name: String) -> Result<(), SessionRegistryError> {
         let mut guard = self.inner.write();
         if guard

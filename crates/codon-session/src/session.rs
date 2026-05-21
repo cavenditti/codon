@@ -51,6 +51,13 @@ pub struct Window {
     /// of truth.
     #[serde(default, skip_serializing_if = "is_false")]
     pub layout_stale: bool,
+    /// Transient "this window produced output the user hasn't seen yet"
+    /// flag — set by e.g. a terminal bell in a non-active window, and
+    /// cleared the next time that window becomes active. Lives only in
+    /// memory: a fresh restart starts with every slot unmarked, so this
+    /// is intentionally skipped during (de)serialization.
+    #[serde(default, skip)]
+    pub needs_attention: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -64,6 +71,7 @@ impl Window {
             name: name.into(),
             layout: None,
             layout_stale: false,
+            needs_attention: false,
         }
     }
 
@@ -218,6 +226,29 @@ impl Session {
         }
         self.previous_window = Some(self.active_window);
         self.active_window = new_active;
+        if let Some(slot) = self.windows.get_mut(new_active) {
+            slot.needs_attention = false;
+        }
+    }
+
+    /// Flip the transient `needs_attention` flag on a window by id.
+    /// Returns `true` when the flag changed (caller may want to refresh
+    /// the status-bar indicator). No-op when `id` is unknown, or when
+    /// the window is currently active — the user is already looking at
+    /// it, so there's nothing to surface.
+    pub fn set_window_attention(&mut self, id: WindowId, on: bool) -> bool {
+        let Some(idx) = self.windows.iter().position(|w| w.id == id) else {
+            return false;
+        };
+        if on && idx == self.active_window {
+            return false;
+        }
+        let slot = &mut self.windows[idx];
+        if slot.needs_attention == on {
+            return false;
+        }
+        slot.needs_attention = on;
+        true
     }
 
     pub fn touch(&mut self) {
@@ -355,6 +386,39 @@ mod tests {
         s.set_active_window(1);
         assert_eq!(s.active_window, 1);
         assert_eq!(s.previous_window, Some(2));
+    }
+
+    #[test]
+    fn set_window_attention_flips_inactive_slot_only() {
+        let mut s = session("alpha");
+        let active_id = s.windows[s.active_window].id;
+        let other_id = s.windows[1].id;
+
+        // Active window can't be marked — the user already sees it.
+        assert!(!s.set_window_attention(active_id, true));
+        assert!(!s.windows[s.active_window].needs_attention);
+
+        // Inactive flip on, then idempotent re-set returns false.
+        assert!(s.set_window_attention(other_id, true));
+        assert!(s.windows[1].needs_attention);
+        assert!(!s.set_window_attention(other_id, true));
+
+        // Clearing also reported, then idempotent.
+        assert!(s.set_window_attention(other_id, false));
+        assert!(!s.windows[1].needs_attention);
+        assert!(!s.set_window_attention(other_id, false));
+    }
+
+    #[test]
+    fn set_active_window_clears_incoming_attention() {
+        let mut s = session("alpha");
+        let target_id = s.windows[2].id;
+        assert!(s.set_window_attention(target_id, true));
+        assert!(s.windows[2].needs_attention);
+
+        s.set_active_window(2);
+        // Switching to the window we were notifying about clears the flag.
+        assert!(!s.windows[2].needs_attention);
     }
 
     #[test]

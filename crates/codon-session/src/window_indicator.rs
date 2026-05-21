@@ -1,10 +1,10 @@
 use gpui::{
-    Context, ElementId, FocusHandle, Hsla, InteractiveElement as _, IntoElement,
+    Context, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
     ParentElement, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
-    div, px,
+    div, hsla, px,
 };
 use ui::{
-    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon, LabelSize, TabBar,
+    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon, LabelSize,
     h_flex,
 };
 use workspace::{
@@ -48,7 +48,6 @@ impl Render for WindowsStatusItem {
         // are. This keeps a brand-new session showing a single tab and
         // a half-used session showing only the used + active tabs.
         let displayed = session.displayed_window_indices();
-        let last_displayed = displayed.last().copied();
 
         let live_active_kind = self
             .workspace
@@ -56,9 +55,7 @@ impl Render for WindowsStatusItem {
             .and_then(|ws| active_workspace_item_kind(&ws.read(cx), cx));
 
         let workspace = self.workspace.clone();
-        let bar_id: ElementId = "codon-windows-indicator".into();
-        let mut bar = TabBar::new(bar_id);
-        let _ = last_displayed;
+        let mut bar = h_flex().gap(px(2.));
         for &idx in &displayed {
             let win = &session.windows[idx];
             let kind = if idx == active {
@@ -68,7 +65,9 @@ impl Render for WindowsStatusItem {
             };
             let tail = tab_tail_for(win, idx, kind);
             let base = base_color_for_kind(kind, cx);
-            let chip = window_chip(idx, &win.id, idx == active, base, tail, cx, {
+            let is_active = idx == active;
+            let attention = !is_active && win.needs_attention;
+            let chip = window_chip(idx, &win.id, is_active, attention, base, tail, cx, {
                 let workspace = workspace.clone();
                 let target = win.id;
                 move |window, cx| {
@@ -81,7 +80,7 @@ impl Render for WindowsStatusItem {
             });
             bar = bar.child(chip);
         }
-        h_flex().child(bar)
+        bar
     }
 }
 
@@ -90,10 +89,18 @@ impl Render for WindowsStatusItem {
 /// Splitting the surface lets the eye lock onto the jump digit without
 /// reading the rest of the chip — the user told us the dot+label combo
 /// looked dot-heavy and the digit was hard to scan against a wide tail.
+///
+/// Sizing note: the chip is built without an outer margin and without a
+/// `TabBar` wrapper. Wrapping in `TabBar` previously forced the row to
+/// `Tab::container_height` (~24 px), which then stacked on top of the
+/// chip's own `my(2)` + border to overflow the status bar's natural
+/// ~22 px height. We now hand-roll an `h_flex` row so the chips inherit
+/// the bar's content height instead of dictating their own.
 fn window_chip<F>(
     idx: usize,
     win_id: &WindowId,
     is_active: bool,
+    needs_attention: bool,
     base: Hsla,
     tail: Option<String>,
     cx: &Context<WindowsStatusItem>,
@@ -103,20 +110,42 @@ where
     F: Fn(&mut Window, &mut Context<WindowsStatusItem>) + 'static,
 {
     let id: ElementId = ElementId::Name(format!("codon-window-{}", win_id.0).into());
-    let intense_bg = base.opacity(if is_active { 0.85 } else { 0.55 });
-    let subtle_bg = base.opacity(if is_active { 0.30 } else { 0.18 });
+    let intense_bg = base.opacity(if is_active {
+        0.85
+    } else if needs_attention {
+        0.65
+    } else {
+        0.45
+    });
+    let subtle_bg = base.opacity(if is_active {
+        0.30
+    } else if needs_attention {
+        0.24
+    } else {
+        0.16
+    });
     let number_label = (idx + 1).to_string();
+
+    // Dark-grey numeral on the bright active background so the jump
+    // digit stays readable against the most saturated chip; inactive
+    // chips keep the theme's muted text so they recede.
+    let number_color = if is_active {
+        Color::Custom(hsla(0.0, 0.0, 0.12, 1.0))
+    } else {
+        Color::Muted
+    };
 
     let number_segment = div()
         .h_full()
         .flex()
         .items_center()
-        .px(px(6.))
+        .px(px(5.))
         .bg(intense_bg)
         .child(
             Label::new(number_label)
                 .size(LabelSize::Small)
-                .color(Color::Default),
+                .weight(FontWeight::BOLD)
+                .color(number_color),
         );
 
     let tail_segment = tail.map(|text| {
@@ -124,13 +153,22 @@ where
             .h_full()
             .flex()
             .items_center()
-            .px(px(6.))
+            .px(px(5.))
             .bg(subtle_bg)
-            .child(Label::new(text).size(LabelSize::Small).color(Color::Default))
+            .child(
+                Label::new(text)
+                    .size(LabelSize::Small)
+                    .color(Color::Default),
+            )
     });
 
+    // Active wins over attention: the user is currently *in* the window
+    // they would otherwise want to be notified about. Attention is the
+    // fallback signal for the *other* chips that have unseen output.
     let border = if is_active {
-        cx.theme().colors().border_selected
+        hsla(0.0, 0.0, 1.0, 1.0)
+    } else if needs_attention {
+        cx.theme().status().warning
     } else {
         cx.theme().colors().border.opacity(0.0)
     };
@@ -139,9 +177,7 @@ where
         .id(id)
         .flex()
         .items_center()
-        .h(px(20.))
-        .my(px(2.))
-        .mx(px(1.))
+        .h(px(18.))
         .rounded_sm()
         .overflow_hidden()
         .border_1()
