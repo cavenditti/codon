@@ -519,6 +519,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 workspace::Event::PaneAdded(pane) => {
                     initialize_pane(workspace, pane, window, cx);
                 }
+                workspace::Event::PaneRemoved | workspace::Event::ItemRemoved { .. } => {
+                    codon_session::actions::auto_switch_if_active_window_empty(
+                        workspace, window, cx,
+                    );
+                }
                 workspace::Event::OpenBundledFile {
                     text,
                     title,
