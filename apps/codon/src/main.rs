@@ -809,6 +809,12 @@ fn main() {
         codon_session::init(cx);
         codon_pickers::init(cx);
         codon_history::init(cx);
+        // Start the fish-shell RPC server. Must run AFTER the
+        // language-model registry init (Zed initializes it earlier
+        // in main) so the first `#@` trigger can resolve a default
+        // model. The bind is best-effort — failures log and skip
+        // without taking codon down.
+        codon_fish::init(cx);
         codon_jump::init(app_state.fs.clone(), cx);
         vim::init(cx);
         file_manager::init(app_state.fs.clone(), cx);

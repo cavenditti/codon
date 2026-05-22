@@ -5,6 +5,7 @@ members = [
     "crates/codon-agent",
     "crates/codon-command-palette",
     "crates/codon-config",
+    "crates/codon-fish",
     "crates/codon-history",
     "crates/codon-jump",
     "crates/codon-keymap",
@@ -352,6 +353,7 @@ file-manager = { path = "crates/file-manager" }
 codon-agent = { path = "crates/codon-agent" }
 codon-command-palette = { path = "crates/codon-command-palette" }
 codon-config = { path = "crates/codon-config" }
+codon-fish = { path = "crates/codon-fish" }
 codon-history = { path = "crates/codon-history" }
 codon-jump = { path = "crates/codon-jump", version = "0.1.0" }
 codon-keymap = { path = "crates/codon-keymap" }
