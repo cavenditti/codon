@@ -3272,6 +3272,7 @@ dependencies = [
  "codon-agent",
  "codon-command-palette",
  "codon-config",
+ "codon-fish",
  "codon-history",
  "codon-jump",
  "codon-keymap",
@@ -3476,6 +3477,21 @@ dependencies = [
  "settings_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "codon-fish"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "futures 0.3.32",
+ "gpui",
+ "language_model",
+ "log",
+ "net",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
