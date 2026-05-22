@@ -966,6 +966,74 @@ fn close_cascade(
     workspace.replace_center_with_empty_pane(window, cx);
 }
 
+/// Soft auto-switch: when *any* code path drains the active window's last
+/// item, swing focus to another window in the session that still has
+/// content. Slot is left intact (its name, its `WindowId`, its
+/// `previous_window` pointer) — the user just stops staring at an empty
+/// pane.
+///
+/// Called from the workspace-level `cx.subscribe_in` on `PaneRemoved` /
+/// `ItemRemoved`, so it covers Zed's built-in close paths (cmd-w, vim
+/// `:bd`, "close other items") in addition to `codon_session::Close`.
+/// The explicit close cascade above (`close_cascade`) still owns the
+/// "destroy the slot" branch when the user invokes `WindowClose`; this
+/// is a separate, softer trigger.
+pub fn auto_switch_if_active_window_empty(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // The trigger fires after each item / pane removal; bail when the
+    // workspace still has live content. Summing across panes covers the
+    // multi-empty-pane case (codon disables Zed's last-tab auto-close, so
+    // an empty leftover pane can survive an item drain).
+    let total_items: usize = workspace
+        .panes()
+        .iter()
+        .map(|p| p.read(cx).items_len())
+        .sum();
+    if total_items > 0 {
+        return;
+    }
+
+    let registry = SessionRegistry::global(cx);
+    let Some(active_id) = registry.active_id() else {
+        return;
+    };
+    let Some(session) = registry.get(active_id) else {
+        return;
+    };
+    let active_idx = session.active_window;
+
+    // Mirror `finish_window_close`: prefer the last-visited slot when it
+    // has items, fall back to any other slot with items. We require
+    // `layout_has_items` (not `has_user_content`) — a named-but-empty
+    // slot isn't a useful landing site.
+    let prev_populated = session
+        .previous_window
+        .filter(|p| *p != active_idx)
+        .and_then(|p| {
+            session
+                .windows
+                .get(p)
+                .filter(|w| w.layout_has_items())
+                .map(|_| p)
+        });
+    let any_populated = session
+        .windows
+        .iter()
+        .enumerate()
+        .find_map(|(i, w)| (i != active_idx && w.layout_has_items()).then_some(i));
+    let Some(target_idx) = prev_populated.or(any_populated) else {
+        return;
+    };
+
+    let Some(target_id) = session.windows.get(target_idx).map(|w| w.id) else {
+        return;
+    };
+    crate::window_indicator::switch_to_window(workspace, target_id, window, cx);
+}
+
 fn cycle_window(
     workspace: &mut Workspace,
     delta: i32,
