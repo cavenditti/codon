@@ -7,11 +7,19 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use futures::StreamExt as _;
-use gpui::AsyncApp;
+use gpui::{App, AsyncApp};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    MessageContent, Role,
 };
 use serde::Deserialize;
+use std::sync::Arc;
+
+/// Default speed-pick for the `#@` flow. Cheap + fast + cache-able.
+/// Override via the `CODON_FISH_MODEL` env var with either a bare
+/// model id (`claude-haiku-4-5-latest`) or a `provider/model` pair
+/// (`anthropic/claude-haiku-4-5-latest`).
+const DEFAULT_PREFERRED_MODEL: &str = "claude-haiku-4-5";
 
 #[derive(Debug, Deserialize)]
 pub struct Params {
@@ -39,14 +47,11 @@ pub async fn handle(params_json: serde_json::Value, cx: AsyncApp) -> Result<serd
     if params.partial.trim().is_empty() && params.description.trim().is_empty() {
         return Err(anyhow!("empty request: both `partial` and `description` are blank"));
     }
-    let model = cx.update(|app| {
-        LanguageModelRegistry::read_global(app)
-            .default_model()
-            .map(|configured| configured.model)
-    });
+    let preferred = preferred_model_id();
+    let model = cx.update(|app| pick_model(app, preferred.as_deref()));
     let Some(model) = model else {
         return Err(anyhow!(
-            "no default language model configured — open the agent panel and pick one"
+            "no language model available — open the agent panel and configure one"
         ));
     };
     let request = build_request(&params);
@@ -101,7 +106,11 @@ fn build_request(params: &Params) -> LanguageModelRequest {
             LanguageModelRequestMessage {
                 role: Role::System,
                 content: vec![MessageContent::Text(SYSTEM_PROMPT.to_string())],
-                cache: false,
+                // `cache: true` on the (always-identical) system
+                // prompt makes the second-and-onwards `#@` calls
+                // hit the prompt cache. First call still pays the
+                // cold latency.
+                cache: true,
                 reasoning_details: None,
             },
             LanguageModelRequestMessage {
@@ -111,8 +120,49 @@ fn build_request(params: &Params) -> LanguageModelRequest {
                 reasoning_details: None,
             },
         ],
+        temperature: Some(0.0),
         ..Default::default()
     }
+}
+
+fn preferred_model_id() -> Option<String> {
+    std::env::var("CODON_FISH_MODEL").ok().filter(|s| !s.is_empty())
+}
+
+/// Pick a model in order: explicit `provider/id` env override,
+/// bare-id match against any authenticated provider, the
+/// `claude-haiku-4-5` default, then the workspace's default model.
+fn pick_model(app: &App, preferred: Option<&str>) -> Option<Arc<dyn LanguageModel>> {
+    let registry = LanguageModelRegistry::read_global(app);
+    let lookup = |needle: &str| -> Option<Arc<dyn LanguageModel>> {
+        if let Some((provider_id, model_id)) = needle.split_once('/') {
+            registry.available_models(app).find(|model| {
+                model.provider_id().0.as_ref() == provider_id
+                    && model.id().0.as_ref() == model_id
+            })
+        } else {
+            // Bare-id match — first by exact id, then by prefix so
+            // `claude-haiku-4-5` matches `claude-haiku-4-5-latest`
+            // / `claude-haiku-4-5-20251001` across providers.
+            registry
+                .available_models(app)
+                .find(|model| model.id().0.as_ref() == needle)
+                .or_else(|| {
+                    registry
+                        .available_models(app)
+                        .find(|model| model.id().0.as_ref().starts_with(needle))
+                })
+        }
+    };
+    if let Some(needle) = preferred
+        && let Some(model) = lookup(needle)
+    {
+        return Some(model);
+    }
+    if let Some(model) = lookup(DEFAULT_PREFERRED_MODEL) {
+        return Some(model);
+    }
+    registry.default_model().map(|configured| configured.model)
 }
 
 /// Strip code fences and surrounding whitespace if the model wrapped
