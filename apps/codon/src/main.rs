@@ -135,9 +135,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
 }
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
-    eprintln!(
-        "Codon failed to open a window: {e:?}"
-    );
+    eprintln!("Codon failed to open a window: {e:?}");
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         process::exit(1);
@@ -507,7 +505,8 @@ fn main() {
                 .replace(r#""vim_mode": false"#, r#""vim_mode": true"#)
                 .replace(r#""helix_mode": false"#, r#""helix_mode": true"#)
                 .replace(r#""ui_font_size": 16"#, r#""ui_font_size": 14"#)
-                .replace(r#""which_key": {
+                .replace(
+                    r#""which_key": {
     // Whether to show the which-key popup when holding down key combinations.
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
@@ -516,7 +515,8 @@ fn main() {
     // Whether to show the which-key popup when holding down key combinations.
     "enabled": true,
     // Delay in milliseconds before showing the which-key popup.
-    "delay_ms": 500,"#);
+    "delay_ms": 500,"#,
+                );
             store.set_default_settings(&defaults, cx).ok();
         });
         zlog_settings::init(cx);
@@ -791,8 +791,21 @@ fn main() {
         // codon-config must apply user settings before crates that read
         // settings during their own init (e.g. terminal_view, theme_selector).
         codon_config::init(cx);
+        // Apply `[agent.*]` overrides on top of the built-in agents
+        // codon_agent::init registered above. Re-applied on every
+        // codon.toml reload via the watcher callback below.
+        if let Some(path) = codon_config::user_config_path()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            codon_agent::reload_from_toml(cx, &content);
+        }
         codon_config::start_watcher(app_state.fs.clone(), cx, |cx| {
             codon_keymap::load_codon_keymap(cx);
+            if let Some(path) = codon_config::user_config_path()
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                codon_agent::reload_from_toml(cx, &content);
+            }
         });
         // `[diagnostics] render_trace = true` installs the FM
         // render-trace collector. The CLI install above (when
@@ -809,11 +822,11 @@ fn main() {
         codon_session::init(cx);
         codon_pickers::init(cx);
         codon_history::init(cx);
-        // Start the fish-shell RPC server. Must run AFTER the
-        // language-model registry init (Zed initializes it earlier
-        // in main) so the first `#@` trigger can resolve a default
-        // model. The bind is best-effort — failures log and skip
-        // without taking codon down.
+        // Start the fish-shell RPC server. Must run AFTER
+        // codon_agent::init — that kicks off the startup
+        // provider-authentication pass the first `#@` trigger waits
+        // on to resolve a default model. The bind is best-effort —
+        // failures log and skip without taking codon down.
         codon_fish::init(cx);
         codon_jump::init(app_state.fs.clone(), cx);
         vim::init(cx);
@@ -1606,12 +1619,12 @@ pub(crate) async fn restore_or_create_workspace(
                             workspace::RestoreOnStartupBehavior::Launchpad => {}
                             _ => {
                                 terminal_view::terminal_panel::TerminalPanel::add_center_terminal(
-                                workspace,
-                                window,
-                                cx,
-                                |project, cx| project.create_terminal_shell(None, cx),
-                            )
-                            .detach_and_log_err(cx);
+                                    workspace,
+                                    window,
+                                    cx,
+                                    |project, cx| project.create_terminal_shell(None, cx),
+                                )
+                                .detach_and_log_err(cx);
                             }
                         }
                     },

@@ -10,7 +10,7 @@ summary: >
   boundary. Picks up the recommendation from
   `harness-evaluate-forge`.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/agent-harness#c-shared-api
   - REQ:codon/agent-harness#c-tool-dispatch

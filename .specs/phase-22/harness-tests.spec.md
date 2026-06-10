@@ -8,7 +8,7 @@ summary: >
   turns end-to-end through the harness, pane tools, and reply-shaping
   paths. Cancellation has a dedicated test.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/agent-harness#c-tests
 ---

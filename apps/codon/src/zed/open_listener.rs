@@ -1823,6 +1823,13 @@ mod tests {
 
         assert!(!errored);
 
+        // Codon's workspace observers (session registry, pane-mode
+        // dispatcher) shift worktree-scan event ordering relative to
+        // upstream Zed, so the flag is consumed shortly after open
+        // returns rather than during it. Park the executor first — the
+        // contract is that the flag is consumed, not when.
+        cx.run_until_parked();
+
         let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {

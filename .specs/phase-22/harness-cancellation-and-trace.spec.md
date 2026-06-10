@@ -9,7 +9,7 @@ summary: >
   picker. Trace records metadata only — message bodies are never
   recorded.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/agent-harness#c-cancellation
   - REQ:codon/agent-harness#c-trace

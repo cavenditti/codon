@@ -198,3 +198,25 @@ gpui = { workspace = true, features = [
 ] }
 ashpd.workspace = true
 image.workspace = true
+
+# Mirrors vendor/zed/crates/zed dev-dependencies — src/zed.rs tests were
+# forked from there. `util` and `languages` are listed explicitly because
+# the tests use their test-support-gated exports (`path!`, `rel_path`,
+# `markdown_lang`, `rust_lang`) directly.
+[dev-dependencies]
+agent_ui = { workspace = true, features = ["test-support"] }
+call = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["input-latency-histogram", "test-support"] }
+image_viewer = { workspace = true, features = ["test-support"] }
+itertools.workspace = true
+language = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+repl = { workspace = true, features = ["test-support"] }
+search = { workspace = true, features = ["test-support"] }
+terminal_view = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

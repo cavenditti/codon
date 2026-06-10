@@ -10,7 +10,7 @@ summary: >
   drives one pane-tool through forge. Memo is the gate before any
   irreversible adoption.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/agent-harness#c-evaluate-forge
 ---

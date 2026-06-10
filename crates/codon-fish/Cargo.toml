@@ -13,9 +13,9 @@ path = "src/codon_fish.rs"
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+codon-agent.workspace = true
 futures.workspace = true
 gpui.workspace = true
-language_model.workspace = true
 log.workspace = true
 net.workspace = true
 serde.workspace = true

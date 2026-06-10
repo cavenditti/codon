@@ -338,6 +338,7 @@ const DEFAULT_KEYMAP: &str = r#"
 "prefix a e" = "codon_agent::AgentExplain"
 "prefix a s" = "codon_agent::AgentSummarize"
 "prefix a r" = "codon_agent::AgentRefactor"
+"prefix a t" = "codon_agent::TraceViewer"
 
 # Git (cmd-k g prefix)
 "prefix g m" = "git::GenerateCommitMessage"
@@ -722,18 +723,13 @@ pub fn load_codon_keymap(cx: &mut App) {
     if unified.exists() {
         match std::fs::read_to_string(&unified) {
             Ok(content) => match parse_keymap(&content) {
-                Some(bindings) => {
-                    apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx)
-                }
+                Some(bindings) => apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx),
                 None => log::warn!(
                     "codon-keymap: failed to parse [bindings.*] in {}",
                     unified.display()
                 ),
             },
-            Err(err) => log::warn!(
-                "codon-keymap: could not read {}: {err}",
-                unified.display()
-            ),
+            Err(err) => log::warn!("codon-keymap: could not read {}: {err}", unified.display()),
         }
         return;
     }
@@ -746,15 +742,10 @@ pub fn load_codon_keymap(cx: &mut App) {
         );
         match std::fs::read_to_string(&legacy) {
             Ok(content) => match parse_keymap(&content) {
-                Some(bindings) => {
-                    apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx)
-                }
+                Some(bindings) => apply_bindings(expand_prefix_in_bindings(bindings, &prefix), cx),
                 None => log::warn!("codon-keymap: failed to parse {}", legacy.display()),
             },
-            Err(err) => log::warn!(
-                "codon-keymap: could not read {}: {err}",
-                legacy.display()
-            ),
+            Err(err) => log::warn!("codon-keymap: could not read {}: {err}", legacy.display()),
         }
     }
 }
@@ -1014,7 +1005,8 @@ fn add_mode_bindings(
 /// duplication. Centralised here so the `space`-leader pickers don't
 /// drift from the rest of the `global.normal` surface.
 fn global_normal_predicate() -> String {
-    let editor = "(Editor && (vim_mode == normal || vim_mode == helix_normal || vim_mode == helix_select))";
+    let editor =
+        "(Editor && (vim_mode == normal || vim_mode == helix_normal || vim_mode == helix_select))";
     let panes = [
         "Terminal",
         "FileManager",
@@ -1108,11 +1100,9 @@ fn apply_register_prefix_bindings(cx: &mut App) {
 /// `"` default register is deferred — see the function's doc.
 const REGISTER_NAME_ALPHABET: &[char] = &[
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-    'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    '_', '+', '*', '-',
+    't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+    'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4',
+    '5', '6', '7', '8', '9', '_', '+', '*', '-',
 ];
 
 /// Bindings whose context predicate doesn't fit the
@@ -1195,9 +1185,7 @@ fn build_binding(
     ) {
         Ok(binding) => Some(binding),
         Err(err) => {
-            log::warn!(
-                "codon-keymap: invalid keystroke '{keystroke}' for '{action_name}': {err}"
-            );
+            log::warn!("codon-keymap: invalid keystroke '{keystroke}' for '{action_name}': {err}");
             None
         }
     }
@@ -1225,8 +1213,8 @@ fn parse_action_spec(spec: &str) -> Result<(&str, Option<serde_json::Value>), St
     }
     let name = &spec[..open];
     let args = &spec[open + 1..spec.len() - 1];
-    let value: serde_json::Value = serde_json::from_str(args)
-        .map_err(|err| format!("invalid JSON args '{args}': {err}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(args).map_err(|err| format!("invalid JSON args '{args}': {err}"))?;
     Ok((name, Some(value)))
 }
 
@@ -1240,7 +1228,11 @@ mod tests {
     #[test]
     fn prefix_default_substitutes_cmd_k() {
         let bindings = expand_prefix_in_bindings(
-            vec![("prefix c".to_string(), "codon_session::WindowNew".to_string(), None)],
+            vec![(
+                "prefix c".to_string(),
+                "codon_session::WindowNew".to_string(),
+                None,
+            )],
             DEFAULT_PREFIX,
         );
         assert_eq!(bindings[0].0, "cmd-k c");
@@ -1251,9 +1243,21 @@ mod tests {
     fn prefix_override_rekeys_defaults() {
         let bindings = expand_prefix_in_bindings(
             vec![
-                ("prefix c".to_string(), "codon_session::WindowNew".to_string(), None),
-                ("prefix shift-w n".to_string(), "codon_session::WindowNew".to_string(), None),
-                ("prefix \\".to_string(), "codon_session::SplitTerminalRight".to_string(), None),
+                (
+                    "prefix c".to_string(),
+                    "codon_session::WindowNew".to_string(),
+                    None,
+                ),
+                (
+                    "prefix shift-w n".to_string(),
+                    "codon_session::WindowNew".to_string(),
+                    None,
+                ),
+                (
+                    "prefix \\".to_string(),
+                    "codon_session::SplitTerminalRight".to_string(),
+                    None,
+                ),
             ],
             "ctrl-x",
         );
@@ -1285,8 +1289,16 @@ mod tests {
     fn non_prefix_chord_unchanged() {
         let bindings = expand_prefix_in_bindings(
             vec![
-                ("cmd-shift-s".to_string(), "codon_session::SessionSwitch".to_string(), None),
-                ("ctrl-l".to_string(), "workspace::ActivatePaneRight".to_string(), None),
+                (
+                    "cmd-shift-s".to_string(),
+                    "codon_session::SessionSwitch".to_string(),
+                    None,
+                ),
+                (
+                    "ctrl-l".to_string(),
+                    "workspace::ActivatePaneRight".to_string(),
+                    None,
+                ),
                 // Hypothetical chord that *contains* the literal token
                 // `prefix` but not as the leading word.
                 ("alt-prefix".to_string(), "noop".to_string(), None),
@@ -1304,7 +1316,11 @@ mod tests {
     #[test]
     fn prefix_bare_token_expands() {
         let bindings = expand_prefix_in_bindings(
-            vec![("prefix".to_string(), "codon_keymap::SendPrefixToFocus".to_string(), None)],
+            vec![(
+                "prefix".to_string(),
+                "codon_keymap::SendPrefixToFocus".to_string(),
+                None,
+            )],
             "ctrl-x",
         );
         assert_eq!(bindings[0].0, "ctrl-x");
@@ -1351,12 +1367,28 @@ mod tests {
             .map(|(k, _, _)| k.as_str())
             .collect();
         for expected in [
-            "d", "c", "y", "p", "s", ";", ",", "x", "m", "]", "[", "g e", "g h",
-            "space f", "space d", "q", "(", ")", "&", "g f", "g d", "g i", "g y",
+            "d", "c", "y", "p", "s", ";", ",", "x", "m", "]", "[", "g e", "g h", "q", "(", ")",
+            "&", "g f", "g d", "g i", "g y",
         ] {
             assert!(
                 editor_normal_keys.contains(&expected),
                 "editor.normal should contain '{expected}'; got {editor_normal_keys:?}"
+            );
+        }
+
+        // The space-leader pickers moved from `[bindings.editor.normal]`
+        // to `[bindings.global.normal]` in phase 20 so they fire from
+        // every pane kind. Spot-check their new home.
+        let global_normal_pred = global_normal_predicate();
+        let global_normal_keys: Vec<&str> = parsed
+            .iter()
+            .filter(|(_, _, ctx)| ctx.as_deref() == Some(global_normal_pred.as_str()))
+            .map(|(k, _, _)| k.as_str())
+            .collect();
+        for expected in ["space f", "space d", "space b", "space j"] {
+            assert!(
+                global_normal_keys.contains(&expected),
+                "global.normal should contain '{expected}'; got {global_normal_keys:?}"
             );
         }
     }
@@ -1370,8 +1402,15 @@ mod tests {
         let parsed: CodonKeymap = toml::from_str(DEFAULT_KEYMAP).expect("DEFAULT_KEYMAP parses");
         let mut merged: HashMap<String, Vec<String>> = HashMap::new();
         merge_glance(&mut merged, &parsed.glance);
-        for key in ["editor.normal", "terminal.normal", "file_manager.normal", "git_panel.normal"] {
-            let verbs = merged.get(key).unwrap_or_else(|| panic!("missing glance row for {key}"));
+        for key in [
+            "editor.normal",
+            "terminal.normal",
+            "file_manager.normal",
+            "git_panel.normal",
+        ] {
+            let verbs = merged
+                .get(key)
+                .unwrap_or_else(|| panic!("missing glance row for {key}"));
             assert!(
                 !verbs.is_empty(),
                 "embedded glance row '{key}' should ship with verbs, got empty"
@@ -1402,7 +1441,12 @@ mod tests {
             "user empty verbs = [] should win and zero the row"
         );
         // Unrelated rows untouched by the override.
-        assert!(!merged.get("terminal.normal").expect("row exists").is_empty());
+        assert!(
+            !merged
+                .get("terminal.normal")
+                .expect("row exists")
+                .is_empty()
+        );
     }
 
     /// An empty `prefix = ""` falls back to the default — guards against

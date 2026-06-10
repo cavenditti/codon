@@ -73,6 +73,34 @@ format_on_save = "on"
 [keymap]
 # prefix = "ctrl-x"
 
+# ═══ Agents ═════════════════════════════════════════════════════════
+# Every built-in agent's model, prompt, and knobs are overridable from
+# here — one `[agent.<name>]` table per agent. Anything you omit keeps
+# the built-in default; deleting an override restores the default on
+# the next save (live-reload, no restart). Built-ins today:
+#
+#   fish_complete   — the `#@` shell-completion flow (Haiku by default)
+#   explain         — `prefix a e` cross-pane verb
+#   summarize       — `prefix a s` cross-pane verb
+#   refactor        — `prefix a r` cross-pane verb
+#
+# `model` accepts "provider/model_id" (exact pin), a bare model id
+# (prefix-matched across authenticated providers), or "default" (the
+# workspace default model from Zed settings).
+#
+# [agent.fish_complete]
+# model = "anthropic/claude-haiku-4-5"
+# system_prompt = "…"            # replace the built-in prompt wholesale
+# temperature = 0.0
+# max_turns = 1                  # trips through the model+tool loop
+# cache_system_prompt = true     # prompt-cache the system prompt
+
+# Harness-wide knobs (not per-agent).
+[agent_harness]
+# Opt-in status-bar token counter: running `↓ in ↑ out` totals for the
+# session, fed by the per-turn trace. Default off — codon stays quiet.
+# show_token_counter = true
+
 # ═══ Which-key chord HUD ════════════════════════════════════════════
 # Codon's chord HUD is a Helix-style overlay rendered across the full
 # width of the active pane. It appears after a short hold on the chord
@@ -229,10 +257,13 @@ format_on_save = "on"
 # Agent (`prefix a …` family). Explain / Summarize / Refactor capture the
 # active selection (text from focused editor or terminal), open the
 # agent panel, and seed the message editor with a prompt prefix.
+# TraceViewer opens a picker over the last 50 agent turns (metadata
+# only); Enter yanks the selected trace to the clipboard.
 "prefix a a" = "assistant::FocusAgent"
 "prefix a e" = "codon_agent::AgentExplain"
 "prefix a s" = "codon_agent::AgentSummarize"
 "prefix a r" = "codon_agent::AgentRefactor"
+"prefix a t" = "codon_agent::TraceViewer"
 
 # Git (`prefix g …` family)
 "prefix g m" = "git::GenerateCommitMessage"

@@ -1,3 +1,5 @@
+use crate::agents::{EXPLAIN, REFACTOR, SUMMARIZE};
+use crate::runtime::AgentRegistry;
 use agent_ui::AgentPanel;
 use command_palette_hooks::{ActionAcceptsRegistry, ObjectKind};
 use gpui::{App, Context, Focusable as _, Window, actions};
@@ -15,12 +17,11 @@ actions!(
         /// Send the current selection to the agent prefixed with
         /// "Please refactor this code, keeping behavior identical:".
         AgentRefactor,
+        /// Open the agent-turn trace picker (newest first). Enter yanks
+        /// the selected turn's metadata-only trace to the clipboard.
+        TraceViewer,
     ]
 );
-
-const EXPLAIN_PREFIX: &str = "Please explain this:\n\n";
-const SUMMARIZE_PREFIX: &str = "Please summarize:\n\n";
-const REFACTOR_PREFIX: &str = "Please refactor this code, keeping behavior identical:\n\n";
 
 const SELECTION_OBJECT_KINDS: &[ObjectKind] = &[
     ObjectKind::Text,
@@ -42,6 +43,16 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
     workspace.register_action(handle_agent_explain);
     workspace.register_action(handle_agent_summarize);
     workspace.register_action(handle_agent_refactor);
+    workspace.register_action(handle_trace_viewer);
+}
+
+fn handle_trace_viewer(
+    workspace: &mut Workspace,
+    _: &TraceViewer,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    crate::trace_viewer::toggle(workspace, window, cx);
 }
 
 fn handle_agent_explain(
@@ -50,7 +61,7 @@ fn handle_agent_explain(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    seed_agent(workspace, EXPLAIN_PREFIX, window, cx);
+    seed_agent(workspace, EXPLAIN, window, cx);
 }
 
 fn handle_agent_summarize(
@@ -59,7 +70,7 @@ fn handle_agent_summarize(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    seed_agent(workspace, SUMMARIZE_PREFIX, window, cx);
+    seed_agent(workspace, SUMMARIZE, window, cx);
 }
 
 fn handle_agent_refactor(
@@ -68,15 +79,21 @@ fn handle_agent_refactor(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    seed_agent(workspace, REFACTOR_PREFIX, window, cx);
+    seed_agent(workspace, REFACTOR, window, cx);
 }
 
+/// Resolve the registered agent's `user_prefix` and seed it into the
+/// AgentPanel's message editor. Falls back to an empty prefix when
+/// the agent registry is not yet installed (test contexts).
 fn seed_agent(
     workspace: &mut Workspace,
-    prefix: &'static str,
+    agent_name: &'static str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let prefix = AgentRegistry::get(cx, agent_name)
+        .and_then(|agent| agent.user_prefix.clone())
+        .unwrap_or_default();
     // Phase 12: the agent panel is reached via `codon_panes::OpenAgent`
     // and lives as a `PanelItemAdapter<AgentPanel>` item in a pane,
     // *not* a dock entry. `Workspace::panel::<AgentPanel>` only returns
@@ -107,7 +124,7 @@ fn seed_agent(
     // (Helix-text-register interop is the follow-up task); this hook
     // just gets the register name + a one-line summary into the seed
     // so the user can see *which* register the verb is consuming.
-    let resolved_prefix = resolve_register_prefix(prefix, cx);
+    let resolved_prefix = resolve_register_prefix(&prefix, cx);
     panel.update(cx, |panel, cx| {
         panel.seed_explain_with_selection(Some(resolved_prefix), window, cx);
     });
@@ -177,33 +194,6 @@ fn find_adapter_hosted_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn explain_prefix_ends_with_blank_line_separator() {
-        // The trailing `\n\n` separates the codon-supplied verb from the
-        // user's selected text so the agent reads it as a block, not a
-        // run-on sentence.
-        assert!(EXPLAIN_PREFIX.ends_with("\n\n"));
-        assert!(SUMMARIZE_PREFIX.ends_with("\n\n"));
-        assert!(REFACTOR_PREFIX.ends_with("\n\n"));
-    }
-
-    #[test]
-    fn prefixes_are_distinct() {
-        // Each verb has a distinct prompt — guards against a copy-paste
-        // mistake silently making two verbs identical.
-        assert_ne!(EXPLAIN_PREFIX, SUMMARIZE_PREFIX);
-        assert_ne!(EXPLAIN_PREFIX, REFACTOR_PREFIX);
-        assert_ne!(SUMMARIZE_PREFIX, REFACTOR_PREFIX);
-    }
-
-    #[test]
-    fn refactor_prefix_pins_behavior_invariant() {
-        // Codon's refactor verb explicitly promises the agent will keep
-        // behaviour identical — losing that phrase would change product
-        // semantics, so pin it from a test.
-        assert!(REFACTOR_PREFIX.contains("keeping behavior identical"));
-    }
 
     #[test]
     fn selection_object_kinds_cover_expected_objects() {

@@ -9,7 +9,7 @@ summary: >
   `[agent_harness] show_token_counter = true`. Default off — codon
   stays terminal-quiet.
 owners: [carlo]
-progress: pending
+progress: done
 refines:
   - REQ:codon/agent-harness#c-cost-bookkeeping
 ---
