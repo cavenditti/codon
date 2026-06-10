@@ -115,6 +115,9 @@ mod tests {
     fn multi_keystroke_prefix_is_rejected() {
         // Multi-key chord strings aren't valid single-keystroke input.
         let parsed = Keystroke::parse("ctrl-x ctrl-y");
-        assert!(parsed.is_err(), "multi-keystroke string must not parse as a single Keystroke");
+        assert!(
+            parsed.is_err(),
+            "multi-keystroke string must not parse as a single Keystroke"
+        );
     }
 }

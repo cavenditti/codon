@@ -14,8 +14,8 @@ use gpui::{
     IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window,
 };
 use ui::{
-    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon as _, LabelSize, StyledExt as _,
-    div, h_flex, v_flex,
+    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon as _, LabelSize,
+    StyledExt as _, div, h_flex, v_flex,
 };
 use workspace::{
     DismissDecision, ModalView, Workspace,
@@ -78,7 +78,7 @@ impl OverviewModal {
     ) -> Self {
         let registry = SessionRegistry::global(cx);
         let mut sessions = registry.sessions();
-        sessions.sort_by(|a, b| b.last_attached_ms.cmp(&a.last_attached_ms));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.last_attached_ms));
         let active_session_id = registry.active_id();
 
         // The active session's active-window `layout` may be stale: the
@@ -485,7 +485,9 @@ impl Render for OverviewModal {
         let body = if self.rows.is_empty() {
             div()
                 .p_8()
-                .child(Label::new("No sessions yet — `cmd-k s n` to create one.").color(Color::Muted))
+                .child(
+                    Label::new("No sessions yet — `cmd-k s n` to create one.").color(Color::Muted),
+                )
                 .into_any_element()
         } else {
             let mut list = v_flex().gap_0();
@@ -537,17 +539,17 @@ impl OverviewModal {
                     .py_1()
                     .gap_2()
                     .bg(bg)
-                    .child(div().w(gpui::px(14.0)).child(Label::new(glyph).color(Color::Muted)))
+                    .child(
+                        div()
+                            .w(gpui::px(14.0))
+                            .child(Label::new(glyph).color(Color::Muted)),
+                    )
                     .child(
                         Label::new(name)
                             .size(LabelSize::Default)
                             .when(is_active, |l| l.color(Color::Accent)),
                     )
-                    .child(
-                        Label::new(cwd)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .child(Label::new(cwd).size(LabelSize::Small).color(Color::Muted))
                     .child(div().flex_grow())
                     .child(
                         Label::new(format!(
@@ -558,11 +560,7 @@ impl OverviewModal {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                     )
-                    .child(
-                        Label::new(when)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .child(Label::new(when).size(LabelSize::Small).color(Color::Muted))
                     .into_any_element()
             }
             Row::Window { session, window: w } => {
@@ -598,14 +596,20 @@ impl OverviewModal {
                     )
                     .child(div().flex_grow())
                     .child(
-                        Label::new(format!("{} pane{}", panes, if panes == 1 { "" } else { "s" }))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        Label::new(format!(
+                            "{} pane{}",
+                            panes,
+                            if panes == 1 { "" } else { "s" }
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                     )
                     .child(
-                        div()
-                            .w(gpui::px(40.0))
-                            .child(Label::new(shorthand).size(LabelSize::Small).color(Color::Muted)),
+                        div().w(gpui::px(40.0)).child(
+                            Label::new(shorthand)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .into_any_element()
             }
@@ -791,8 +795,20 @@ mod tests {
         let rows = build_rows(&sessions, &[true, false]);
         assert_eq!(rows.len(), 4);
         assert!(matches!(rows[0], Row::Session { session: 0 }));
-        assert!(matches!(rows[1], Row::Window { session: 0, window: 0 }));
-        assert!(matches!(rows[2], Row::Window { session: 0, window: 1 }));
+        assert!(matches!(
+            rows[1],
+            Row::Window {
+                session: 0,
+                window: 0
+            }
+        ));
+        assert!(matches!(
+            rows[2],
+            Row::Window {
+                session: 0,
+                window: 1
+            }
+        ));
         assert!(matches!(rows[3], Row::Session { session: 1 }));
     }
 

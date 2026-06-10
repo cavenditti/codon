@@ -313,7 +313,7 @@ mod tests {
         store.swap_session(s);
         let name = RegisterName::try_new('f').unwrap();
         let value = Selection::Files(vec![PathBuf::from("/a")]);
-        assert!(store.write(name, value.clone()));
+        assert!(store.write(name, value));
         let got = store.read(name).expect("readable");
         match got {
             Selection::Files(paths) => assert_eq!(paths, vec![PathBuf::from("/a")]),

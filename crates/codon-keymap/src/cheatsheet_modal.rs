@@ -201,8 +201,7 @@ impl KeybindingsCheatsheetModal {
         // Collapsed Global tab renders just a heading hint — no pairs.
         // `tab` (without shift) toggles back to expanded on the Global
         // tab; `shift-tab` cycles tabs.
-        let collapse_global =
-            matches!(self.tab, KeymapCheatTab::Global) && self.global_collapsed;
+        let collapse_global = matches!(self.tab, KeymapCheatTab::Global) && self.global_collapsed;
         if collapse_global {
             let count = self.global_bindings.len();
             rows.push(RowKind::EmptyHint(SharedString::from(format!(
@@ -437,8 +436,7 @@ impl KeybindingsCheatsheetModal {
 }
 
 fn first_pair_index(rows: &[RowKind]) -> Option<usize> {
-    rows.iter()
-        .position(|r| matches!(r, RowKind::Pair { .. }))
+    rows.iter().position(|r| matches!(r, RowKind::Pair { .. }))
 }
 
 fn nearest_pair(rows: &[RowKind], target: usize) -> Option<usize> {
@@ -487,8 +485,8 @@ fn append_pairs(out: &mut Vec<RowKind>, items: &[BindingRow]) {
 }
 
 fn render_binding_cell(row: &BindingRow) -> AnyElement {
-    let chord = KeyBinding::from_keystrokes(row.keystrokes.clone(), false)
-        .size(ui::rems_from_px(13.));
+    let chord =
+        KeyBinding::from_keystrokes(row.keystrokes.clone(), false).size(ui::rems_from_px(13.));
     h_flex()
         .items_center()
         .gap_3()
@@ -593,7 +591,11 @@ fn render_tabs(
             .when(is_active, |el| el.bg(pill_bg))
             .child(
                 Label::new(label)
-                    .color(if is_active { Color::Default } else { Color::Muted })
+                    .color(if is_active {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    })
                     .size(LabelSize::Default)
                     .weight(if is_active {
                         FontWeight::SEMIBOLD
@@ -603,7 +605,11 @@ fn render_tabs(
             )
             .child(
                 Label::new(format!("{count}"))
-                    .color(if is_active { Color::Accent } else { Color::Muted })
+                    .color(if is_active {
+                        Color::Accent
+                    } else {
+                        Color::Muted
+                    })
                     .size(LabelSize::Small),
             )
             .when(is_active, |el| el.border_b_2().border_color(accent));
@@ -809,7 +815,9 @@ impl Render for KeybindingsCheatsheetModal {
                     "Tab switch · / filter · j/k move · Enter run · Esc dismiss"
                 }
             }
-            KeymapCheatMode::Filter => "type to filter · ↑/↓ move · Enter confirm · Esc clear filter",
+            KeymapCheatMode::Filter => {
+                "type to filter · ↑/↓ move · Enter confirm · Esc clear filter"
+            }
         };
 
         let title_block = v_flex()
@@ -830,7 +838,11 @@ impl Render for KeybindingsCheatsheetModal {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(Label::new("⌘ K  F1").color(Color::Muted).size(LabelSize::Small))
+                    .child(
+                        Label::new("⌘ K  F1")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
                     .child(ui::Icon::new(IconName::Command).color(Color::Muted)),
             );
 
@@ -855,29 +867,27 @@ impl Render for KeybindingsCheatsheetModal {
         let rows = self.rows.clone();
         let cursor = self.cursor;
         let list_state = self.list_state.clone();
-        let body = list(
-            list_state,
-            move |ix, _window, _cx| match rows.get(ix) {
-                Some(RowKind::EmptyHint(text)) => render_empty_hint(text.clone()),
-                Some(RowKind::Pair {
-                    left,
-                    right,
-                    striped,
-                }) => render_pair(
-                    left,
-                    right.as_ref(),
-                    *striped,
-                    ix == cursor,
-                    row_bg,
-                    cursor_bg,
-                    accent,
-                ),
-                None => div().into_any_element(),
-            },
-        )
+        let body = list(list_state, move |ix, _window, _cx| match rows.get(ix) {
+            Some(RowKind::EmptyHint(text)) => render_empty_hint(text.clone()),
+            Some(RowKind::Pair {
+                left,
+                right,
+                striped,
+            }) => render_pair(
+                left,
+                right.as_ref(),
+                *striped,
+                ix == cursor,
+                row_bg,
+                cursor_bg,
+                accent,
+            ),
+            None => div().into_any_element(),
+        })
         .flex_grow();
 
-        let filter_bar = if matches!(self.mode, KeymapCheatMode::Filter) || !self.filter.is_empty() {
+        let filter_bar = if matches!(self.mode, KeymapCheatMode::Filter) || !self.filter.is_empty()
+        {
             let prompt = h_flex()
                 .items_center()
                 .gap_2()
@@ -1127,7 +1137,11 @@ mod tests {
         // Row 0: left=A, right=C  (top-down then right, split=2).
         // Row 1: left=B, right=D.
         match &out[0] {
-            RowKind::Pair { left, right, striped } => {
+            RowKind::Pair {
+                left,
+                right,
+                striped,
+            } => {
                 assert_eq!(left.action_name.as_ref(), "A");
                 assert_eq!(right.as_ref().map(|r| r.action_name.as_ref()), Some("C"));
                 assert!(!striped, "first pair is unstriped");
@@ -1135,7 +1149,11 @@ mod tests {
             _ => panic!("expected Pair"),
         }
         match &out[1] {
-            RowKind::Pair { left, right, striped } => {
+            RowKind::Pair {
+                left,
+                right,
+                striped,
+            } => {
                 assert_eq!(left.action_name.as_ref(), "B");
                 assert_eq!(right.as_ref().map(|r| r.action_name.as_ref()), Some("D"));
                 assert!(striped, "second pair is striped");

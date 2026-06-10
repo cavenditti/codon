@@ -45,11 +45,7 @@ pub const UNBOUND_CHORD_PLACEHOLDER: &str = "—";
 /// iteration order (insertion order, with user overrides last) — for
 /// display, the last binding takes precedence, mirroring how the
 /// cheatsheet's `collect_bindings` collapses duplicates.
-pub fn chord_for_action(
-    cx: &App,
-    action_name: &str,
-    contexts: &[KeyContext],
-) -> SharedString {
+pub fn chord_for_action(cx: &App, action_name: &str, contexts: &[KeyContext]) -> SharedString {
     let Ok(action) = cx.build_action(action_name, None) else {
         return SharedString::from(UNBOUND_CHORD_PLACEHOLDER);
     };

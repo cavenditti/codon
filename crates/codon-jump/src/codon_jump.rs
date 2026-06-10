@@ -37,11 +37,11 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, deferred, div, prelude::FluentBuilder, px,
 };
 
+use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
 pub use workspace::codon_jump_clickable::{
     JumpClickable, JumpClickableExt, clear_clickable_registry, clickable_registry_len,
     take_clickables,
 };
-use ui::{ActiveTheme, Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
 use workspace::{
     Event as WorkspaceEvent, ModalView, Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
@@ -278,10 +278,7 @@ pub fn apply_user_jump_config(cx: &mut App) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             log::debug!("codon-jump: {} not present", path.display());
         }
-        Err(err) => log::warn!(
-            "codon-jump: could not read {} ({err})",
-            path.display()
-        ),
+        Err(err) => log::warn!("codon-jump: could not read {} ({err})", path.display()),
     }
 }
 
@@ -531,7 +528,9 @@ struct LabeledCandidate {
 enum KeystrokeState {
     WaitFirst,
     /// At least one label starts with `prefix` — render only those.
-    WaitSecond { prefix: char },
+    WaitSecond {
+        prefix: char,
+    },
 }
 
 /// Window-wide jump overlay. Opens as a `Workspace` modal that
@@ -629,7 +628,7 @@ impl JumpOverlay {
 
         let labeled: Vec<LabeledCandidate> = labels
             .into_iter()
-            .zip(candidates.into_iter())
+            .zip(candidates)
             .map(|(label, candidate)| LabeledCandidate { label, candidate })
             .collect();
 
@@ -706,10 +705,7 @@ impl JumpOverlay {
 
         match self.state.clone() {
             KeystrokeState::WaitFirst => {
-                let any_match = self
-                    .labeled
-                    .iter()
-                    .any(|lc| lc.label.starts_with(typed));
+                let any_match = self.labeled.iter().any(|lc| lc.label.starts_with(typed));
                 if !any_match {
                     self.dismiss(cx);
                     return;
@@ -1312,10 +1308,7 @@ mod tests {
 
     #[test]
     fn sort_by_distance_no_anchor_is_noop() {
-        let mut candidates = vec![
-            fixed_candidate(100.0, 0.0),
-            fixed_candidate(0.0, 0.0),
-        ];
+        let mut candidates = vec![fixed_candidate(100.0, 0.0), fixed_candidate(0.0, 0.0)];
         sort_by_distance(&mut candidates, None);
         let xs: Vec<f32> = candidates
             .iter()
@@ -1561,9 +1554,18 @@ mod tests {
 
     #[test]
     fn label_position_parse_accepts_synonyms() {
-        assert_eq!(LabelPosition::parse("top-left"), Some(LabelPosition::TopLeft));
-        assert_eq!(LabelPosition::parse("topleft"), Some(LabelPosition::TopLeft));
-        assert_eq!(LabelPosition::parse("top_left"), Some(LabelPosition::TopLeft));
+        assert_eq!(
+            LabelPosition::parse("top-left"),
+            Some(LabelPosition::TopLeft)
+        );
+        assert_eq!(
+            LabelPosition::parse("topleft"),
+            Some(LabelPosition::TopLeft)
+        );
+        assert_eq!(
+            LabelPosition::parse("top_left"),
+            Some(LabelPosition::TopLeft)
+        );
         assert_eq!(LabelPosition::parse("Center"), Some(LabelPosition::Center));
         assert_eq!(LabelPosition::parse("CENTRE"), Some(LabelPosition::Center));
         assert_eq!(LabelPosition::parse("bottom-right"), None);
