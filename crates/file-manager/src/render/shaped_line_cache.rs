@@ -94,10 +94,15 @@ impl ShapedLineCache {
         let key = ShapedLineKey::from_parts(font_id, font_size, text.clone());
 
         if let Some(idx) = self.inner.get_index_of(&key) {
-            // Hit: bump recency and return the cached Arc.
-            let (_, value) = self.inner.swap_remove_index(idx).expect("index just resolved");
+            // Hit: bump recency by moving the entry to the tail.
+            // `move_index` preserves the order of every other entry —
+            // a `swap_remove` + reinsert would teleport the previous
+            // tail entry into the vacated slot and corrupt LRU order,
+            // letting head-eviction drop recently used lines.
+            let last = self.inner.len() - 1;
+            self.inner.move_index(idx, last);
+            let (_, value) = self.inner.get_index(last).expect("entry just moved");
             let value_clone = value.clone();
-            self.inner.insert(key, value);
             self.hits = self.hits.saturating_add(1);
             COUNTERS.add_shaped_line_hits(1);
             return value_clone;
@@ -127,11 +132,11 @@ impl ShapedLineCache {
     /// Drop every cached entry whose key doesn't match the supplied
     /// `(font_id, font_size)` pair. Called on theme/font changes so
     /// stale glyphs don't leak across reconfigurations.
+    #[allow(dead_code)]
     pub fn invalidate_for_font(&mut self, font_id: FontId, font_size: Pixels) {
         let centi = (f32::from(font_size) * 100.0).round() as u32;
-        self.inner.retain(|k, _| {
-            k.font_id == font_id && k.font_size_centi_px == centi
-        });
+        self.inner
+            .retain(|k, _| k.font_id == font_id && k.font_size_centi_px == centi);
     }
 
     /// Drop every entry. Used when the visible set rotates wholesale
@@ -141,22 +146,26 @@ impl ShapedLineCache {
         self.inner.clear();
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Cumulative hit count since construction (or last `reset_counters`).
+    #[allow(dead_code)]
     pub fn hits(&self) -> u64 {
         self.hits
     }
 
     /// Cumulative miss count since construction (or last `reset_counters`).
+    #[allow(dead_code)]
     pub fn misses(&self) -> u64 {
         self.misses
     }
 
     /// Reset the hit/miss counters — used by the render-trace harness
     /// to attribute hit-rate per frame.
+    #[allow(dead_code)]
     pub fn reset_counters(&mut self) {
         self.hits = 0;
         self.misses = 0;
@@ -201,13 +210,14 @@ mod tests {
         populate(&mut cache, &[a.clone(), b.clone(), c.clone()]);
         assert_eq!(cache.len(), 3);
 
-        // Touch `a` to mark it most-recently-used.
+        // Touch `a` to mark it most-recently-used — same move-to-tail
+        // the production hit path performs.
         let idx = cache.inner.get_index_of(&a).expect("a present");
-        let (_, v) = cache.inner.swap_remove_index(idx).unwrap();
-        cache.inner.insert(a.clone(), v);
+        let last = cache.inner.len() - 1;
+        cache.inner.move_index(idx, last);
 
         // Insert `d` — should evict `b` (the new least-recently-used).
-        populate(&mut cache, &[d.clone()]);
+        populate(&mut cache, std::slice::from_ref(&d));
 
         assert_eq!(cache.len(), 3);
         assert!(cache.inner.contains_key(&a), "a was just touched");
@@ -222,7 +232,10 @@ mod tests {
         let small = dummy_key(0, 13.0, "small");
         let large = dummy_key(0, 18.0, "large");
         let other_font = dummy_key(1, 13.0, "other");
-        populate(&mut cache, &[small.clone(), large.clone(), other_font.clone()]);
+        populate(
+            &mut cache,
+            &[small.clone(), large.clone(), other_font.clone()],
+        );
         assert_eq!(cache.len(), 3);
 
         cache.invalidate_for_font(FontId(0), px(13.0));

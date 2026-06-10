@@ -1,15 +1,14 @@
 use codon_mode::{CodonModeTracker, ObjectKind, PaneMode, Selection, SelectionSource};
-use fs::{copy_recursive, CopyOptions, RenameOptions};
-use git::status::{
-    FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
-};
+use fs::{CopyOptions, RenameOptions, copy_recursive};
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    actions, point, prelude::*, Action, App, Bounds, ClipboardEntry, ClipboardItem,
-    ClipboardString, Context, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    KeyContext, Pixels, ScrollStrategy, SharedString, Size, Task, UniformListScrollHandle,
-    WeakEntity, Window,
+    Action, App, Bounds, ClipboardEntry, ClipboardItem, ClipboardString, Context, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ScrollStrategy,
+    SharedString, Size, Task, UniformListScrollHandle, WeakEntity, Window, actions, point,
+    prelude::*,
 };
 use language::{Buffer, LanguageRegistry};
+use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
@@ -18,10 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::{Icon, IconName};
 use util::ResultExt;
-use project::Project;
 use workspace::{
-    delete_unloaded_items, item::ItemEvent, register_serializable_item, Item, ItemId,
-    SerializableItem, Workspace, WorkspaceId,
+    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
+    register_serializable_item,
 };
 
 use crate::persistence::FileManagerDb;
@@ -157,7 +155,10 @@ enum PasteSource {
 
 enum OsPasteSource {
     ExternalPaths(Vec<PathBuf>),
-    Image { format: gpui::ImageFormat, bytes: Vec<u8> },
+    Image {
+        format: gpui::ImageFormat,
+        bytes: Vec<u8>,
+    },
     StringOnly,
 }
 
@@ -370,9 +371,12 @@ pub struct FileManager {
     /// Per-column dirty-row hint set populated by
     /// `mark_rows_dirty` (`fm-render-dirty-rect`). Empty means
     /// "full repaint".
-    pub(crate) custom_dirty_parent: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
-    pub(crate) custom_dirty_current: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
-    pub(crate) custom_dirty_preview: std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    pub(crate) custom_dirty_parent:
+        std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    pub(crate) custom_dirty_current:
+        std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
+    pub(crate) custom_dirty_preview:
+        std::rc::Rc<std::cell::RefCell<crate::render::column::DirtyRows>>,
     /// Per-column `RowGlyphCache` — holds the resolved row payloads
     /// across paints so a scroll/selection move repaints only the
     /// rows that actually changed. Cleared by `clear_row_glyph_caches`
@@ -401,33 +405,58 @@ pub struct FileManager {
 pub(crate) enum PendingInput {
     CreateFile(String),
     CreateDirectory(String),
-    Rename { original: PathBuf, new_name: String },
+    Rename {
+        original: PathBuf,
+        new_name: String,
+    },
     Filter,
     /// `P` overwrite prompt: show how many paths would clobber existing
     /// entries, then wait for y/n. The full plan is kept so the single
     /// confirmation applies to the whole batch.
-    ConfirmOverwrite { plan: Vec<PasteEntry>, is_cut: bool },
+    ConfirmOverwrite {
+        plan: Vec<PasteEntry>,
+        is_cut: bool,
+    },
     /// `D` with marks: confirm before trashing the whole marked set.
     /// `targets` carries the snapshot of paths so the prompt is stable
     /// even if the listing changes mid-input.
-    ConfirmDeleteMarked { targets: Vec<PathBuf> },
-    ConfirmSkipTrashDelete { targets: Vec<PathBuf> },
+    ConfirmDeleteMarked {
+        targets: Vec<PathBuf>,
+    },
+    ConfirmSkipTrashDelete {
+        targets: Vec<PathBuf>,
+    },
     /// `R` with marks: input-bar pattern using `{}` as a counter
     /// placeholder. `targets` is the snapshot of marked paths, in
     /// display order, captured at the moment `R` was pressed.
-    BulkRename { pattern: String, targets: Vec<PathBuf> },
+    BulkRename {
+        pattern: String,
+        targets: Vec<PathBuf>,
+    },
     /// `:cd <path>` prompt — Tab extends with longest-common-prefix of
     /// filesystem matches; Enter resolves and navigates.
-    GotoPath { query: String },
+    GotoPath {
+        query: String,
+    },
     Chmod {
         input: String,
         targets: Vec<(PathBuf, Option<u32>)>,
     },
-    FindForward { query: String, origin_index: usize },
-    FindBackward { query: String, origin_index: usize },
+    FindForward {
+        query: String,
+        origin_index: usize,
+    },
+    FindBackward {
+        query: String,
+        origin_index: usize,
+    },
     ContentSearchQuery(String),
-    ShellBlocking { input: String },
-    ShellAsync { input: String },
+    ShellBlocking {
+        input: String,
+    },
+    ShellAsync {
+        input: String,
+    },
 }
 
 pub(crate) struct ShellRunState {
@@ -489,7 +518,10 @@ impl FileManager {
         cx.observe_global::<CodonModeTracker>(|_, cx| cx.notify())
             .detach();
 
-        let prefs = cx.try_global::<crate::prefs::FmPrefs>().cloned().unwrap_or_default();
+        let prefs = cx
+            .try_global::<crate::prefs::FmPrefs>()
+            .cloned()
+            .unwrap_or_default();
 
         let mut this = Self {
             focus_handle,
@@ -656,11 +688,7 @@ impl FileManager {
     /// new listing lands — used by `parent_directory` (jump back to the
     /// child folder we just came out of) and by `reveal_path`. With
     /// `None`, the selection is clamped to the new list length.
-    fn reload_entries_with(
-        &mut self,
-        select_after: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
+    fn reload_entries_with(&mut self, select_after: Option<String>, cx: &mut Context<Self>) {
         self.prepare_reload();
         let listing_gen = self.listing_gen;
         let current_dir = self.current_dir.clone();
@@ -758,7 +786,11 @@ impl FileManager {
                     .entries
                     .iter_mut()
                     .chain(this.parent_entries.iter_mut())
-                    .chain(this.entries_unfiltered.iter_mut().flat_map(|v| v.iter_mut()))
+                    .chain(
+                        this.entries_unfiltered
+                            .iter_mut()
+                            .flat_map(|v| v.iter_mut()),
+                    )
                 {
                     if entry.child_count.is_some() {
                         continue;
@@ -820,7 +852,9 @@ impl FileManager {
         // line up with where the user is about to see the list — the
         // base handle's `top_item` still points at the pre-scroll row.
         if let Some(deferred) = state.deferred_scroll_to_item.as_ref() {
-            return deferred.item_index.min(self.entries.len().saturating_sub(1));
+            return deferred
+                .item_index
+                .min(self.entries.len().saturating_sub(1));
         }
         state.base_handle.top_item()
     }
@@ -869,7 +903,9 @@ impl FileManager {
             return None;
         }
         let first = if let Some(deferred) = state.deferred_scroll_to_item.as_ref() {
-            deferred.item_index.min(self.entries.len().saturating_sub(1))
+            deferred
+                .item_index
+                .min(self.entries.len().saturating_sub(1))
         } else {
             state.base_handle.top_item()
         };
@@ -982,10 +1018,8 @@ impl FileManager {
             {
                 self.selected_index = idx;
             } else {
-                self.selected_index = cmp::min(
-                    self.selected_index,
-                    self.entries.len().saturating_sub(1),
-                );
+                self.selected_index =
+                    cmp::min(self.selected_index, self.entries.len().saturating_sub(1));
             }
         }
     }
@@ -1122,7 +1156,7 @@ impl FileManager {
         }
 
         self.preview_gen = self.preview_gen.wrapping_add(1);
-        self.preview_target = target_path.clone();
+        self.preview_target = target_path;
         let preview_gen = self.preview_gen;
 
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
@@ -1214,7 +1248,8 @@ impl FileManager {
                 &self.custom_dirty_current,
                 &[prev, self.selected_index],
             );
-            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
+            self.scroll_handle
+                .scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.refresh_visual_marks();
             self.request_preview_update(cx);
             cx.notify();
@@ -1229,7 +1264,8 @@ impl FileManager {
             &self.custom_dirty_current,
             &[prev, self.selected_index],
         );
-        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.refresh_visual_marks();
         self.request_preview_update(cx);
         cx.notify();
@@ -1240,7 +1276,8 @@ impl FileManager {
         if !self.entries.is_empty() {
             let half = self.visible_lines / 2;
             self.selected_index = cmp::min(self.selected_index + half, self.entries.len() - 1);
-            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
+            self.scroll_handle
+                .scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.request_preview_update(cx);
             cx.notify();
             self.notify_workspace_scrolled(cx);
@@ -1250,7 +1287,8 @@ impl FileManager {
     fn half_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let half = self.visible_lines / 2;
         self.selected_index = self.selected_index.saturating_sub(half);
-        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
@@ -1262,7 +1300,8 @@ impl FileManager {
                 self.selected_index + self.visible_lines,
                 self.entries.len() - 1,
             );
-            self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
+            self.scroll_handle
+                .scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.request_preview_update(cx);
             cx.notify();
             self.notify_workspace_scrolled(cx);
@@ -1271,7 +1310,8 @@ impl FileManager {
 
     fn page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(self.visible_lines);
-        self.scroll_handle.scroll_to_item(self.selected_index, ScrollStrategy::Top);
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.request_preview_update(cx);
         cx.notify();
         self.notify_workspace_scrolled(cx);
@@ -1283,12 +1323,7 @@ impl FileManager {
     /// populated from `std::fs::metadata` which dereferences links, so
     /// a symlink pointing at a directory is treated the same as the
     /// directory itself.
-    fn enter_directory(
-        &mut self,
-        _: &EnterDirectory,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn enter_directory(&mut self, _: &EnterDirectory, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             return;
         };
@@ -1310,7 +1345,8 @@ impl FileManager {
             let preview_matches = matches!(&self.preview, Preview::Directory(_))
                 && self.preview_target.as_ref() == Some(&entry.path);
             if preview_matches {
-                let Preview::Directory(children) = std::mem::replace(&mut self.preview, Preview::Empty)
+                let Preview::Directory(children) =
+                    std::mem::replace(&mut self.preview, Preview::Empty)
                 else {
                     unreachable!("preview_matches guard checks this variant");
                 };
@@ -1324,15 +1360,9 @@ impl FileManager {
                 // is stale (different path set). Mark all three
                 // custom-render columns dirty so the row-glyph
                 // cache rebuilds on the next paint.
-                crate::render::column::FmColumnElement::mark_all_dirty(
-                    &self.custom_dirty_parent,
-                );
-                crate::render::column::FmColumnElement::mark_all_dirty(
-                    &self.custom_dirty_current,
-                );
-                crate::render::column::FmColumnElement::mark_all_dirty(
-                    &self.custom_dirty_preview,
-                );
+                crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_parent);
+                crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_current);
+                crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_preview);
                 self.spawn_git_status_fill(cx);
                 self.ensure_visible();
                 self.spawn_child_count_fill(cx);
@@ -1365,12 +1395,7 @@ impl FileManager {
     /// The fallthrough preserves Zed's project-item registry behavior
     /// for files codon already knows how to handle (text, images, …),
     /// so users with no opener config keep today's UX exactly.
-    fn open_focused_file(
-        &mut self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_focused_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let matches = cx
             .try_global::<crate::openers::OpenerStore>()
             .map(|s| s.matches_for(&path))
@@ -1588,8 +1613,7 @@ impl FileManager {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
-                if let (Some(dst_dev), Ok(src_meta)) =
-                    (destination_dev, std::fs::metadata(&source))
+                if let (Some(dst_dev), Ok(src_meta)) = (destination_dev, std::fs::metadata(&source))
                     && src_meta.dev() != dst_dev
                 {
                     cross_fs.push(source);
@@ -1982,7 +2006,8 @@ impl FileManager {
             ScrollStrategy::Top
         };
         self.selected_index = clamped;
-        self.scroll_handle.scroll_to_item(self.selected_index, strategy);
+        self.scroll_handle
+            .scroll_to_item(self.selected_index, strategy);
         self.refresh_visual_marks();
         self.request_preview_update(cx);
         cx.notify();
@@ -2033,7 +2058,11 @@ impl FileManager {
         };
         let had_pending = pending.is_some();
         let had_filter = !self.filter_query.is_empty() || self.entries_unfiltered.is_some();
-        if !had_pending && !had_filter && self.pending_chord.is_none() && self.visual_anchor.is_none() {
+        if !had_pending
+            && !had_filter
+            && self.pending_chord.is_none()
+            && self.visual_anchor.is_none()
+        {
             return;
         }
         self.pending_chord = None;
@@ -2047,10 +2076,7 @@ impl FileManager {
             self.clear_filter(cx);
         }
         if let Some(origin) = find_origin {
-            self.selected_index = cmp::min(
-                origin,
-                self.entries.len().saturating_sub(1),
-            );
+            self.selected_index = cmp::min(origin, self.entries.len().saturating_sub(1));
             self.ensure_visible();
             self.request_preview_update(cx);
         }
@@ -2487,10 +2513,7 @@ impl FileManager {
         if let Some(unfiltered) = self.entries_unfiltered.take() {
             self.entries = unfiltered;
         }
-        self.selected_index = cmp::min(
-            self.selected_index,
-            self.entries.len().saturating_sub(1),
-        );
+        self.selected_index = cmp::min(self.selected_index, self.entries.len().saturating_sub(1));
         self.request_preview_update(cx);
     }
 
@@ -2585,9 +2608,8 @@ impl FileManager {
         let cancel_flag = handle.cancel_flag();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
-            let mut processed = 0_usize;
             let mut cancelled = false;
-            for path in targets {
+            for (ix, path) in targets.into_iter().enumerate() {
                 if cancel_flag.load(Ordering::Relaxed) {
                     cancelled = true;
                     break;
@@ -2599,7 +2621,7 @@ impl FileManager {
                 if let Err(e) = fs.trash(&path, options).await {
                     failures.push((path, e));
                 }
-                processed += 1;
+                let processed = ix + 1;
                 let workspace = workspace.clone();
                 cx.update(|_, cx| {
                     crate::tasks::tick(&mut handle, processed, workspace, cx);
@@ -2714,11 +2736,7 @@ impl FileManager {
         } else {
             self.marked
                 .iter()
-                .filter_map(|&i| {
-                    self.entries
-                        .get(i)
-                        .map(|e| (e.path.clone(), e.mode))
-                })
+                .filter_map(|&i| self.entries.get(i).map(|e| (e.path.clone(), e.mode)))
                 .collect()
         };
         if targets.is_empty() {
@@ -3000,30 +3018,24 @@ impl FileManager {
         let file_name = format!("paste-{timestamp}.{extension}");
         let initial = self.current_dir.join(&file_name);
         let destination = if initial.exists() {
-            next_available_path(
-                &self.current_dir,
-                std::ffi::OsStr::new(&file_name),
-                &[],
-            )
+            next_available_path(&self.current_dir, std::ffi::OsStr::new(&file_name), &[])
         } else {
             initial
         };
         let fs = self.fs.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = fs.write(&destination, &bytes).await;
-            this.update_in(cx, |this, window, cx| {
-                match result {
-                    Ok(()) => {
-                        let displayed = destination
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| destination.display().to_string());
-                        this.surface_error(format!("Pasted image: {displayed}"), cx);
-                        this.reload_entries(window, cx);
-                    }
-                    Err(e) => {
-                        this.surface_error(format!("Couldn't paste image: {e}"), cx);
-                    }
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(()) => {
+                    let displayed = destination
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| destination.display().to_string());
+                    this.surface_error(format!("Pasted image: {displayed}"), cx);
+                    this.reload_entries(window, cx);
+                }
+                Err(e) => {
+                    this.surface_error(format!("Couldn't paste image: {e}"), cx);
                 }
             })
             .ok();
@@ -3115,10 +3127,7 @@ impl FileManager {
                     self.clear_filter(cx);
                 }
                 if let Some(origin) = find_origin {
-                    self.selected_index = cmp::min(
-                        origin,
-                        self.entries.len().saturating_sub(1),
-                    );
+                    self.selected_index = cmp::min(origin, self.entries.len().saturating_sub(1));
                     self.ensure_visible();
                     self.request_preview_update(cx);
                 }
@@ -3143,11 +3152,17 @@ impl FileManager {
                         self.apply_filter(cx);
                         None
                     }
-                    PendingInput::FindForward { query, origin_index } => {
+                    PendingInput::FindForward {
+                        query,
+                        origin_index,
+                    } => {
                         query.pop();
                         Some((query.clone(), *origin_index, true))
                     }
-                    PendingInput::FindBackward { query, origin_index } => {
+                    PendingInput::FindBackward {
+                        query,
+                        origin_index,
+                    } => {
                         query.pop();
                         Some((query.clone(), *origin_index, false))
                     }
@@ -3182,9 +3197,7 @@ impl FileManager {
                         self.mode = PaneMode::Normal;
                         cx.notify();
                         cx.spawn_in(window, async move |this, cx| {
-                            let result = fs
-                                .create_file(&path, fs::CreateOptions::default())
-                                .await;
+                            let result = fs.create_file(&path, fs::CreateOptions::default()).await;
                             this.update_in(cx, |this, window, cx| {
                                 if let Err(e) = result {
                                     this.surface_error(
@@ -3349,11 +3362,17 @@ impl FileManager {
                                 self.apply_filter(cx);
                                 None
                             }
-                            PendingInput::FindForward { query, origin_index } => {
+                            PendingInput::FindForward {
+                                query,
+                                origin_index,
+                            } => {
                                 query.push_str(ch);
                                 Some((query.clone(), *origin_index, true))
                             }
-                            PendingInput::FindBackward { query, origin_index } => {
+                            PendingInput::FindBackward {
+                                query,
+                                origin_index,
+                            } => {
                                 query.push_str(ch);
                                 Some((query.clone(), *origin_index, false))
                             }
@@ -3382,9 +3401,7 @@ impl FileManager {
         // mode/short-circuit gating — what we want to measure is the
         // delta from "key reached the FM" to "FM finished its next
         // paint", regardless of which branch handles it.
-        crate::render::trace::record_keypress(SharedString::from(
-            event.keystroke.key.clone(),
-        ));
+        crate::render::trace::record_keypress(SharedString::from(event.keystroke.key.clone()));
         if self.mode == PaneMode::Insert {
             self.handle_insert_key(event, window, cx);
             return;
@@ -3483,13 +3500,22 @@ impl FileManager {
         let handled = match key {
             // Navigation. Arrow keys mirror hjkl so users who haven't
             // internalized the Vim/Helix row can still drive the panel.
-            "j" | "down" if !shift && !ctrl => { self.navigate_down(&NavigateDown, window, cx); true }
-            "k" | "up" if !shift && !ctrl => { self.navigate_up(&NavigateUp, window, cx); true }
+            "j" | "down" if !shift && !ctrl => {
+                self.navigate_down(&NavigateDown, window, cx);
+                true
+            }
+            "k" | "up" if !shift && !ctrl => {
+                self.navigate_up(&NavigateUp, window, cx);
+                true
+            }
             // Bare `l` arms a short-window chord: if `n` lands next
             // we make symlinks; if any other key (or the timeout)
             // fires first we commit `enter_directory` instead. See
             // `arm_l_chord` for the timer logic.
-            "l" | "right" if !shift && !ctrl => { self.arm_l_chord(window, cx); true }
+            "l" | "right" if !shift && !ctrl => {
+                self.arm_l_chord(window, cx);
+                true
+            }
             // `L` (shift-l) is the chord starter for hardlinks: `Ln`
             // calls `make_hardlinks`. Unlike bare `l` there is no
             // enter-directory fallback, so a plain `pending_chord`
@@ -3507,13 +3533,31 @@ impl FileManager {
                 self.commit_visual_range(cx);
                 true
             }
-            "enter" | "\n" => { self.enter_directory(&EnterDirectory, window, cx); true }
-            "h" | "left" if !shift && !ctrl => { self.parent_directory(&ParentDirectory, window, cx); true }
-            "g" if shift => { self.go_to_bottom(&GoToBottom, window, cx); true }
-            "g" if !shift => { self.go_to_top(&GoToTop, window, cx); true }
+            "enter" | "\n" => {
+                self.enter_directory(&EnterDirectory, window, cx);
+                true
+            }
+            "h" | "left" if !shift && !ctrl => {
+                self.parent_directory(&ParentDirectory, window, cx);
+                true
+            }
+            "g" if shift => {
+                self.go_to_bottom(&GoToBottom, window, cx);
+                true
+            }
+            "g" if !shift => {
+                self.go_to_top(&GoToTop, window, cx);
+                true
+            }
             // Scrolling
-            "d" if ctrl => { self.half_page_down(window, cx); true }
-            "u" if ctrl => { self.half_page_up(window, cx); true }
+            "d" if ctrl => {
+                self.half_page_down(window, cx);
+                true
+            }
+            "u" if ctrl => {
+                self.half_page_up(window, cx);
+                true
+            }
             // Chord starter: bare `u` parks the next key for the `uv`
             // (clear-marks) chord. Subsequent two-key chords (vim-style
             // bookmarks etc.) can hang off the same slot.
@@ -3521,13 +3565,31 @@ impl FileManager {
                 self.pending_chord = Some('u');
                 true
             }
-            "pagedown" => { self.page_down(window, cx); true }
-            "pageup" => { self.page_up(window, cx); true }
+            "pagedown" => {
+                self.page_down(window, cx);
+                true
+            }
+            "pageup" => {
+                self.page_up(window, cx);
+                true
+            }
             // History stack — browser-style back/forward.
-            "[" if !ctrl => { self.history_back(window, cx); true }
-            "]" if !ctrl => { self.history_forward(window, cx); true }
-            "o" if ctrl => { self.history_back(window, cx); true }
-            "i" if ctrl => { self.history_forward(window, cx); true }
+            "[" if !ctrl => {
+                self.history_back(window, cx);
+                true
+            }
+            "]" if !ctrl => {
+                self.history_forward(window, cx);
+                true
+            }
+            "o" if ctrl => {
+                self.history_back(window, cx);
+                true
+            }
+            "i" if ctrl => {
+                self.history_forward(window, cx);
+                true
+            }
             // Bookmarks: vi-style two-key chords. `m<letter>` saves
             // `current_dir`; `'<letter>` jumps. Resolved on the next
             // keystroke via `pending_chord`.
@@ -3559,63 +3621,159 @@ impl FileManager {
                 true
             }
             // `M` (shift-m) cycles the per-entry metadata column.
-            "m" if shift && !ctrl => { self.cycle_line_mode(cx); true }
+            "m" if shift && !ctrl => {
+                self.cycle_line_mode(cx);
+                true
+            }
             // `<` / `>` resize the preview column.
-            "," if shift && !ctrl => { self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
-            "." if shift && !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
-            "<" if !ctrl => { self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
-            ">" if !ctrl => { self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx); true }
+            "," if shift && !ctrl => {
+                self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx);
+                true
+            }
+            "." if shift && !ctrl => {
+                self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx);
+                true
+            }
+            "<" if !ctrl => {
+                self.nudge_preview_fraction(-crate::prefs::PREVIEW_FRACTION_STEP, cx);
+                true
+            }
+            ">" if !ctrl => {
+                self.nudge_preview_fraction(crate::prefs::PREVIEW_FRACTION_STEP, cx);
+                true
+            }
             // `F` (shift-f): resolve the focused symlink and reveal the
             // target in its parent directory via `codon_fm::Reveal`.
             // Non-symlinks are a no-op so the binding stays cheap to
             // probe. Symlink-loop protection caps traversal at 16 hops.
-            "f" if shift && !ctrl => { self.follow_symlink(window, cx); true }
+            "f" if shift && !ctrl => {
+                self.follow_symlink(window, cx);
+                true
+            }
             // Selection
-            "v" if !shift && !ctrl => { self.toggle_mark(window, cx); true }
+            "v" if !shift && !ctrl => {
+                self.toggle_mark(window, cx);
+                true
+            }
             // `V` (shift-v) starts visual-line selection. The anchor is
             // the cursor at entry; j/k from this point extend the
             // marked range. Esc / Enter exit the mode but keep the
             // marks. Other verbs (y / d / D / R / p) implicitly exit
             // visual mode via the housekeeping block above before they
             // consume the marked set.
-            "v" if shift && !ctrl => { self.start_visual_range(cx); true }
+            "v" if shift && !ctrl => {
+                self.start_visual_range(cx);
+                true
+            }
             // File operations
-            "y" if !shift => { self.yank_to_clipboard(window, cx); true }
-            "y" if shift => { self.copy_path_to_os_clipboard(window, cx); true }
+            "y" if !shift => {
+                self.yank_to_clipboard(window, cx);
+                true
+            }
+            "y" if shift => {
+                self.copy_path_to_os_clipboard(window, cx);
+                true
+            }
             // ctrl-a selects every visible entry; the unmodified `a`
             // arms below open the create-file / mkdir prompts.
-            "a" if ctrl => { self.select_all_visible(cx); true }
-            "a" if !shift => { self.create_file(window, cx); true }
-            "a" if shift => { self.create_directory(window, cx); true }
+            "a" if ctrl => {
+                self.select_all_visible(cx);
+                true
+            }
+            "a" if !shift => {
+                self.create_file(window, cx);
+                true
+            }
+            "a" if shift => {
+                self.create_directory(window, cx);
+                true
+            }
             // Single-tap `d` marks for cut (paired with `p`/`P`). `D`
             // performs the destructive delete that used to be on `d`.
-            "d" if !shift && !ctrl => { self.cut_to_clipboard(window, cx); true }
-            "d" if shift && !ctrl => { self.delete_entry(window, cx); true }
-            "p" if !shift => { self.paste_clipboard(window, cx); true }
-            "p" if shift => { self.paste_clipboard_overwrite(window, cx); true }
+            "d" if !shift && !ctrl => {
+                self.cut_to_clipboard(window, cx);
+                true
+            }
+            "d" if shift && !ctrl => {
+                self.delete_entry(window, cx);
+                true
+            }
+            "p" if !shift => {
+                self.paste_clipboard(window, cx);
+                true
+            }
+            "p" if shift => {
+                self.paste_clipboard_overwrite(window, cx);
+                true
+            }
             // ctrl-r inverts marks against the visible window; the
             // unmodified / shifted arms below remain single rename and
             // bulk-rename, respectively.
-            "r" if ctrl => { self.invert_marks_visible(cx); true }
-            "r" if !shift => { self.rename_entry(window, cx); true }
-            "r" if shift => { self.start_bulk_rename(window, cx); true }
+            "r" if ctrl => {
+                self.invert_marks_visible(cx);
+                true
+            }
+            "r" if !shift => {
+                self.rename_entry(window, cx);
+                true
+            }
+            "r" if shift => {
+                self.start_bulk_rename(window, cx);
+                true
+            }
             // Toggles. The bare `.` chord is no longer bound — it's
             // reserved for the global action-history repeat (see
             // REQ:codon/keymap-vocabulary#c-fm-hidden-rebind). The
             // toggle-hidden binding moved to the `,` view-options
             // sub-prefix (`, h`), handled by `handle_sort_chord`.
-            "f" if !shift && !ctrl => { self.start_filter(window, cx); true }
-            "/" if !ctrl => { self.start_find_forward(window, cx); true }
-            "?" if !ctrl => { self.start_find_backward(window, cx); true }
-            "n" if !shift && !ctrl => { self.find_next(cx); true }
-            "n" if shift && !ctrl => { self.find_prev(cx); true }
-            "s" if !shift && !ctrl => { self.open_search_by_name(window, cx); true }
-            "s" if shift && !ctrl => { self.open_search_by_content(window, cx); true }
-            "z" if shift && !ctrl => { self.open_zoxide_picker(window, cx); true }
-            "t" if shift && !ctrl => { self.open_trash_modal(window, cx); true }
-            "x" if shift && !ctrl => { self.start_skip_trash_delete(window, cx); true }
-            "o" if shift && !ctrl => { self.choose_opener(window, cx); true }
-            "w" if !shift && !ctrl => { self.open_task_history(window, cx); true }
+            "f" if !shift && !ctrl => {
+                self.start_filter(window, cx);
+                true
+            }
+            "/" if !ctrl => {
+                self.start_find_forward(window, cx);
+                true
+            }
+            "?" if !ctrl => {
+                self.start_find_backward(window, cx);
+                true
+            }
+            "n" if !shift && !ctrl => {
+                self.find_next(cx);
+                true
+            }
+            "n" if shift && !ctrl => {
+                self.find_prev(cx);
+                true
+            }
+            "s" if !shift && !ctrl => {
+                self.open_search_by_name(window, cx);
+                true
+            }
+            "s" if shift && !ctrl => {
+                self.open_search_by_content(window, cx);
+                true
+            }
+            "z" if shift && !ctrl => {
+                self.open_zoxide_picker(window, cx);
+                true
+            }
+            "t" if shift && !ctrl => {
+                self.open_trash_modal(window, cx);
+                true
+            }
+            "x" if shift && !ctrl => {
+                self.start_skip_trash_delete(window, cx);
+                true
+            }
+            "o" if shift && !ctrl => {
+                self.choose_opener(window, cx);
+                true
+            }
+            "w" if !shift && !ctrl => {
+                self.open_task_history(window, cx);
+                true
+            }
             "escape" if self.shell_running.is_some() => {
                 self.terminate_shell_command(cx);
                 true
@@ -3635,8 +3793,14 @@ impl FileManager {
                 true
             }
             // Shell exec
-            ";" if !shift && !ctrl => { self.start_shell_async(window, cx); true }
-            "!" if !ctrl => { self.start_shell_blocking(window, cx); true }
+            ";" if !shift && !ctrl => {
+                self.start_shell_async(window, cx);
+                true
+            }
+            "!" if !ctrl => {
+                self.start_shell_blocking(window, cx);
+                true
+            }
             _ => false,
         };
         if handled {
@@ -3783,13 +3947,7 @@ impl FileManager {
                     };
                     let Some(view) = view else { return };
                     this.update_in(cx, |this, window, cx| {
-                        this.arm_shell_watcher(
-                            template_for_arm,
-                            command_for_arm,
-                            view,
-                            window,
-                            cx,
-                        );
+                        this.arm_shell_watcher(template_for_arm, command_for_arm, view, window, cx);
                     })
                     .ok();
                 })
@@ -3925,12 +4083,7 @@ impl FileManager {
     /// Resolve `query` against `current_dir` (expanding a leading `~`)
     /// and navigate. Failures surface via the existing `surface_error`
     /// toast: empty path, missing target, non-directory, or unreadable.
-    pub(crate) fn goto_path(
-        &mut self,
-        query: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn goto_path(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
         let resolved = match resolve_goto_query(query, &self.current_dir) {
             Some(p) => p,
             None => {
@@ -4099,7 +4252,10 @@ impl FileManager {
         };
         if !target.is_dir() {
             self.surface_error(
-                format!("Bookmark '{letter}' → {} no longer exists", target.display()),
+                format!(
+                    "Bookmark '{letter}' → {} no longer exists",
+                    target.display()
+                ),
                 cx,
             );
             return;
@@ -4204,7 +4360,8 @@ impl SerializableItem for FileManager {
         let current_dir = self.current_dir.clone();
         let db = FileManagerDb::global(cx);
         Some(cx.background_spawn(async move {
-            db.save_current_dir(item_id, workspace_id, current_dir).await
+            db.save_current_dir(item_id, workspace_id, current_dir)
+                .await
         }))
     }
 
@@ -4222,26 +4379,30 @@ impl SerializableItem for FileManager {
     ) -> Task<anyhow::Result<Entity<Self>>> {
         let db = FileManagerDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let stored_dir = db.get_current_dir(item_id, workspace_id).log_err().flatten();
+            let stored_dir = db
+                .get_current_dir(item_id, workspace_id)
+                .log_err()
+                .flatten();
 
             cx.update(|window, cx| {
-                let workspace_entity = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow::anyhow!("workspace was dropped before FileManager could be restored"))?;
-                let (fs, languages, fallback_dir) = workspace_entity.read_with(cx, |workspace, cx| {
-                    let fs = workspace.app_state().fs.clone();
-                    let languages = Some(workspace.app_state().languages.clone());
-                    let fallback_dir = workspace
-                        .project()
-                        .read(cx)
-                        .worktrees(cx)
-                        .next()
-                        .map(|wt| wt.read(cx).abs_path().to_path_buf())
-                        .unwrap_or_else(|| {
-                            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
-                        });
-                    (fs, languages, fallback_dir)
-                });
+                let workspace_entity = workspace.upgrade().ok_or_else(|| {
+                    anyhow::anyhow!("workspace was dropped before FileManager could be restored")
+                })?;
+                let (fs, languages, fallback_dir) =
+                    workspace_entity.read_with(cx, |workspace, cx| {
+                        let fs = workspace.app_state().fs.clone();
+                        let languages = Some(workspace.app_state().languages.clone());
+                        let fallback_dir = workspace
+                            .project()
+                            .read(cx)
+                            .worktrees(cx)
+                            .next()
+                            .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                            .unwrap_or_else(|| {
+                                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+                            });
+                        (fs, languages, fallback_dir)
+                    });
 
                 let dir = match stored_dir {
                     Some(p) if p.is_dir() => p,
@@ -4249,9 +4410,7 @@ impl SerializableItem for FileManager {
                 };
 
                 let weak_workspace = workspace_entity.downgrade();
-                Ok(cx.new(|cx| {
-                    FileManager::new(dir, weak_workspace, fs, languages, window, cx)
-                }))
+                Ok(cx.new(|cx| FileManager::new(dir, weak_workspace, fs, languages, window, cx)))
             })?
         })
     }
@@ -4453,11 +4612,7 @@ fn image_format_extension(format: gpui::ImageFormat) -> &'static str {
     }
 }
 
-fn next_available_path(
-    directory: &Path,
-    file_name: &std::ffi::OsStr,
-    used: &[PathBuf],
-) -> PathBuf {
+fn next_available_path(directory: &Path, file_name: &std::ffi::OsStr, used: &[PathBuf]) -> PathBuf {
     let name_str = file_name.to_string_lossy();
     let (stem, extension) = split_stem_extension(name_str.as_ref());
     let mut counter: usize = 2;
@@ -4690,7 +4845,6 @@ fn default_bulk_rename_pattern(first: &Path) -> String {
         format!("{{}}.{extension}")
     }
 }
-
 
 /// Options governing how a directory listing is built. `show_hidden`
 /// keeps the dotfile filter; `sort` + `reverse` set the comparator;
@@ -4933,8 +5087,8 @@ pub(crate) fn collect_git_status(
     current_dir: &Path,
     parent_dir: Option<&Path>,
 ) -> Option<HashMap<PathBuf, FileStatus>> {
-    let repo_root = find_git_repo_root(current_dir)
-        .or_else(|| parent_dir.and_then(find_git_repo_root))?;
+    let repo_root =
+        find_git_repo_root(current_dir).or_else(|| parent_dir.and_then(find_git_repo_root))?;
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(&repo_root)
@@ -5064,7 +5218,11 @@ pub(crate) fn build_entry_labels(entry: &DirEntry) -> EntryLabels {
 #[cfg(unix)]
 fn unix_metadata(metadata: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
     use std::os::unix::fs::MetadataExt;
-    (Some(metadata.mode()), Some(metadata.uid()), Some(metadata.gid()))
+    (
+        Some(metadata.mode()),
+        Some(metadata.uid()),
+        Some(metadata.gid()),
+    )
 }
 
 #[cfg(not(unix))]
@@ -5072,17 +5230,16 @@ fn unix_metadata(_metadata: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Op
     (None, None, None)
 }
 
-pub(crate) fn sort_entries(
-    entries: &mut [DirEntry],
-    mode: crate::prefs::SortMode,
-    reverse: bool,
-) {
+pub(crate) fn sort_entries(entries: &mut [DirEntry], mode: crate::prefs::SortMode, reverse: bool) {
     use crate::prefs::SortMode;
     if matches!(mode, SortMode::Random) {
         // Shuffle the within-group order but keep dirs-before-files.
         use rand::seq::SliceRandom;
         let mut rng = rand::rng();
-        let split = entries.iter().position(|e| !e.is_dir).unwrap_or(entries.len());
+        let split = entries
+            .iter()
+            .position(|e| !e.is_dir)
+            .unwrap_or(entries.len());
         let (dirs, files) = entries.split_at_mut(split);
         dirs.shuffle(&mut rng);
         files.shuffle(&mut rng);
@@ -5099,11 +5256,7 @@ pub(crate) fn sort_entries(
             return group;
         }
         let within = compare_in_group(a, b, mode);
-        if reverse {
-            within.reverse()
-        } else {
-            within
-        }
+        if reverse { within.reverse() } else { within }
     });
 }
 
@@ -5290,9 +5443,8 @@ pub(crate) fn format_hex_dump(bytes: &[u8]) -> String {
 
 /// File extensions the FM offers to render as images. Matches the
 /// formats Zed's vendored `gpui::img` supports out of the box.
-pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg",
-];
+pub(crate) const IMAGE_EXTENSIONS: &[&str] =
+    &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
 
 /// Returns true when `path`'s extension is in [`IMAGE_EXTENSIONS`].
 pub(crate) fn is_image_path(path: &Path) -> bool {
@@ -5612,7 +5764,14 @@ fn handle_reveal(
     let languages = Some(workspace.app_state().languages.clone());
     let weak_workspace = workspace.weak_handle();
     let file_manager = cx.new(|cx| {
-        FileManager::new(target_dir.clone(), weak_workspace, fs, languages, window, cx)
+        FileManager::new(
+            target_dir.clone(),
+            weak_workspace,
+            fs,
+            languages,
+            window,
+            cx,
+        )
     });
     if let Some(name) = select_name {
         file_manager.update(cx, |fm, cx| fm.select_entry_by_name(&name, cx));
@@ -5620,11 +5779,7 @@ fn handle_reveal(
     workspace.add_item_to_active_pane(Box::new(file_manager), None, true, window, cx);
 }
 
-fn open_file_manager(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn open_file_manager(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     let fs = workspace.app_state().fs.clone();
     let weak_workspace = workspace.weak_handle();
     let project = workspace.project().clone();
@@ -5781,7 +5936,7 @@ mod tests {
         let shadow = GrammarShadow {
             entries: &entries,
             selected_index: 0,
-            current_dir: root.clone(),
+            current_dir: root,
         };
         match shadow.prev() {
             codon_mode::GrammarSelection::FileIndices(v) => assert_eq!(v, vec![0]),
@@ -5960,7 +6115,7 @@ mod tests {
             labels: Default::default(),
             icon_path: None,
         }];
-        cache.store(path.clone(), mtime, opts, entries.clone());
+        cache.store(path.clone(), mtime, opts, entries);
         let hit = cache.lookup(&path, mtime, opts);
         assert_eq!(
             hit.as_deref().map(|s| s.len()),
@@ -5989,16 +6144,19 @@ mod tests {
         let opts = ReadDirOptions::default();
         // Fill past the cap.
         for i in 0..(DIR_CACHE_CAP + 2) {
-            cache.store(
-                PathBuf::from(format!("/dir/{i}")),
-                mtime,
-                opts,
-                Vec::new(),
-            );
+            cache.store(PathBuf::from(format!("/dir/{i}")), mtime, opts, Vec::new());
         }
         // Earliest two paths must have been evicted.
-        assert!(cache.lookup(&PathBuf::from("/dir/0"), mtime, opts).is_none());
-        assert!(cache.lookup(&PathBuf::from("/dir/1"), mtime, opts).is_none());
+        assert!(
+            cache
+                .lookup(&PathBuf::from("/dir/0"), mtime, opts)
+                .is_none()
+        );
+        assert!(
+            cache
+                .lookup(&PathBuf::from("/dir/1"), mtime, opts)
+                .is_none()
+        );
         // Most recent ones still resolve.
         assert!(
             cache
@@ -6030,10 +6188,7 @@ mod tests {
 
     #[test]
     fn dir_cache_different_opts_miss_each_other() {
-        let dir = make_tree(&[
-            ("visible.txt", false),
-            (".hidden.txt", false),
-        ]);
+        let dir = make_tree(&[("visible.txt", false), (".hidden.txt", false)]);
         let cache = std::sync::Mutex::new(DirCache::default());
         let no_hidden = ReadDirOptions::default();
         let with_hidden = ReadDirOptions {
@@ -6082,7 +6237,10 @@ mod tests {
         );
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         // Directories first, then files; each group case-insensitive ascending.
-        assert_eq!(names, vec![".dotdir", "subdir", ".hidden.txt", "visible.txt"]);
+        assert_eq!(
+            names,
+            vec![".dotdir", "subdir", ".hidden.txt", "visible.txt"]
+        );
         let hidden_flags: Vec<bool> = entries.iter().map(|e| e.is_hidden).collect();
         assert_eq!(hidden_flags, vec![true, false, true, false]);
     }
@@ -6189,7 +6347,10 @@ mod tests {
         // The function only generates numbered suffixes — it always picks
         // a "(N)" variant. The initial collision-free case is handled by
         // the caller (start_paste) before invoking this helper.
-        assert_eq!(p.file_name().unwrap().to_string_lossy(), "brand_new (2).txt");
+        assert_eq!(
+            p.file_name().unwrap().to_string_lossy(),
+            "brand_new (2).txt"
+        );
     }
 
     #[test]
@@ -6414,9 +6575,7 @@ mod tests {
         header.set_size(payload.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
-        builder
-            .append(&header, &payload[..])
-            .expect("append entry");
+        builder.append(&header, &payload[..]).expect("append entry");
         builder.finish().expect("finish");
         drop(builder);
 
@@ -6441,9 +6600,7 @@ mod tests {
         header.set_size(payload.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
-        builder
-            .append(&header, &payload[..])
-            .expect("append entry");
+        builder.append(&header, &payload[..]).expect("append entry");
         let gz = builder.into_inner().expect("inner");
         gz.finish().expect("finish gz");
 
@@ -6586,18 +6743,17 @@ mod tests {
     #[test]
     fn natural_compare_orders_numbers_numerically() {
         assert_eq!(natural_compare("file2", "file10"), std::cmp::Ordering::Less);
-        assert_eq!(natural_compare("file10", "file2"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            natural_compare("file10", "file2"),
+            std::cmp::Ordering::Greater
+        );
         assert_eq!(natural_compare("file1", "file1"), std::cmp::Ordering::Equal);
         assert_eq!(natural_compare("abc", "abd"), std::cmp::Ordering::Less);
     }
 
     #[test]
     fn sort_entries_size_ascending_keeps_dirs_first() {
-        let dir = make_tree(&[
-            ("zzz", true),
-            ("big.txt", false),
-            ("small.txt", false),
-        ]);
+        let dir = make_tree(&[("zzz", true), ("big.txt", false), ("small.txt", false)]);
         std::fs::write(dir.path().join("big.txt"), vec![0u8; 1024]).expect("write big");
         std::fs::write(dir.path().join("small.txt"), vec![0u8; 8]).expect("write small");
         let entries = read_dir_sync(

@@ -4,9 +4,7 @@ use gpui::{
     StyledImage, Window, div, img, prelude::*, px, relative, uniform_list,
 };
 use theme::ActiveTheme;
-use ui::{
-    Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex,
-};
+use ui::{Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex};
 
 use workspace::codon_jump_clickable::JumpClickableExt;
 
@@ -38,6 +36,7 @@ impl FileManager {
     /// or when the directory listing rotates wholesale — the
     /// cached payloads contain resolved colours + shaped glyphs
     /// that must not survive across theme rebuilds.
+    #[allow(dead_code)]
     pub(crate) fn clear_row_glyph_caches(&self) {
         self.custom_row_cache_parent.borrow_mut().clear();
         self.custom_row_cache_current.borrow_mut().clear();
@@ -66,94 +65,98 @@ fn render_entry_row(
     // current-column entry. The current column inlines its own
     // marked-row rendering in the `uniform_list` closure.
     let is_selected = selected == Some(index);
-        let theme = cx.theme();
-        let selected_bg = theme.colors().ghost_element_selected;
+    let theme = cx.theme();
+    let selected_bg = theme.colors().ghost_element_selected;
 
-        // Dimmed columns (parent + preview-of-directory) always render
-        // muted regardless of filetype; otherwise consult the theme
-        // overlay so the color reflects extension/directory/dotfile.
-        let text_color = if dimmed {
-            Color::Muted
-        } else {
-            filetype_color(entry, cx)
-        };
+    // Dimmed columns (parent + preview-of-directory) always render
+    // muted regardless of filetype; otherwise consult the theme
+    // overlay so the color reflects extension/directory/dotfile.
+    let text_color = if dimmed {
+        Color::Muted
+    } else {
+        filetype_color(entry, cx)
+    };
 
-        // `icon_path` is populated by `populate_icon_paths` on the
-        // foreground after every listing arrives. The outer Option
-        // distinguishes "not yet populated" (renders fallback) from
-        // "populated with no specific icon" (`Some(None)`, also renders
-        // fallback) — without the cache this used to call
-        // `FileIcons::get_icon` per row per paint, doing suffix-split +
-        // multi-stage hashmap lookups every time.
-        let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
-        let fallback = if entry.is_dir { IconName::Folder } else { IconName::File };
-        let icon_element = match resolved_icon {
-            Some(icon_path) => Icon::from_path(icon_path)
-                .size(IconSize::Small)
-                .color(Color::Muted)
-                .into_any_element(),
-            None => Icon::new(fallback)
-                .size(IconSize::Small)
-                .color(Color::Muted)
-                .into_any_element(),
-        };
+    // `icon_path` is populated by `populate_icon_paths` on the
+    // foreground after every listing arrives. The outer Option
+    // distinguishes "not yet populated" (renders fallback) from
+    // "populated with no specific icon" (`Some(None)`, also renders
+    // fallback) — without the cache this used to call
+    // `FileIcons::get_icon` per row per paint, doing suffix-split +
+    // multi-stage hashmap lookups every time.
+    let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
+    let fallback = if entry.is_dir {
+        IconName::Folder
+    } else {
+        IconName::File
+    };
+    let icon_element = match resolved_icon {
+        Some(icon_path) => Icon::from_path(icon_path)
+            .size(IconSize::Small)
+            .color(Color::Muted)
+            .into_any_element(),
+        None => Icon::new(fallback)
+            .size(IconSize::Small)
+            .color(Color::Muted)
+            .into_any_element(),
+    };
 
-        let symlink_indicator = entry.is_symlink;
-        let (git_glyph, git_color, git_filename_color) = git_status_palette(entry.git_status);
-        // Git status wins over filetype for the filename tint when the
-        // entry is dirty/untracked/etc; on clean entries the filetype
-        // overlay (or muted-for-dimmed) carries the color.
-        let text_color = git_filename_color.unwrap_or(text_color);
+    let symlink_indicator = entry.is_symlink;
+    let (git_glyph, git_color, git_filename_color) = git_status_palette(entry.git_status);
+    // Git status wins over filetype for the filename tint when the
+    // entry is dirty/untracked/etc; on clean entries the filetype
+    // overlay (or muted-for-dimmed) carries the color.
+    let text_color = git_filename_color.unwrap_or(text_color);
 
-        // Precomputed at DirEntry construction (see `build_entry_labels`)
-        // — clones an `Arc` rather than formatting fresh on every paint.
-        let meta = if show_meta {
-            entry.labels.meta[line_mode.idx()].clone()
-        } else {
-            None
-        };
+    // Precomputed at DirEntry construction (see `build_entry_labels`)
+    // — clones an `Arc` rather than formatting fresh on every paint.
+    let meta = if show_meta {
+        entry.labels.meta[line_mode.idx()].clone()
+    } else {
+        None
+    };
 
-        h_flex()
-            .w_full()
-            .pl(px(4.))
-            .pr(px(1.))
-            .py(px(1.))
-            .gap(px(4.))
-            .when(is_selected, |d| d.bg(selected_bg))
-            .child(
-                div().w(px(12.)).flex_none().child(
-                    Label::new(SharedString::new_static(git_glyph))
-                        .size(LabelSize::Small)
-                        .color(git_color),
-                ),
+    h_flex()
+        .w_full()
+        .pl(px(4.))
+        .pr(px(1.))
+        .py(px(1.))
+        .gap(px(4.))
+        .when(is_selected, |d| d.bg(selected_bg))
+        .child(
+            div().w(px(12.)).flex_none().child(
+                Label::new(SharedString::new_static(git_glyph))
+                    .size(LabelSize::Small)
+                    .color(git_color),
+            ),
+        )
+        .child(icon_element)
+        .child(
+            div().flex_1().min_w_0().child(
+                Label::new(entry.labels.name.clone())
+                    .size(LabelSize::Small)
+                    .color(text_color)
+                    .single_line(),
+            ),
+        )
+        .when(symlink_indicator, |el| {
+            el.child(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
             )
-            .child(icon_element)
-            .child(
-                div().flex_1().min_w_0().child(
-                    Label::new(entry.labels.name.clone())
+        })
+        .when_some(meta, |el, text| {
+            el.child(
+                div().w(px(META_COLUMN_WIDTH)).flex_none().child(
+                    Label::new(text)
                         .size(LabelSize::Small)
-                        .color(text_color)
+                        .color(Color::Muted)
                         .single_line(),
                 ),
             )
-            .when(symlink_indicator, |el| {
-                el.child(
-                    Icon::new(IconName::ArrowUpRight)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-            })
-            .when_some(meta, |el, text| {
-                el.child(
-                    div().w(px(META_COLUMN_WIDTH)).flex_none().child(
-                        Label::new(text)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .single_line(),
-                    ),
-                )
-            })
-            .into_any_element()
+        })
+        .into_any_element()
 }
 
 /// Per-row state shared by the legacy `render_entry_row` and the
@@ -252,11 +255,8 @@ pub(crate) fn build_fm_column(
         .collect::<Vec<_>>()
         .into();
 
-    let cache_capacity = crate::render::shaped_line_cache::default_capacity(
-        entries.len().max(32).min(64),
-        1,
-        1,
-    );
+    let cache_capacity =
+        crate::render::shaped_line_cache::default_capacity(entries.len().clamp(32, 64), 1, 1);
     let cache = Rc::new(RefCell::new(ShapedLineCache::new(cache_capacity)));
 
     FmColumnElement {
@@ -360,11 +360,7 @@ impl FileManager {
             // the callback once per visible window, so a fresh cache
             // captures hits across the rows in this batch.
             let cache = Rc::new(RefCell::new(ShapedLineCache::new(
-                crate::render::shaped_line_cache::default_capacity(
-                    range.len().max(8),
-                    1,
-                    1,
-                ),
+                crate::render::shaped_line_cache::default_capacity(range.len().max(8), 1, 1),
             )));
             range
                 .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
@@ -375,11 +371,7 @@ impl FileManager {
         .into_any_element()
     }
 
-    fn render_preview(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let line_mode = self.line_mode;
 
         // Clone the preview snapshot so the subsequent `&mut self` call
@@ -413,28 +405,30 @@ impl FileManager {
                     )
                     .into_any_element()
                 } else {
-                // Virtualized: preview can render thousands of children
-                // when the user lands on a big directory (`node_modules`,
-                // `~/Downloads`). Without `uniform_list`, every
-                // navigation rebuilt every row.
-                uniform_list(
-                    "fm-preview-dir-list",
-                    entries.len(),
-                    move |range, _window, cx| {
-                        let cache = Rc::new(RefCell::new(ShapedLineCache::new(
-                            crate::render::shaped_line_cache::default_capacity(
-                                range.len().max(8),
-                                1,
-                                1,
-                            ),
-                        )));
-                        range
-                            .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
-                            .collect()
-                    },
-                )
-                .size_full()
-                .into_any_element()
+                    // Virtualized: preview can render thousands of children
+                    // when the user lands on a big directory (`node_modules`,
+                    // `~/Downloads`). Without `uniform_list`, every
+                    // navigation rebuilt every row.
+                    uniform_list(
+                        "fm-preview-dir-list",
+                        entries.len(),
+                        move |range, _window, cx| {
+                            let cache = Rc::new(RefCell::new(ShapedLineCache::new(
+                                crate::render::shaped_line_cache::default_capacity(
+                                    range.len().max(8),
+                                    1,
+                                    1,
+                                ),
+                            )));
+                            range
+                                .map(|i| {
+                                    build_entry_row(&entries[i], i, None, false, site, &cache, cx)
+                                })
+                                .collect()
+                        },
+                    )
+                    .size_full()
+                    .into_any_element()
                 }
             }
             Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
@@ -486,10 +480,7 @@ impl FileManager {
             }
             PendingInput::ConfirmDeleteMarked { targets } => {
                 let count = targets.len();
-                (
-                    "delete? ",
-                    format!("{count} entries to trash — y/N").into(),
-                )
+                ("delete? ", format!("{count} entries to trash — y/N").into())
             }
             PendingInput::ConfirmSkipTrashDelete { targets } => {
                 let count = targets.len();
@@ -588,7 +579,7 @@ impl Render for FileManager {
                     "fm-parent-list",
                     cx,
                 )
-                    .into_any_element(),
+                .into_any_element(),
             )
         } else {
             None
@@ -640,7 +631,7 @@ impl Render for FileManager {
             .map(|e| e.size)
             .sum();
         let bottom_bar_state = BottomBarState {
-            entry: focused_entry.clone(),
+            entry: focused_entry,
             child_count: focused_child_count,
             marked_count,
             marked_total_size,
@@ -659,23 +650,18 @@ impl Render for FileManager {
             BottomBarLeft::Info
         };
         let error_message = self.error_message.clone();
-        let shell_banner = self
-            .shell_running
-            .as_ref()
-            .map(|r| r.command.clone());
+        let shell_banner = self.shell_running.as_ref().map(|r| r.command.clone());
 
         // Header-chip inputs — sourced from existing panel state. Match
         // counts are computed here once so the chip doesn't pay for an
         // O(n) scan on every cell render.
-        let find_pending = self
-            .pending_input
-            .as_ref()
-            .and_then(|p| match p {
-                PendingInput::FindForward { query, .. }
-                | PendingInput::FindBackward { query, .. } => Some(query.clone()),
-                _ => None,
-            });
-        let find_active_pattern = find_pending.clone().or_else(|| self.last_find_pattern.clone());
+        let find_pending = self.pending_input.as_ref().and_then(|p| match p {
+            PendingInput::FindForward { query, .. } | PendingInput::FindBackward { query, .. } => {
+                Some(query.clone())
+            }
+            _ => None,
+        });
+        let find_active_pattern = find_pending.or_else(|| self.last_find_pattern.clone());
         let find_match_count = find_active_pattern
             .as_ref()
             .map(|needle| count_find_matches(&self.entries, needle))
@@ -710,8 +696,7 @@ impl Render for FileManager {
                 line_mode,
                 custom_render: true,
             };
-            let marks_set: std::collections::HashSet<usize> =
-                marked.iter().copied().collect();
+            let marks_set: std::collections::HashSet<usize> = marked.iter().copied().collect();
             build_fm_column(
                 &entries,
                 Some(selected_idx_for_current),
@@ -726,135 +711,149 @@ impl Render for FileManager {
             .into_any_element()
         } else {
             let current_col = uniform_list("file-list", entries.len(), {
-            move |range, _window, cx| {
-                let theme = cx.theme();
-                // Cursor row uses the active token (vs the dimmer
-                // `ghost_element_selected`) so the focused row pops at
-                // a glance — and stays distinguishable when it's also
-                // a marked row (the 2px accent stripe survives on top).
-                let selected_bg = theme.colors().ghost_element_active;
+                move |range, _window, cx| {
+                    let theme = cx.theme();
+                    // Cursor row uses the active token (vs the dimmer
+                    // `ghost_element_selected`) so the focused row pops at
+                    // a glance — and stays distinguishable when it's also
+                    // a marked row (the 2px accent stripe survives on top).
+                    let selected_bg = theme.colors().ghost_element_active;
 
-                range
-                    .map(|i| {
-                        let entry = &entries[i];
-                        let is_selected = i == selected_index;
-                        let is_marked = marked.contains(&i);
+                    range
+                        .map(|i| {
+                            let entry = &entries[i];
+                            let is_selected = i == selected_index;
+                            let is_marked = marked.contains(&i);
 
-                        // Marked rows keep the accent tint so the
-                        // "marked" cue is clearly the priority signal;
-                        // otherwise the filetype overlay drives the
-                        // filename color.
-                        let text_color = if is_marked {
-                            Color::Accent
-                        } else {
-                            filetype_color(entry, cx)
-                        };
+                            // Marked rows keep the accent tint so the
+                            // "marked" cue is clearly the priority signal;
+                            // otherwise the filetype overlay drives the
+                            // filename color.
+                            let text_color = if is_marked {
+                                Color::Accent
+                            } else {
+                                filetype_color(entry, cx)
+                            };
 
-                        // Cached by `populate_icon_paths`; see `render_entry_row`
-                        // for the cache semantics.
-                        let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
-                        let fallback = if entry.is_dir { IconName::Folder } else { IconName::File };
-                        let icon_element = match resolved_icon {
-                            Some(p) => Icon::from_path(p)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element(),
-                            None => Icon::new(fallback)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element(),
-                        };
+                            // Cached by `populate_icon_paths`; see `render_entry_row`
+                            // for the cache semantics.
+                            let resolved_icon = entry.icon_path.as_ref().and_then(|o| o.clone());
+                            let fallback = if entry.is_dir {
+                                IconName::Folder
+                            } else {
+                                IconName::File
+                            };
+                            let icon_element = match resolved_icon {
+                                Some(p) => Icon::from_path(p)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                                None => Icon::new(fallback)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                            };
 
-                        let marked_bg = theme.colors().ghost_element_hover;
-                        let this = this.clone();
-                        let focus = focus.clone();
-                        let (git_glyph, git_color, git_filename_color) =
-                            git_status_palette(entry.git_status);
-                        // Marked rows keep their accent tint; git
-                        // status overrides the filetype color on dirty
-                        // entries; otherwise filetype color carries.
-                        let text_color = if is_marked {
-                            text_color
-                        } else {
-                            git_filename_color.unwrap_or(text_color)
-                        };
-                        // Precomputed at DirEntry construction; clone is a
-                        // cheap `Arc` bump rather than a fresh format.
-                        let meta = entry.labels.meta[line_mode.idx()].clone();
+                            let marked_bg = theme.colors().ghost_element_hover;
+                            let this = this.clone();
+                            let focus = focus.clone();
+                            let (git_glyph, git_color, git_filename_color) =
+                                git_status_palette(entry.git_status);
+                            // Marked rows keep their accent tint; git
+                            // status overrides the filetype color on dirty
+                            // entries; otherwise filetype color carries.
+                            let text_color = if is_marked {
+                                text_color
+                            } else {
+                                git_filename_color.unwrap_or(text_color)
+                            };
+                            // Precomputed at DirEntry construction; clone is a
+                            // cheap `Arc` bump rather than a fresh format.
+                            let meta = entry.labels.meta[line_mode.idx()].clone();
 
-                        // Marked rows get a 2px left-edge stripe in
-                        // the accent color in addition to the bg tint.
-                        // The stripe survives when the cursor row also
-                        // tints — the bg color of the row swallows the
-                        // marked alpha but not the explicit stripe.
-                        let stripe_color = theme.colors().text_accent;
-                        div()
-                            .id(("file-entry", i))
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .pr(px(1.))
-                                    .py(px(1.))
-                                    .gap(px(4.))
-                                    .when(is_marked && !is_selected, |d| d.bg(marked_bg))
-                                    .when(is_selected, |d| d.bg(selected_bg))
-                                    // Left edge: 2px stripe slot (in
-                                    // accent when marked, transparent
-                                    // otherwise) followed by 2px of
-                                    // breathing room. Keeps the row's
-                                    // text aligned regardless of mark
-                                    // state.
-                                    .child(if is_marked {
-                                        div()
-                                            .w(px(2.))
-                                            .flex_none()
-                                            .bg(stripe_color)
-                                            .into_any_element()
-                                    } else {
-                                        div().w(px(2.)).flex_none().into_any_element()
-                                    })
-                                    .child(div().w(px(2.)).flex_none())
-                                    .child(
-                                        div().w(px(12.)).flex_none().child(
-                                            Label::new(SharedString::new_static(git_glyph))
-                                                .size(LabelSize::Small)
-                                                .color(git_color),
-                                        ),
-                                    )
-                                    .child(icon_element)
-                                    .child(
-                                        div().flex_1().min_w_0().child(
-                                            Label::new(entry.labels.name.clone())
-                                                .size(LabelSize::Small)
-                                                .color(text_color)
-                                                .when(is_selected, |l| {
-                                                    l.weight(FontWeight::BOLD)
-                                                })
-                                                .single_line(),
-                                        ),
-                                    )
-                                    .when(entry.is_symlink, |el| {
-                                        el.child(
-                                            Icon::new(IconName::ArrowUpRight)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                    })
-                                    .when_some(meta, |el, text| {
-                                        el.child(
-                                            div().w(px(META_COLUMN_WIDTH)).flex_none().child(
-                                                Label::new(text)
+                            // Marked rows get a 2px left-edge stripe in
+                            // the accent color in addition to the bg tint.
+                            // The stripe survives when the cursor row also
+                            // tints — the bg color of the row swallows the
+                            // marked alpha but not the explicit stripe.
+                            let stripe_color = theme.colors().text_accent;
+                            div()
+                                .id(("file-entry", i))
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .pr(px(1.))
+                                        .py(px(1.))
+                                        .gap(px(4.))
+                                        .when(is_marked && !is_selected, |d| d.bg(marked_bg))
+                                        .when(is_selected, |d| d.bg(selected_bg))
+                                        // Left edge: 2px stripe slot (in
+                                        // accent when marked, transparent
+                                        // otherwise) followed by 2px of
+                                        // breathing room. Keeps the row's
+                                        // text aligned regardless of mark
+                                        // state.
+                                        .child(if is_marked {
+                                            div()
+                                                .w(px(2.))
+                                                .flex_none()
+                                                .bg(stripe_color)
+                                                .into_any_element()
+                                        } else {
+                                            div().w(px(2.)).flex_none().into_any_element()
+                                        })
+                                        .child(div().w(px(2.)).flex_none())
+                                        .child(
+                                            div().w(px(12.)).flex_none().child(
+                                                Label::new(SharedString::new_static(git_glyph))
                                                     .size(LabelSize::Small)
-                                                    .color(Color::Muted)
+                                                    .color(git_color),
+                                            ),
+                                        )
+                                        .child(icon_element)
+                                        .child(
+                                            div().flex_1().min_w_0().child(
+                                                Label::new(entry.labels.name.clone())
+                                                    .size(LabelSize::Small)
+                                                    .color(text_color)
+                                                    .when(is_selected, |l| {
+                                                        l.weight(FontWeight::BOLD)
+                                                    })
                                                     .single_line(),
                                             ),
                                         )
-                                    }),
-                            )
-                            .on_click({
-                                let this = this.clone();
-                                let focus = focus.clone();
-                                move |_event, window, cx| {
+                                        .when(entry.is_symlink, |el| {
+                                            el.child(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
+                                        })
+                                        .when_some(meta, |el, text| {
+                                            el.child(
+                                                div().w(px(META_COLUMN_WIDTH)).flex_none().child(
+                                                    Label::new(text)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .single_line(),
+                                                ),
+                                            )
+                                        }),
+                                )
+                                .on_click({
+                                    let this = this.clone();
+                                    let focus = focus.clone();
+                                    move |_event, window, cx| {
+                                        focus.focus(window, cx);
+                                        this.update(cx, |fm, cx| {
+                                            fm.selected_index = i;
+                                            fm.request_preview_update(cx);
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .jump_target(move |window, cx| {
                                     focus.focus(window, cx);
                                     this.update(cx, |fm, cx| {
                                         fm.selected_index = i;
@@ -862,25 +861,15 @@ impl Render for FileManager {
                                         cx.notify();
                                     })
                                     .ok();
-                                }
-                            })
-                            .jump_target(move |window, cx| {
-                                focus.focus(window, cx);
-                                this.update(cx, |fm, cx| {
-                                    fm.selected_index = i;
-                                    fm.request_preview_update(cx);
-                                    cx.notify();
                                 })
-                                .ok();
-                            })
-                            .into_any_element()
-                    })
-                    .collect()
-            }
-        })
-        .size_full()
-        .py(px(2.))
-        .track_scroll(&self.scroll_handle);
+                                .into_any_element()
+                        })
+                        .collect()
+                }
+            })
+            .size_full()
+            .py(px(2.))
+            .track_scroll(&self.scroll_handle);
             current_col.into_any_element()
         };
 
@@ -896,30 +885,46 @@ impl Render for FileManager {
             .on_action(cx.listener(Self::handle_inner_container))
             .on_action(cx.listener(Self::handle_around_container))
             .on_action(cx.listener(Self::handle_select_all_kind))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByName, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Name, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortBySize, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Size, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByMtime, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Mtime, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByBtime, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Btime, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByExtension, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Extension, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByNatural, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Natural, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::SortByRandom, window, cx| {
-                this.set_sort_mode(crate::prefs::SortMode::Random, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &crate::file_manager::ToggleSortReverse, window, cx| {
-                this.toggle_sort_reverse(window, cx);
-            }))
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortByName, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Name, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortBySize, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Size, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortByMtime, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Mtime, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortByBtime, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Btime, window, cx);
+                }),
+            )
+            .on_action(cx.listener(
+                |this, _: &crate::file_manager::SortByExtension, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Extension, window, cx);
+                },
+            ))
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortByNatural, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Natural, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::file_manager::SortByRandom, window, cx| {
+                    this.set_sort_mode(crate::prefs::SortMode::Random, window, cx);
+                }),
+            )
+            .on_action(cx.listener(
+                |this, _: &crate::file_manager::ToggleSortReverse, window, cx| {
+                    this.toggle_sort_reverse(window, cx);
+                },
+            ))
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(render_top_bar(&top_bar, cx))
@@ -983,14 +988,11 @@ impl Render for FileManager {
                                 return;
                             }
                             // SAFETY: bounds.is_empty() returned false above.
-                            let (Some(first), Some(last)) =
-                                (bounds.first(), bounds.last())
-                            else {
+                            let (Some(first), Some(last)) = (bounds.first(), bounds.last()) else {
                                 return;
                             };
-                            let new_total = f32::from(
-                                last.origin.x + last.size.width - first.origin.x,
-                            );
+                            let new_total =
+                                f32::from(last.origin.x + last.size.width - first.origin.x);
                             // When the parent column isn't rendered,
                             // there's no parent width to capture; keep
                             // the last measured value so toggling back
@@ -1000,10 +1002,8 @@ impl Render for FileManager {
                             } else {
                                 prev_parent
                             };
-                            let parent_changed =
-                                (new_parent - prev_parent).abs() >= 1.0;
-                            let total_changed =
-                                (new_total - prev_total).abs() >= 1.0;
+                            let parent_changed = (new_parent - prev_parent).abs() >= 1.0;
+                            let total_changed = (new_total - prev_total).abs() >= 1.0;
                             if !parent_changed && !total_changed {
                                 return;
                             }
@@ -1032,9 +1032,7 @@ impl Render for FileManager {
                             .flex_1()
                             .h_full()
                             .min_h_0()
-                            .when(show_preview, |d| {
-                                d.border_r_1().border_color(border_color)
-                            })
+                            .when(show_preview, |d| d.border_r_1().border_color(border_color))
                             .child(current_col),
                     )
                     .when_some(preview_col, |row, col| {
@@ -1113,8 +1111,8 @@ fn render_text_preview(
     // (150 ms) has elapsed on the same target path, upgrade to the
     // real editor for cursor / folding / gutter / etc. See
     // `REQ:codon/fm-render#c-defer-editor-in-preview`.
-    let dwell_complete = fm.preview_dwell_upgraded
-        && fm.preview_dwell_path.as_ref() == Some(&text.path);
+    let dwell_complete =
+        fm.preview_dwell_upgraded && fm.preview_dwell_path.as_ref() == Some(&text.path);
     if !dwell_complete {
         return render_text_preview_static(text);
     }
@@ -1211,11 +1209,14 @@ fn render_archive_preview(listing: &ArchiveListing) -> impl IntoElement {
     if listing.extra > 0 {
         lines.push(format!("… {} more", listing.extra));
     }
-    v_flex().px(px(8.)).py(px(2.)).children(lines.into_iter().map(|line| {
-        Label::new(SharedString::from(line))
-            .size(LabelSize::Small)
-            .color(Color::Muted)
-    }))
+    v_flex()
+        .px(px(8.))
+        .py(px(2.))
+        .children(lines.into_iter().map(|line| {
+            Label::new(SharedString::from(line))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        }))
 }
 
 fn render_binary_preview(info: &BinaryInfo, cx: &App) -> impl IntoElement {
@@ -1264,9 +1265,12 @@ fn mime_type_label(mime: &str) -> String {
         "application" => match sub {
             "pdf" => return "PDF document".to_string(),
             "json" | "xml" | "yaml" | "x-yaml" | "toml" => "Structured data",
-            "zip" | "x-tar" | "x-7z-compressed" | "x-rar-compressed"
-            | "gzip" | "x-bzip2" | "x-xz" | "x-zstd" => "Archive",
-            "x-sharedlib" | "x-executable" | "x-mach-binary" | "vnd.microsoft.portable-executable"
+            "zip" | "x-tar" | "x-7z-compressed" | "x-rar-compressed" | "gzip" | "x-bzip2"
+            | "x-xz" | "x-zstd" => "Archive",
+            "x-sharedlib"
+            | "x-executable"
+            | "x-mach-binary"
+            | "vnd.microsoft.portable-executable"
             | "wasm" => "Executable / binary",
             "x-font-ttf" | "x-font-otf" | "x-font-woff" => "Font file",
             _ => "Binary data",
@@ -1341,7 +1345,11 @@ pub(crate) fn entry_meta_label(entry: &DirEntry, mode: LineMode) -> Option<Strin
             }
         }
         LineMode::Mtime => entry.mtime.map(format_relative_time),
-        LineMode::Permissions => Some(format_permissions(entry.is_dir, entry.is_symlink, entry.mode)),
+        LineMode::Permissions => Some(format_permissions(
+            entry.is_dir,
+            entry.is_symlink,
+            entry.mode,
+        )),
         LineMode::Owner => Some(format_owner(entry.uid, entry.gid)),
     }
 }
@@ -1510,9 +1518,7 @@ pub(crate) fn render_bottom_bar(
         BottomBarLeft::ContextualHints(hints) => {
             render_bottom_left_hints(&hints).into_any_element()
         }
-        BottomBarLeft::CmdShortcuts(hints) => {
-            render_bottom_left_hints(&hints).into_any_element()
-        }
+        BottomBarLeft::CmdShortcuts(hints) => render_bottom_left_hints(&hints).into_any_element(),
     };
 
     h_flex()
@@ -1605,9 +1611,7 @@ fn render_bottom_left_hints(hints: &[(&'static str, &'static str)]) -> impl Into
 /// state — an open prompt, an active visual-line range, or a non-empty
 /// marked set. Returns `None` when nothing contextual applies, so the
 /// caller can fall back to the default info segments.
-pub(crate) fn contextual_help_hints(
-    fm: &FileManager,
-) -> Option<Vec<(&'static str, &'static str)>> {
+pub(crate) fn contextual_help_hints(fm: &FileManager) -> Option<Vec<(&'static str, &'static str)>> {
     if fm.pending_input.is_some() {
         return Some(vec![
             ("⏎", "confirm"),
@@ -1715,8 +1719,7 @@ fn render_top_bar(state: &TopBarState, cx: &App) -> impl IntoElement {
     let status = theme.status();
     let border_color = theme.colors().border;
 
-    let sort_is_default =
-        matches!(state.sort, crate::prefs::SortMode::Name) && !state.reverse;
+    let sort_is_default = matches!(state.sort, crate::prefs::SortMode::Name) && !state.reverse;
     let sort_label = sort_chip_label(state.sort, state.reverse);
     let sort_chip = chip(
         sort_label,
@@ -1736,9 +1739,7 @@ fn render_top_bar(state: &TopBarState, cx: &App) -> impl IntoElement {
 
     if let Some(pattern) = state.filter_query.as_ref() {
         let label = format!("filter:{}", truncate_label(pattern, 20));
-        chips.push(
-            chip(label, status.warning_background, Color::Warning).into_any_element(),
-        );
+        chips.push(chip(label, status.warning_background, Color::Warning).into_any_element());
     }
 
     if let Some(pattern) = state.find_query.as_ref() {
@@ -1751,8 +1752,14 @@ fn render_top_bar(state: &TopBarState, cx: &App) -> impl IntoElement {
     }
 
     if state.show_hidden {
-        chips.push(chip(".".to_string(), theme.colors().element_background, Color::Muted)
-            .into_any_element());
+        chips.push(
+            chip(
+                ".".to_string(),
+                theme.colors().element_background,
+                Color::Muted,
+            )
+            .into_any_element(),
+        );
     }
 
     h_flex()
@@ -2086,12 +2093,18 @@ mod tests {
             icon_path: None,
         };
         assert_eq!(entry_meta_label(&entry, LineMode::None), None);
-        assert_eq!(entry_meta_label(&entry, LineMode::Size).as_deref(), Some("100 B"));
+        assert_eq!(
+            entry_meta_label(&entry, LineMode::Size).as_deref(),
+            Some("100 B")
+        );
         assert_eq!(
             entry_meta_label(&entry, LineMode::Permissions).as_deref(),
             Some("-rw-r--r--")
         );
-        assert_eq!(entry_meta_label(&entry, LineMode::Owner).as_deref(), Some("501:20"));
+        assert_eq!(
+            entry_meta_label(&entry, LineMode::Owner).as_deref(),
+            Some("501:20")
+        );
     }
 
     #[test]
@@ -2113,11 +2126,20 @@ mod tests {
             labels: Default::default(),
             icon_path: None,
         };
-        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("3 items"));
+        assert_eq!(
+            entry_meta_label(&dir, LineMode::Size).as_deref(),
+            Some("3 items")
+        );
         dir.child_count = Some(1);
-        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("1 item"));
+        assert_eq!(
+            entry_meta_label(&dir, LineMode::Size).as_deref(),
+            Some("1 item")
+        );
         dir.child_count = Some(0);
-        assert_eq!(entry_meta_label(&dir, LineMode::Size).as_deref(), Some("0 items"));
+        assert_eq!(
+            entry_meta_label(&dir, LineMode::Size).as_deref(),
+            Some("0 items")
+        );
         dir.child_count = None;
         assert_eq!(entry_meta_label(&dir, LineMode::Size), None);
     }

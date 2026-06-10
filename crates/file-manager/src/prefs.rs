@@ -248,6 +248,7 @@ mod tests {
         assert_eq!(p.line_mode, LineMode::Size);
         assert!(p.show_gitignored);
         assert!((p.preview_fraction - PREVIEW_FRACTION_DEFAULT).abs() < f32::EPSILON);
+        assert!(!p.custom_render);
     }
 
     #[test]
@@ -258,6 +259,7 @@ mod tests {
             line_mode: LineMode::Permissions,
             show_gitignored: false,
             preview_fraction: 0.5,
+            custom_render: true,
         };
         let s = toml::to_string_pretty(&p).expect("serialise");
         let parsed: FmPrefs = toml::from_str(&s).expect("parse");
@@ -266,5 +268,6 @@ mod tests {
         assert_eq!(parsed.line_mode, LineMode::Permissions);
         assert!(!parsed.show_gitignored);
         assert!((parsed.preview_fraction - 0.5).abs() < f32::EPSILON);
+        assert!(parsed.custom_render);
     }
 }

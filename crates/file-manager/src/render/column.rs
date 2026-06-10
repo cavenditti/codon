@@ -58,6 +58,7 @@ pub(crate) struct ColumnTheme {
 
 /// Construction inputs for the custom column.
 pub(crate) struct FmColumnElement {
+    #[allow(dead_code)]
     pub column_kind: ColumnKind,
     pub entries: Arc<[Arc<DirEntry>]>,
     pub selection: Option<usize>,
@@ -156,8 +157,7 @@ impl FmColumnElement {
                 offset = (sel_bottom - h).max(0.0);
             }
         }
-        let max_offset =
-            ((max_idx as f32) * row_h - h).max(0.0);
+        let max_offset = ((max_idx as f32) * row_h - h).max(0.0);
         offset = offset.clamp(0.0, max_offset);
         *self.scroll_offset.borrow_mut() = offset;
 
@@ -179,7 +179,12 @@ impl IntoElement for FmColumnElement {
 /// row Elements for the visible window so `paint` can drive them
 /// inline.
 pub(crate) struct FmColumnPrepaint {
-    visible_rows: Vec<(Bounds<Pixels>, FmRowElement, FmRowPrepaintLite, Arc<CachedRow>)>,
+    visible_rows: Vec<(
+        Bounds<Pixels>,
+        FmRowElement,
+        FmRowPrepaintLite,
+        Arc<CachedRow>,
+    )>,
     track_bounds: Option<Bounds<Pixels>>,
     thumb_bounds: Option<Bounds<Pixels>>,
 }
@@ -189,7 +194,9 @@ pub(crate) struct FmColumnPrepaint {
 /// rather than recursing through `Element::paint`, which would
 /// require feeding GPUI a `LayoutId` for each row.
 pub(crate) struct FmRowPrepaintLite {
+    #[allow(dead_code)]
     pub state: RowDisplayState,
+    #[allow(dead_code)]
     pub meta_text: Option<SharedString>,
 }
 
@@ -281,10 +288,7 @@ impl Element for FmColumnElement {
             // Row-glyph cache lookup. The cached payload composes
             // the shaped name + meta lines + resolved background;
             // a hit skips all per-row state-derivation work.
-            let icon_path_key = entry
-                .icon_path
-                .as_ref()
-                .and_then(|o| o.clone());
+            let icon_path_key = entry.icon_path.as_ref().and_then(|o| o.clone());
             let key = RowGlyphKey {
                 path: entry.path.clone(),
                 line_mode: self.line_mode,
@@ -307,13 +311,16 @@ impl Element for FmColumnElement {
                         name_line: inline.name_line.clone(),
                         meta_line: inline.meta_line.clone(),
                     });
-                    self.row_glyph_cache
-                        .borrow_mut()
-                        .insert(key, c.clone());
+                    self.row_glyph_cache.borrow_mut().insert(key, c.clone());
                     c
                 }
             };
-            visible_rows.push((row_bounds, row, FmRowPrepaintLite { state, meta_text }, payload));
+            visible_rows.push((
+                row_bounds,
+                row,
+                FmRowPrepaintLite { state, meta_text },
+                payload,
+            ));
         }
 
         // Scrollbar: track always painted, thumb sized to the visible
@@ -341,8 +348,7 @@ impl Element for FmColumnElement {
                 } else {
                     0.0
                 };
-                let thumb_y =
-                    bounds.origin.y + (viewport_h - thumb_h) * scroll_frac;
+                let thumb_y = bounds.origin.y + (viewport_h - thumb_h) * scroll_frac;
                 let thumb = Bounds {
                     origin: point(track_x, thumb_y),
                     size: size(track_w, thumb_h),
@@ -507,10 +513,7 @@ impl FmRowElement {
                 self.theme.text_muted,
                 cx,
             ) {
-                log::debug!(
-                    "fm row: paint_svg for {:?} failed: {err}",
-                    self.entry.path
-                );
+                log::debug!("fm row: paint_svg for {:?} failed: {err}", self.entry.path);
             }
         }
         pen_x += icon_size + self.metrics.gap;

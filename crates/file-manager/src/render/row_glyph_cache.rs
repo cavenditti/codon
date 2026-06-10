@@ -41,6 +41,7 @@ pub(crate) struct RowGlyphKey {
 
 #[derive(Clone)]
 pub(crate) struct CachedRow {
+    #[allow(dead_code)]
     pub background: Option<Hsla>,
     pub name_line: Option<Arc<ShapedLine>>,
     pub meta_line: Option<Arc<ShapedLine>>,
@@ -56,8 +57,7 @@ pub(crate) struct RowGlyphCache {
 
 impl RowGlyphCache {
     pub fn new(capacity: usize) -> Self {
-        let capacity = NonZeroUsize::new(capacity.max(1))
-            .expect("max(1) is at least 1");
+        let capacity = NonZeroUsize::new(capacity.max(1)).expect("max(1) is at least 1");
         Self {
             inner: IndexMap::with_capacity(capacity.get()),
             capacity,
@@ -74,7 +74,10 @@ impl RowGlyphCache {
     /// borrow.
     pub fn get(&mut self, key: &RowGlyphKey) -> Option<Arc<CachedRow>> {
         if let Some(idx) = self.inner.get_index_of(key) {
-            let (k, v) = self.inner.swap_remove_index(idx).expect("index just resolved");
+            let (k, v) = self
+                .inner
+                .swap_remove_index(idx)
+                .expect("index just resolved");
             let value = v.clone();
             self.inner.insert(k, v);
             self.hits = self.hits.saturating_add(1);
@@ -108,14 +111,17 @@ impl RowGlyphCache {
         self.inner.retain(|k, _| visible_paths.contains(&k.path));
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
+    #[allow(dead_code)]
     pub fn hits(&self) -> u64 {
         self.hits
     }
 
+    #[allow(dead_code)]
     pub fn misses(&self) -> u64 {
         self.misses
     }
