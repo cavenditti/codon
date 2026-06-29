@@ -2620,16 +2620,28 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         multi_workspace_1
-            .update(cx, |multi_workspace, _window, cx| {
+            .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     assert_eq!(workspace.worktrees(cx).count(), 2);
-                    // Upstream Zed also asserts the right dock opened (the
-                    // ProjectPanel reveals on multi-worktree open) and that
-                    // the active pane holds focus. Codon adds no dock
-                    // panels, and the focus assertion fails identically in
-                    // the vendored zed crate's own copy of this test on the
-                    // codon branch — pane focus after `open_paths` diverged
-                    // there, not in apps/codon.
+                    // Upstream Zed additionally asserts the right dock opened
+                    // (the ProjectPanel reveals on multi-worktree open) and
+                    // that the bare active-pane handle holds focus. This
+                    // harness wires up no dock panels, so the dock assertion
+                    // is dropped here.
+                    //
+                    // The focus assertion is replaced rather than dropped: only
+                    // directories were opened, so the active pane holds no
+                    // items, and codon renders the branded welcome page in an
+                    // empty pane even when worktrees are present (see
+                    // `feat(workspace): rebrand welcome page for Codon`).
+                    // `Pane::focus_in` delegates focus into that keyboard-
+                    // navigable welcome page, so focus lands *within* the active
+                    // pane rather than on the pane handle. Assert that codon
+                    // invariant; this same divergence is covered by the vendored
+                    // `zed::tests::test_open_paths_action`.
+                    let active_pane = workspace.active_pane().read(cx);
+                    assert_eq!(active_pane.items_len(), 0);
+                    assert!(active_pane.focus_handle(cx).contains_focused(window, cx));
                 });
             })
             .unwrap();
