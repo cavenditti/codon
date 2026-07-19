@@ -9,8 +9,9 @@ pub mod trace_viewer;
 pub use actions::*;
 pub use runtime::{
     Agent, AgentBuilder, AgentError, AgentEvent, AgentRegistry, CancelToken, DelegateTool,
-    HarnessSettings, ModelClient, ModelSpec, Tool, ToolError, ToolSet, TraceLog, TurnOutcome,
-    TurnTrace, ZedModelClient, wait_for_provider_authentication,
+    HarnessSettings, ModelClient, ModelSpec, RoutingFlow, RoutingFlowError, ShellCommandTool, Tool,
+    ToolError, ToolSet, TraceLog, TurnOutcome, TurnTrace, ZedModelClient,
+    wait_for_provider_authentication,
 };
 pub use token_status::TokenStatusItem;
 
@@ -19,10 +20,15 @@ use gpui::App;
 pub fn init(cx: &mut App) {
     runtime::init(cx);
     actions::register(cx);
-    // Zed defers provider authentication to the agent panel's first
-    // load; codon agent flows must resolve a model without the panel
-    // ever opening, so run the same pass at startup.
-    runtime::start_provider_authentication(cx);
+    // NOTE: codon deliberately does NOT eagerly authenticate every
+    // language-model provider at startup. That pass (added for the
+    // out-of-the-box `#@` flow) cascades the whole proprietary AI
+    // stack to life during launch — provider auth, ACP agent-registry
+    // network fetches, copilot polling — and was a major contributor
+    // to the release-build startup hang. Provider auth now happens
+    // lazily on first agent use. See the phase-22 vendor-agnostic
+    // agent-layer rework. `wait_for_provider_authentication` becomes a
+    // no-op when the startup pass never ran.
 }
 
 /// Re-apply `[agent.*]` overrides from an in-memory `codon.toml`.

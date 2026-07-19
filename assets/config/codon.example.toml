@@ -100,6 +100,54 @@ format_on_save = "on"
 # Opt-in status-bar token counter: running `↓ in ↑ out` totals for the
 # session, fed by the per-turn trace. Default off — codon stays quiet.
 # show_token_counter = true
+#
+# Optional dynamic routing flow. When set, Codon looks for
+# `<name>.rhai` in each flow path and registers the agents/handoffs it
+# declares on every config reload. Default search path when
+# `flow_paths` is omitted: ~/.config/codon/flows.
+#
+# active_flow = "default"
+# flow_paths = ["~/.config/codon/flows"]
+#
+# Development escape hatch for the scripted shell tool. Default false:
+# if the configured safety agent is missing or unavailable, shell
+# commands fail closed.
+# shell_safety_fail_open = false
+#
+# Example ~/.config/codon/flows/default.rhai:
+#
+# provider("openrouter");
+# agent("main", #{
+#   model: "z-ai/glm-5.2",
+#   prompt: "Plan coding work, delegate critique and edit application.",
+#   tools: ["shell"]
+# });
+# # Delegation tools come from the handoff() calls below, not from the
+# # `tools` list. `tools: ["shell"]` gates shell requests through the
+# # safety agent named by safety_for("shell", ...).
+# agent("reckoning", #{
+#   model: "deepseek/deepseek-4-flash",
+#   prompt: "Critique plans and identify risks."
+# });
+# agent("edit_applier", #{
+#   model: "morph/morph-v3-large",
+#   prompt: "Apply concrete edits only when asked."
+# });
+# agent("safety", #{
+#   provider: "ollama",
+#   model: "qwen3",
+#   prompt: "Evaluate shell commands. Reply ALLOW or DENY."
+# });
+# handoff("main", "reckoning", #{
+#   name: "ask_reckoning",
+#   description: "Use for critique before risky changes."
+# });
+# handoff("main", "edit_applier", #{
+#   name: "apply_edits",
+#   description: "Use for concrete edit application."
+# });
+# safety_for("shell", "safety");
+# entrypoint("main");
 
 # ═══ Which-key chord HUD ════════════════════════════════════════════
 # Codon's chord HUD is a Helix-style overlay rendered across the full

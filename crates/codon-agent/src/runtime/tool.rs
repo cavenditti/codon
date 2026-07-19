@@ -34,6 +34,15 @@ pub trait Tool: Send + Sync + 'static {
     /// Use the conventional Draft 7 shape (`{"type":"object", ...}`).
     fn input_schema(&self) -> serde_json::Value;
 
+    /// The tool input as it is allowed to appear in the metadata-only
+    /// trace. Defaults to the raw input; tools whose args carry bytes
+    /// that must never be recorded (a shell command, a secret) override
+    /// this to substitute a shape-only placeholder so the trace stays
+    /// body-free (REQ:codon/agent-routing-harness#c-monitoring).
+    fn trace_args(&self, input: &serde_json::Value) -> serde_json::Value {
+        input.clone()
+    }
+
     /// Execute the tool. `input` is the parsed JSON the model sent.
     /// The runtime catches panics around this call and surfaces them
     /// as `ToolError::Failed` so the model sees a structured error

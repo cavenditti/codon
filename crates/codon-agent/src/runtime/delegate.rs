@@ -12,6 +12,7 @@
 use crate::runtime::agent::Agent;
 use crate::runtime::cancel::CancelToken;
 use crate::runtime::error::ToolError;
+use crate::runtime::registry::AgentRegistry;
 use crate::runtime::tool::Tool;
 use anyhow::anyhow;
 use gpui::AsyncApp;
@@ -21,7 +22,14 @@ pub struct DelegateTool {
     name: String,
     description: String,
     schema: serde_json::Value,
+    /// Registry name of the delegation target. Resolved from the
+    /// [`AgentRegistry`] at call time so `[agent.<name>]` overrides
+    /// applied after flow-compile still reach the delegated agent; the
+    /// pinned `agent` below is the fallback if the name is no longer
+    /// registered.
+    target_name: Arc<str>,
     agent: Arc<Agent>,
+    parent_agent: Option<Arc<str>>,
 }
 
 impl DelegateTool {
@@ -43,8 +51,15 @@ impl DelegateTool {
             name: name.into(),
             description: description.into(),
             schema,
+            target_name: agent.name.clone(),
             agent,
+            parent_agent: None,
         }
+    }
+
+    pub fn with_parent_agent(mut self, parent_agent: Arc<str>) -> Self {
+        self.parent_agent = Some(parent_agent);
+        self
     }
 }
 
@@ -73,11 +88,21 @@ impl Tool for DelegateTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::BadInput("expected `input: string`".to_string()))?
             .to_string();
-        let outcome = self
-            .agent
-            .run(&user, cancel, &cx, None)
-            .await
-            .map_err(|err| ToolError::Failed(anyhow!("sub-agent failed: {err}")))?;
+        // Resolve the target by name on every call so a user
+        // `[agent.<name>]` override applied after flow-compile reaches
+        // the delegated agent. Falls back to the pinned Arc only when
+        // the target is no longer registered.
+        let target = cx
+            .update(|app| AgentRegistry::get(app, self.target_name.as_ref()))
+            .unwrap_or_else(|| self.agent.clone());
+        let outcome = if let Some(parent_agent) = &self.parent_agent {
+            target
+                .run_as_child(&user, cancel, &cx, parent_agent.clone())
+                .await
+        } else {
+            target.run(&user, cancel, &cx, None).await
+        }
+        .map_err(|err| ToolError::Failed(anyhow!("sub-agent failed: {err}")))?;
         Ok(outcome.text)
     }
 }

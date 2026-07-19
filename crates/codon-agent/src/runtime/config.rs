@@ -34,23 +34,33 @@ pub struct AgentOverride {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct AgentTable {
+pub(crate) struct AgentTable {
     #[serde(default)]
-    agent: HashMap<String, AgentOverride>,
+    pub(crate) agent: HashMap<String, AgentOverride>,
     #[serde(default)]
-    agent_harness: HarnessOverride,
+    pub(crate) agent_harness: HarnessOverride,
 }
 
 /// `[agent_harness]` table from codon.toml. Harness-wide knobs that
 /// don't belong to any single agent.
 #[derive(Debug, Default, Deserialize)]
-struct HarnessOverride {
+pub(crate) struct HarnessOverride {
     #[serde(default)]
-    show_token_counter: bool,
+    pub(crate) show_token_counter: bool,
+    pub(crate) active_flow: Option<String>,
+    #[serde(default)]
+    pub(crate) flow_paths: Vec<String>,
+    #[serde(default)]
+    pub(crate) shell_safety_fail_open: bool,
 }
 
 /// Resolved harness-wide settings. Default off — codon stays
 /// terminal-quiet (REQ:codon/agent-harness#c-cost-bookkeeping).
+///
+/// The routing knobs (`active_flow`, `flow_paths`,
+/// `shell_safety_fail_open`) stay on [`HarnessOverride`] and are read
+/// straight from the parsed table by the reload path; only the
+/// render-time token-counter toggle needs a resolved global.
 #[derive(Debug, Default)]
 pub struct HarnessSettings {
     pub show_token_counter: bool,
@@ -66,11 +76,21 @@ impl HarnessSettings {
     }
 }
 
+/// Deserialize the `[agent.*]` + `[agent_harness]` tables in a single
+/// pass. `Err` means `content` is not valid TOML (or mistypes a known
+/// field) — callers on the reload path treat that as a transient edit
+/// and keep the last-good registry rather than resetting
+/// (REQ:codon/agent-routing-harness#c-last-good).
+pub(crate) fn parse_document(content: &str) -> Result<AgentTable, toml::de::Error> {
+    toml::from_str::<AgentTable>(content)
+}
+
 /// Parse the `[agent.*]` sub-tree of an in-memory `codon.toml`
-/// document. Returns an empty map when the table is absent.
+/// document. Returns an empty map when the table is absent or the
+/// document does not parse.
 pub fn parse(content: &str) -> HashMap<String, AgentOverride> {
-    match toml::from_str::<AgentTable>(content) {
-        Ok(parsed) => parsed.agent,
+    match parse_document(content) {
+        Ok(table) => table.agent,
         Err(err) => {
             log::warn!("codon-agent: failed to parse [agent.*] from codon.toml: {err}");
             HashMap::new()
@@ -78,14 +98,13 @@ pub fn parse(content: &str) -> HashMap<String, AgentOverride> {
     }
 }
 
-/// Parse the `[agent_harness]` table and install the resolved
-/// [`HarnessSettings`] global. Absent table → defaults (all off).
-pub fn apply_harness_settings(cx: &mut App, content: &str) {
-    let parsed = toml::from_str::<AgentTable>(content)
-        .map(|t| t.agent_harness)
-        .unwrap_or_default();
+/// Install the resolved [`HarnessSettings`] global from an already
+/// parsed `[agent_harness]` table. The reload path deserializes the
+/// document once and hands the same override here and to routing, so
+/// the table is never parsed more than once per reload.
+pub(crate) fn apply_harness_settings(cx: &mut App, harness: &HarnessOverride) {
     cx.set_global(HarnessSettings {
-        show_token_counter: parsed.show_token_counter,
+        show_token_counter: harness.show_token_counter,
     });
 }
 
@@ -118,6 +137,7 @@ fn merge(current: &Agent, ov: AgentOverride) -> Agent {
         .unwrap_or_else(|| current.model.clone());
     Agent {
         name: current.name.clone(),
+        flow: current.flow.clone(),
         model,
         system_prompt: ov.system_prompt.or_else(|| current.system_prompt.clone()),
         user_prefix: ov.user_prefix.or_else(|| current.user_prefix.clone()),
@@ -139,6 +159,11 @@ mod tests {
         Agent::builder("demo", Arc::new(ZedModelClient::new(ModelSpec::Default)))
             .temperature(temperature)
             .build()
+    }
+
+    fn write_flow(dir: &std::path::Path, name: &str, body: &str) {
+        std::fs::create_dir_all(dir).expect("flow dir");
+        std::fs::write(dir.join(format!("{name}.rhai")), body).expect("flow file");
     }
 
     #[gpui::test]
@@ -177,15 +202,19 @@ mod tests {
 
     #[gpui::test]
     async fn harness_settings_default_off_and_parse(cx: &mut TestAppContext) {
+        let absent = parse_document("").expect("empty document parses");
+        let enabled = parse_document("[agent_harness]\nshow_token_counter = true\n")
+            .expect("valid document parses");
+
         cx.update(|cx| {
-            apply_harness_settings(cx, "");
+            apply_harness_settings(cx, &absent.agent_harness);
             assert!(!HarnessSettings::show_token_counter(cx));
 
-            apply_harness_settings(cx, "[agent_harness]\nshow_token_counter = true\n");
+            apply_harness_settings(cx, &enabled.agent_harness);
             assert!(HarnessSettings::show_token_counter(cx));
 
             // Removing the table flips it back off on the next reload.
-            apply_harness_settings(cx, "");
+            apply_harness_settings(cx, &absent.agent_harness);
             assert!(!HarnessSettings::show_token_counter(cx));
         });
     }
@@ -193,5 +222,204 @@ mod tests {
     #[test]
     fn unparseable_toml_yields_no_overrides() {
         assert!(parse("this is { not toml").is_empty());
+    }
+
+    #[gpui::test]
+    async fn active_flow_registers_scripted_agents(cx: &mut TestAppContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let flow_dir = temp.path().join("flows");
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"
+                provider("openrouter");
+                agent("main", #{ model: "z-ai/glm-5.2", prompt: "main", tools: ["delegate"] });
+                agent("reckoning", #{ model: "deepseek/deepseek-4-flash", prompt: "reckon" });
+                handoff("main", "reckoning", #{ name: "ask_reckoning", description: "Critique." });
+                entrypoint("main");
+            "#,
+        );
+        let config = format!(
+            "[agent_harness]\nactive_flow = \"default\"\nflow_paths = [\"{}\"]\n",
+            flow_dir.display()
+        );
+
+        cx.update(|cx| {
+            AgentRegistry::install(cx);
+            AgentRegistry::register(cx, demo_agent(0.1));
+            crate::runtime::reload_from_toml(cx, &config);
+
+            assert!(AgentRegistry::get(cx, "demo").is_some());
+            let main = AgentRegistry::get(cx, "main").expect("scripted main");
+            assert_eq!(main.flow.as_deref(), Some("default"));
+            assert_eq!(main.tools.len(), 1);
+            assert_eq!(AgentRegistry::scripted_flow(cx).as_deref(), Some("default"));
+        });
+    }
+
+    #[gpui::test]
+    async fn invalid_active_flow_keeps_last_good_scripted_agents(cx: &mut TestAppContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let flow_dir = temp.path().join("flows");
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"agent("main", #{ model: "default", prompt: "ok" });"#,
+        );
+        let config = format!(
+            "[agent_harness]\nactive_flow = \"default\"\nflow_paths = [\"{}\"]\n",
+            flow_dir.display()
+        );
+
+        cx.update(|cx| {
+            AgentRegistry::install(cx);
+            AgentRegistry::register(cx, demo_agent(0.1));
+            crate::runtime::reload_from_toml(cx, &config);
+            assert!(AgentRegistry::get(cx, "main").is_some());
+        });
+
+        write_flow(&flow_dir, "default", r#"handoff("main", "missing", #{});"#);
+
+        cx.update(|cx| {
+            crate::runtime::reload_from_toml(cx, &config);
+            assert!(
+                AgentRegistry::get(cx, "main").is_some(),
+                "last-good scripted flow should remain live"
+            );
+            assert!(
+                AgentRegistry::get(cx, "demo").is_some(),
+                "built-in agents survive a failed scripted reload"
+            );
+            assert!(AgentRegistry::routing_error(cx).is_some());
+        });
+    }
+
+    #[gpui::test]
+    async fn agent_override_adjusts_scripted_agent_and_keeps_flow_tag(cx: &mut TestAppContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let flow_dir = temp.path().join("flows");
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"agent("main", #{ model: "z-ai/glm-5.2", prompt: "scripted" });"#,
+        );
+        // An `[agent.main]` table lands on top of the scripted agent the
+        // flow registered — the override must win while the `flow` tag
+        // survives the merge.
+        let config = format!(
+            "[agent_harness]\nactive_flow = \"default\"\nflow_paths = [\"{}\"]\n\n[agent.main]\nmodel = \"acme/override-1\"\nsystem_prompt = \"overridden\"\n",
+            flow_dir.display()
+        );
+
+        cx.update(|cx| {
+            AgentRegistry::install(cx);
+            AgentRegistry::register(cx, demo_agent(0.1));
+            crate::runtime::reload_from_toml(cx, &config);
+
+            let main = AgentRegistry::get(cx, "main").expect("scripted main");
+            assert_eq!(
+                main.model.id().as_ref(),
+                "acme/override-1",
+                "[agent.main] override must swap the scripted model"
+            );
+            assert_eq!(main.system_prompt.as_deref(), Some("overridden"));
+            assert_eq!(
+                main.flow.as_deref(),
+                Some("default"),
+                "the override must preserve the scripted agent's flow tag"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn rhai_eval_error_keeps_builtins_and_last_good_scripted(cx: &mut TestAppContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let flow_dir = temp.path().join("flows");
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"agent("main", #{ model: "default", prompt: "ok" });"#,
+        );
+        let config = format!(
+            "[agent_harness]\nactive_flow = \"default\"\nflow_paths = [\"{}\"]\n",
+            flow_dir.display()
+        );
+
+        cx.update(|cx| {
+            AgentRegistry::install(cx);
+            AgentRegistry::register(cx, demo_agent(0.1));
+            crate::runtime::reload_from_toml(cx, &config);
+            assert!(AgentRegistry::get(cx, "main").is_some());
+        });
+
+        // A missing comma between call arguments makes the Rhai engine
+        // fail to evaluate the flow — the eval-error arm, distinct from
+        // the semantic (empty/invalid-topology) failure above.
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"agent("main" #{ model: "default" });"#,
+        );
+
+        cx.update(|cx| {
+            crate::runtime::reload_from_toml(cx, &config);
+            assert!(
+                AgentRegistry::get(cx, "demo").is_some(),
+                "built-in demo agent survives a Rhai eval error"
+            );
+            assert!(
+                AgentRegistry::get(cx, "main").is_some(),
+                "last-good scripted agent survives a Rhai eval error"
+            );
+            assert!(
+                AgentRegistry::routing_error(cx).is_some(),
+                "the eval error is surfaced as a metadata-only routing error"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn malformed_codon_toml_keeps_last_good_registry(cx: &mut TestAppContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let flow_dir = temp.path().join("flows");
+        write_flow(
+            &flow_dir,
+            "default",
+            r#"agent("main", #{ model: "default", prompt: "ok" });"#,
+        );
+        let config = format!(
+            "[agent_harness]\nactive_flow = \"default\"\nflow_paths = [\"{}\"]\n",
+            flow_dir.display()
+        );
+
+        cx.update(|cx| {
+            AgentRegistry::install(cx);
+            AgentRegistry::register(cx, demo_agent(0.1));
+            crate::runtime::reload_from_toml(cx, &config);
+            assert!(AgentRegistry::get(cx, "main").is_some());
+        });
+
+        // A transient syntax error in codon.toml itself — not the flow
+        // file — must not reset built-ins or wipe the scripted layer.
+        cx.update(|cx| {
+            crate::runtime::reload_from_toml(cx, "this is { not valid toml");
+            assert!(
+                AgentRegistry::get(cx, "main").is_some(),
+                "scripted agents survive a codon.toml parse error"
+            );
+            assert!(
+                AgentRegistry::get(cx, "demo").is_some(),
+                "built-in agents are not reset by a codon.toml parse error"
+            );
+            assert_eq!(
+                AgentRegistry::scripted_flow(cx).as_deref(),
+                Some("default"),
+                "the active scripted flow is preserved"
+            );
+            assert!(
+                AgentRegistry::routing_error(cx).is_some(),
+                "the parse error is surfaced as metadata only"
+            );
+        });
     }
 }

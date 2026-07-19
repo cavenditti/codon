@@ -61,6 +61,7 @@ pub struct ToolEvent {
     pub name: Arc<str>,
     pub args_summary: String,
     pub result_shape: String,
+    pub safety_decision: Option<String>,
     pub latency_ms: u64,
 }
 
@@ -91,6 +92,8 @@ pub struct TurnTrace {
     /// Assigned by [`TraceLog::push`]; 0 until pushed.
     pub id: u64,
     pub agent: Arc<str>,
+    pub flow: Option<Arc<str>>,
+    pub parent_agent: Option<Arc<str>>,
     pub model: Arc<str>,
     pub started_unix_ms: u64,
     pub phases: Vec<PhaseEvent>,
@@ -103,10 +106,17 @@ pub struct TurnTrace {
 }
 
 impl TurnTrace {
-    pub fn begin(agent: Arc<str>, model: Arc<str>) -> Self {
+    pub fn begin(
+        agent: Arc<str>,
+        model: Arc<str>,
+        flow: Option<Arc<str>>,
+        parent_agent: Option<Arc<str>>,
+    ) -> Self {
         Self {
             id: 0,
             agent,
+            flow,
+            parent_agent,
             model,
             started_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -158,12 +168,14 @@ impl TurnTrace {
         name: Arc<str>,
         input: &serde_json::Value,
         result_shape: String,
+        safety_decision: Option<String>,
         latency_ms: u64,
     ) {
         self.tools.push(ToolEvent {
             name,
             args_summary: summarize_args(input),
             result_shape,
+            safety_decision,
             latency_ms,
         });
     }
@@ -266,7 +278,7 @@ mod tests {
 
     #[test]
     fn trace_serialization_omits_monotonic_clock() {
-        let trace = TurnTrace::begin("a".into(), "m".into());
+        let trace = TurnTrace::begin("a".into(), "m".into(), None, None);
         let json = trace.pretty();
         assert!(!json.contains("t0"));
     }

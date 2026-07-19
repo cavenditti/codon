@@ -31,6 +31,7 @@ use std::time::Instant;
 /// All knobs that survive across turns. Constructed once, run many.
 pub struct Agent {
     pub name: Arc<str>,
+    pub flow: Option<Arc<str>>,
     pub model: Arc<dyn ModelClient>,
     pub system_prompt: Option<String>,
     /// Prepended to the user's message when an agent is invoked
@@ -48,6 +49,7 @@ impl Agent {
     pub fn builder(name: impl Into<Arc<str>>, model: Arc<dyn ModelClient>) -> AgentBuilder {
         AgentBuilder {
             name: name.into(),
+            flow: None,
             model,
             system_prompt: None,
             user_prefix: None,
@@ -61,6 +63,7 @@ impl Agent {
 
 pub struct AgentBuilder {
     name: Arc<str>,
+    flow: Option<Arc<str>>,
     model: Arc<dyn ModelClient>,
     system_prompt: Option<String>,
     user_prefix: Option<String>,
@@ -71,6 +74,10 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
+    pub fn flow(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.flow = Some(name.into());
+        self
+    }
     pub fn system_prompt(mut self, text: impl Into<String>) -> Self {
         self.system_prompt = Some(text.into());
         self
@@ -98,6 +105,7 @@ impl AgentBuilder {
     pub fn build(self) -> Agent {
         Agent {
             name: self.name,
+            flow: self.flow,
             model: self.model,
             system_prompt: self.system_prompt,
             user_prefix: self.user_prefix,
@@ -141,7 +149,43 @@ impl Agent {
         cx: &AsyncApp,
         events: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<TurnOutcome, AgentError> {
-        let mut trace = TurnTrace::begin(self.name.clone(), self.model.id());
+        self.run_with_trace_context(user_input, cancel, cx, events, TraceContext::default())
+            .await
+    }
+
+    pub(crate) async fn run_as_child(
+        &self,
+        user_input: &str,
+        cancel: CancelToken,
+        cx: &AsyncApp,
+        parent_agent: Arc<str>,
+    ) -> Result<TurnOutcome, AgentError> {
+        self.run_with_trace_context(
+            user_input,
+            cancel,
+            cx,
+            None,
+            TraceContext {
+                parent_agent: Some(parent_agent),
+            },
+        )
+        .await
+    }
+
+    async fn run_with_trace_context(
+        &self,
+        user_input: &str,
+        cancel: CancelToken,
+        cx: &AsyncApp,
+        events: Option<mpsc::UnboundedSender<AgentEvent>>,
+        context: TraceContext,
+    ) -> Result<TurnOutcome, AgentError> {
+        let mut trace = TurnTrace::begin(
+            self.name.clone(),
+            self.model.id(),
+            self.flow.clone(),
+            context.parent_agent,
+        );
         let result = self
             .run_inner(user_input, &cancel, cx, events, &mut trace)
             .await;
@@ -348,10 +392,19 @@ impl Agent {
                     Ok(text) => (false, format!("ok({}B)", text.len()), text),
                     Err((kind, message)) => (true, format!("error:{kind}"), message),
                 };
+                // Redact through the tool's own policy before the trace
+                // sees the args — a shell command must never be recorded
+                // verbatim (#c-monitoring).
+                let trace_input = self
+                    .tools
+                    .find(call.name.as_ref())
+                    .map(|tool| tool.trace_args(&call.input))
+                    .unwrap_or_else(|| call.input.clone());
                 trace.tool_dispatched(
                     Arc::from(call.name.as_ref() as &str),
-                    &call.input,
+                    &trace_input,
                     shape,
+                    safety_decision_for_tool_result(&call.name, &text),
                     latency_ms,
                 );
                 if let Some(tx) = events.as_mut() {
@@ -401,9 +454,21 @@ impl Agent {
             Ok(text) => Ok(text),
             Err(ToolError::Cancelled) => Err(("cancelled", "tool was cancelled".to_string())),
             Err(ToolError::BadInput(msg)) => Err(("bad_input", format!("bad tool input: {msg}"))),
+            Err(ToolError::SafetyDenied(msg)) => {
+                Err(("safety_denied", format!("shell command denied: {msg}")))
+            }
+            Err(ToolError::SafetyUnavailable(msg)) => Err((
+                "safety_unavailable",
+                format!("shell safety evaluator unavailable: {msg}"),
+            )),
             Err(ToolError::Failed(err)) => Err(("failed", format!("tool failed: {err:#}"))),
         }
     }
+}
+
+#[derive(Default)]
+struct TraceContext {
+    parent_agent: Option<Arc<str>>,
 }
 
 /// A tool call captured from the model stream. `parse_error` marks
@@ -426,6 +491,24 @@ fn error_kind(err: &AgentError) -> &'static str {
         AgentError::Model(_) => "model",
         AgentError::EmptyResponse => "empty_response",
         AgentError::Other(_) => "other",
+    }
+}
+
+fn safety_decision_for_tool_result(tool_name: &str, result_text: &str) -> Option<String> {
+    if tool_name != "shell_command" {
+        return None;
+    }
+    let lower = result_text.to_ascii_lowercase();
+    if lower.starts_with("safety_approved") {
+        Some("approved".to_string())
+    } else if lower.starts_with("safety_unavailable_fail_open") {
+        Some("fail_open".to_string())
+    } else if lower.starts_with("shell safety evaluator unavailable") {
+        Some("unavailable".to_string())
+    } else if lower.starts_with("shell command denied") {
+        Some("denied".to_string())
+    } else {
+        Some("unknown".to_string())
     }
 }
 

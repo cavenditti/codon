@@ -32,6 +32,10 @@ pub enum AgentError {
 pub enum ToolError {
     #[error("tool input did not match its schema: {0}")]
     BadInput(String),
+    #[error("shell command denied by safety evaluator: {0}")]
+    SafetyDenied(String),
+    #[error("shell safety evaluator unavailable: {0}")]
+    SafetyUnavailable(String),
     #[error("tool execution failed: {0:#}")]
     Failed(#[from] anyhow::Error),
     #[error("tool was cancelled")]

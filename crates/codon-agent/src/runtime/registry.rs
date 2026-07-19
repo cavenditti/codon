@@ -20,6 +20,9 @@ use std::sync::Arc;
 pub struct AgentRegistry {
     agents: HashMap<Arc<str>, Arc<Agent>>,
     defaults: HashMap<Arc<str>, Arc<Agent>>,
+    scripted: HashMap<Arc<str>, Arc<Agent>>,
+    scripted_flow: Option<Arc<str>>,
+    routing_error: Option<String>,
 }
 
 impl Global for AgentRegistry {}
@@ -64,6 +67,52 @@ impl AgentRegistry {
         cx.update_global::<Self, _>(|registry, _| {
             registry.agents = registry.defaults.clone();
         });
+    }
+
+    /// Replace the last-good scripted layer and apply it over the
+    /// built-in defaults. Scripted agents are not defaults: removing
+    /// `active_flow` drops them on the next reload.
+    pub fn set_scripted_flow(cx: &mut App, flow: Arc<str>, agents: Vec<Arc<Agent>>) {
+        cx.update_global::<Self, _>(|registry, _| {
+            registry.scripted.clear();
+            registry.scripted_flow = Some(flow);
+            registry.routing_error = None;
+            for agent in agents {
+                let name = agent.name.clone();
+                registry.scripted.insert(name.clone(), agent.clone());
+                registry.agents.insert(name, agent);
+            }
+        });
+    }
+
+    pub fn clear_scripted_flow(cx: &mut App) {
+        cx.update_global::<Self, _>(|registry, _| {
+            registry.scripted.clear();
+            registry.scripted_flow = None;
+            registry.routing_error = None;
+        });
+    }
+
+    pub fn reapply_scripted_flow(cx: &mut App) {
+        cx.update_global::<Self, _>(|registry, _| {
+            for (name, agent) in registry.scripted.clone() {
+                registry.agents.insert(name, agent);
+            }
+        });
+    }
+
+    pub fn set_routing_error(cx: &mut App, error: impl Into<String>) {
+        cx.update_global::<Self, _>(|registry, _| {
+            registry.routing_error = Some(error.into());
+        });
+    }
+
+    pub fn scripted_flow(cx: &App) -> Option<Arc<str>> {
+        cx.global::<Self>().scripted_flow.clone()
+    }
+
+    pub fn routing_error(cx: &App) -> Option<String> {
+        cx.global::<Self>().routing_error.clone()
     }
 
     pub fn get(cx: &App, name: &str) -> Option<Arc<Agent>> {
