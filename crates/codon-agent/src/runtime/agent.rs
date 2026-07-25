@@ -395,16 +395,19 @@ impl Agent {
                 // Redact through the tool's own policy before the trace
                 // sees the args — a shell command must never be recorded
                 // verbatim (#c-monitoring).
-                let trace_input = self
-                    .tools
-                    .find(call.name.as_ref())
+                let tool = self.tools.find(call.name.as_ref());
+                let trace_input = tool
                     .map(|tool| tool.trace_args(&call.input))
                     .unwrap_or_else(|| call.input.clone());
+                // The safety annotation is a structured metadata channel
+                // set by the tool during `run` (#c-safety-trace) — never
+                // derived from result text, which is now command output.
+                let safety_decision = tool.and_then(|tool| tool.take_trace_safety_decision());
                 trace.tool_dispatched(
                     Arc::from(call.name.as_ref() as &str),
                     &trace_input,
                     shape,
-                    safety_decision_for_tool_result(&call.name, &text),
+                    safety_decision,
                     latency_ms,
                 );
                 if let Some(tx) = events.as_mut() {
@@ -491,24 +494,6 @@ fn error_kind(err: &AgentError) -> &'static str {
         AgentError::Model(_) => "model",
         AgentError::EmptyResponse => "empty_response",
         AgentError::Other(_) => "other",
-    }
-}
-
-fn safety_decision_for_tool_result(tool_name: &str, result_text: &str) -> Option<String> {
-    if tool_name != "shell_command" {
-        return None;
-    }
-    let lower = result_text.to_ascii_lowercase();
-    if lower.starts_with("safety_approved") {
-        Some("approved".to_string())
-    } else if lower.starts_with("safety_unavailable_fail_open") {
-        Some("fail_open".to_string())
-    } else if lower.starts_with("shell safety evaluator unavailable") {
-        Some("unavailable".to_string())
-    } else if lower.starts_with("shell command denied") {
-        Some("denied".to_string())
-    } else {
-        Some("unknown".to_string())
     }
 }
 

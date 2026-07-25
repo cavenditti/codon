@@ -9,9 +9,9 @@ pub mod trace_viewer;
 pub use actions::*;
 pub use runtime::{
     Agent, AgentBuilder, AgentError, AgentEvent, AgentRegistry, CancelToken, DelegateTool,
-    HarnessSettings, ModelClient, ModelSpec, RoutingFlow, RoutingFlowError, ShellCommandTool, Tool,
-    ToolError, ToolSet, TraceLog, TurnOutcome, TurnTrace, ZedModelClient,
-    wait_for_provider_authentication,
+    HarnessSettings, ModelClient, ModelSpec, RoutingFlow, RoutingFlowError, SafetyDecision,
+    SafetySource, SafetyVerdict, ShellCommandTool, ShellPermissionRule, Tool, ToolError, ToolSet,
+    TraceLog, TurnOutcome, TurnTrace, ZedModelClient, wait_for_provider_authentication,
 };
 pub use token_status::TokenStatusItem;
 

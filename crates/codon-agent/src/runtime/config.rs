@@ -43,6 +43,11 @@ pub(crate) struct AgentTable {
 
 /// `[agent_harness]` table from codon.toml. Harness-wide knobs that
 /// don't belong to any single agent.
+///
+/// `shell_permissions` is an ordered list of glob-lite rules —
+/// `{ pattern = "git push *", decision = "ask" }` — evaluated inside
+/// the deterministic shell-safety pipeline with last-match-wins
+/// semantics (REQ:codon/agent-shell-safety#c-permission-rules).
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct HarnessOverride {
     #[serde(default)]
@@ -52,6 +57,8 @@ pub(crate) struct HarnessOverride {
     pub(crate) flow_paths: Vec<String>,
     #[serde(default)]
     pub(crate) shell_safety_fail_open: bool,
+    #[serde(default)]
+    pub(crate) shell_permissions: Vec<crate::runtime::safety::ShellPermissionRule>,
 }
 
 /// Resolved harness-wide settings. Default off — codon stays
@@ -198,6 +205,30 @@ mod tests {
             let agent = AgentRegistry::get(cx, "demo").expect("registered");
             assert_eq!(agent.model.id().as_ref(), "default");
         });
+    }
+
+    #[test]
+    fn shell_permissions_parse_from_toml() {
+        let parsed = parse_document(
+            "[agent_harness]\nshell_permissions = [\n  { pattern = \"ctx7 *\", decision = \"allow\" },\n  { pattern = \"git push *\", decision = \"ask\" },\n  { pattern = \"npm publish*\", decision = \"deny\" },\n]\n",
+        )
+        .expect("valid document parses");
+        let rules = &parsed.agent_harness.shell_permissions;
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "ctx7 *");
+        assert_eq!(
+            rules[0].decision,
+            crate::runtime::safety::SafetyDecision::Allow
+        );
+        assert_eq!(
+            rules[2].decision,
+            crate::runtime::safety::SafetyDecision::Deny
+        );
+
+        let invalid = parse_document(
+            "[agent_harness]\nshell_permissions = [ { pattern = \"x\", decision = \"maybe\" } ]\n",
+        );
+        assert!(invalid.is_err(), "unknown decisions must fail the parse");
     }
 
     #[gpui::test]

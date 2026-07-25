@@ -5,7 +5,12 @@ use crate::runtime::delegate::DelegateTool;
 use crate::runtime::error::ToolError;
 use crate::runtime::model::{ModelSpec, ZedModelClient};
 use crate::runtime::registry::AgentRegistry;
+use crate::runtime::safety::{
+    self, SafetyDecision, SafetySource, SafetyVerdict, ShellPermissionRule,
+};
 use crate::runtime::tool::{Tool, ToolSet};
+use anyhow::anyhow;
+use futures::{AsyncReadExt as _, FutureExt as _, select_biased};
 use gpui::{App, AsyncApp};
 use rhai::{Array, Dynamic, Engine, EvalAltResult, FLOAT, INT, ImmutableString, Map, Position};
 use std::collections::{HashMap, HashSet};
@@ -34,7 +39,16 @@ struct FlowBuilder {
     agents: Vec<ScriptAgentSpec>,
     handoffs: Vec<HandoffSpec>,
     entrypoint: Option<String>,
-    safety_for: HashMap<String, String>,
+    safety_for: HashMap<String, SafetyChainSpec>,
+}
+
+/// Safety consult chain for a gated tool: the primary classifier and
+/// an optional second-opinion agent for deny escalation
+/// (REQ:codon/agent-shell-safety#c-deny-escalation).
+#[derive(Clone, Debug)]
+struct SafetyChainSpec {
+    primary: String,
+    escalation: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +77,7 @@ pub struct RoutingFlow {
     name: Arc<str>,
     builder: FlowBuilder,
     shell_safety_fail_open: bool,
+    permission_rules: Arc<Vec<ShellPermissionRule>>,
 }
 
 impl RoutingFlow {
@@ -77,7 +92,16 @@ impl RoutingFlow {
             name,
             builder,
             shell_safety_fail_open,
+            permission_rules: Arc::new(Vec::new()),
         })
+    }
+
+    /// Attach the user's `[agent_harness] shell_permissions` rules —
+    /// evaluated inside the deterministic gate pipeline
+    /// (REQ:codon/agent-shell-safety#c-permission-rules).
+    pub fn with_permission_rules(mut self, rules: Vec<ShellPermissionRule>) -> Self {
+        self.permission_rules = Arc::new(rules);
+        self
     }
 
     pub fn into_agents(self) -> Result<Vec<Arc<Agent>>, RoutingFlowError> {
@@ -101,6 +125,7 @@ pub(crate) fn reload_from_harness_settings(cx: &mut App, settings: &HarnessOverr
         &settings.flow_paths,
         settings.shell_safety_fail_open,
     )
+    .map(|flow| flow.with_permission_rules(settings.shell_permissions.clone()))
     .and_then(RoutingFlow::into_agents)
     {
         Ok(agents) => AgentRegistry::set_scripted_flow(cx, Arc::from(flow_name), agents),
@@ -274,7 +299,36 @@ fn evaluate_source(flow_name: &str, source: &str) -> Result<FlowBuilder, Routing
                     .lock()
                     .map_err(|_| rhai_error("routing builder lock poisoned"))?
                     .safety_for
-                    .insert(tool.to_string(), agent.to_string());
+                    .insert(
+                        tool.to_string(),
+                        SafetyChainSpec {
+                            primary: agent.to_string(),
+                            escalation: None,
+                        },
+                    );
+                Ok(())
+            },
+        );
+    }
+
+    {
+        // Three-arg overload: `safety_for(tool, primary, escalation)`
+        // registers a second-opinion agent for deny escalation.
+        let builder = builder.clone();
+        engine.register_fn(
+            "safety_for",
+            move |tool: &str, agent: &str, escalation: &str| -> Result<(), Box<EvalAltResult>> {
+                builder
+                    .lock()
+                    .map_err(|_| rhai_error("routing builder lock poisoned"))?
+                    .safety_for
+                    .insert(
+                        tool.to_string(),
+                        SafetyChainSpec {
+                            primary: agent.to_string(),
+                            escalation: Some(escalation.to_string()),
+                        },
+                    );
                 Ok(())
             },
         );
@@ -453,9 +507,18 @@ impl FlowCompiler {
                 );
             }
         }
-        for safety_agent in self.flow.builder.safety_for.values() {
-            if !self.specs.contains_key(safety_agent) {
-                return Err(self.invalid(format!("safety agent `{safety_agent}` is not an agent")));
+        for chain in self.flow.builder.safety_for.values() {
+            if !self.specs.contains_key(&chain.primary) {
+                return Err(
+                    self.invalid(format!("safety agent `{}` is not an agent", chain.primary))
+                );
+            }
+            if let Some(escalation) = &chain.escalation
+                && !self.specs.contains_key(escalation)
+            {
+                return Err(self.invalid(format!(
+                    "safety escalation agent `{escalation}` is not an agent"
+                )));
             }
         }
 
@@ -482,11 +545,16 @@ impl FlowCompiler {
         let mut tools = ToolSet::new();
         for tool in &spec.tools {
             match tool.as_str() {
-                "shell" | "shell_command" => tools.push(Arc::new(ShellCommandTool::new(
-                    Arc::from(name),
-                    self.shell_safety_agent()?,
-                    self.flow.shell_safety_fail_open,
-                ))),
+                "shell" | "shell_command" => {
+                    let (primary, escalation) = self.shell_safety_chain()?;
+                    tools.push(Arc::new(ShellCommandTool::new(
+                        Arc::from(name),
+                        primary,
+                        escalation,
+                        self.flow.shell_safety_fail_open,
+                        self.flow.permission_rules.clone(),
+                    )))
+                }
                 "delegate" => {}
                 other => return Err(self.invalid(format!("unknown tool `{other}` on `{name}`"))),
             }
@@ -534,13 +602,21 @@ impl FlowCompiler {
         Ok(agent)
     }
 
-    fn shell_safety_agent(&self) -> Result<Arc<str>, RoutingFlowError> {
+    fn shell_safety_chain(&self) -> Result<(Arc<str>, Option<Arc<str>>), RoutingFlowError> {
         self.flow
             .builder
             .safety_for
             .get("shell")
             .or_else(|| self.flow.builder.safety_for.get("shell_command"))
-            .map(|agent| Arc::from(agent.as_str()))
+            .map(|chain| {
+                (
+                    Arc::from(chain.primary.as_str()),
+                    chain
+                        .escalation
+                        .as_deref()
+                        .map(|escalation| Arc::from(escalation)),
+                )
+            })
             .ok_or_else(|| self.invalid("shell tool requires `safety_for(\"shell\", <agent>)`"))
     }
 
@@ -569,19 +645,155 @@ impl FlowCompiler {
     }
 }
 
+/// Byte cap on the combined stdout+stderr a shell command may return
+/// to the model (REQ:codon/agent-shell-safety#c-execution).
+const SHELL_OUTPUT_CAP: usize = 32 * 1024;
+
 pub struct ShellCommandTool {
     owner_agent: Arc<str>,
     safety_agent: Arc<str>,
+    escalation_agent: Option<Arc<str>>,
     fail_open: bool,
+    permission_rules: Arc<Vec<ShellPermissionRule>>,
+    /// Trace annotation for the most recent `run`, taken by the agent
+    /// loop via `take_trace_safety_decision`. Metadata-only: a rare
+    /// concurrent turn sharing this tool can at worst swap two
+    /// summaries, never leak command bytes.
+    last_decision: Mutex<Option<String>>,
+}
+
+/// One safety-agent consult, separated by how it can fail: an
+/// unusable reply and an unreachable agent both resolve to the
+/// fail-safe `ask`, but with different reasons.
+enum ConsultOutcome {
+    Verdict(SafetyVerdict),
+    InvalidReply,
+    Unavailable(String),
 }
 
 impl ShellCommandTool {
-    pub fn new(owner_agent: Arc<str>, safety_agent: Arc<str>, fail_open: bool) -> Self {
+    pub fn new(
+        owner_agent: Arc<str>,
+        safety_agent: Arc<str>,
+        escalation_agent: Option<Arc<str>>,
+        fail_open: bool,
+        permission_rules: Arc<Vec<ShellPermissionRule>>,
+    ) -> Self {
         Self {
             owner_agent,
             safety_agent,
+            escalation_agent,
             fail_open,
+            permission_rules,
+            last_decision: Mutex::new(None),
         }
+    }
+
+    fn record(&self, verdict: &SafetyVerdict) {
+        match self.last_decision.lock() {
+            Ok(mut slot) => *slot = Some(verdict.trace_summary()),
+            Err(err) => log::warn!("codon-agent: shell trace slot poisoned: {err}"),
+        }
+    }
+
+    /// Consult a safety agent with the tool-side contract prompt.
+    /// Attribute the consult turn to the requesting agent so the trace
+    /// ties the decision back to its parent (#c-monitoring).
+    /// Cancellation propagates; every other failure becomes a
+    /// [`ConsultOutcome`] the caller folds into the fail-safe path.
+    async fn consult(
+        &self,
+        agent_name: &Arc<str>,
+        command: &str,
+        cwd: Option<&str>,
+        intent: Option<&str>,
+        second_opinion: bool,
+        cancel: &CancelToken,
+        cx: &AsyncApp,
+    ) -> Result<ConsultOutcome, ToolError> {
+        let Some(agent) = cx.update(|app| AgentRegistry::get(app, agent_name.as_ref())) else {
+            return Ok(ConsultOutcome::Unavailable(format!(
+                "agent `{agent_name}` is not registered"
+            )));
+        };
+        let prompt = safety::contract_prompt(command, cwd, intent, second_opinion);
+        match agent
+            .run_as_child(&prompt, cancel.clone(), cx, self.owner_agent.clone())
+            .await
+        {
+            Ok(outcome) => {
+                let source = if second_opinion {
+                    SafetySource::Escalation
+                } else {
+                    SafetySource::Classifier
+                };
+                Ok(match safety::parse_verdict_reply(&outcome.text, source) {
+                    Some(verdict) => ConsultOutcome::Verdict(verdict),
+                    None => ConsultOutcome::InvalidReply,
+                })
+            }
+            Err(crate::runtime::error::AgentError::Cancelled) => Err(ToolError::Cancelled),
+            Err(err) => Ok(ConsultOutcome::Unavailable(err.to_string())),
+        }
+    }
+
+    /// Run the full pipeline for one command: deterministic gates,
+    /// classifier consult, deny escalation, fail-safe `ask`.
+    async fn resolve_verdict(
+        &self,
+        command: &str,
+        cwd: Option<&str>,
+        intent: Option<&str>,
+        cancel: &CancelToken,
+        cx: &AsyncApp,
+    ) -> Result<SafetyVerdict, ToolError> {
+        if let Some(verdict) = safety::deterministic_verdict(command, &self.permission_rules) {
+            return Ok(verdict);
+        }
+        let first = self
+            .consult(&self.safety_agent, command, cwd, intent, false, cancel, cx)
+            .await?;
+        let verdict = match first {
+            ConsultOutcome::Verdict(first) if first.decision == SafetyDecision::Deny => {
+                // An LLM deny is never final on its own
+                // (#c-deny-escalation).
+                match &self.escalation_agent {
+                    Some(escalation) => match self
+                        .consult(escalation, command, cwd, intent, true, cancel, cx)
+                        .await?
+                    {
+                        ConsultOutcome::Verdict(second) => {
+                            safety::apply_escalation_policy(&first, &second)
+                        }
+                        ConsultOutcome::InvalidReply => safety::fail_safe_ask(
+                            format!(
+                                "classifier denied ({}); second opinion returned an unusable reply",
+                                first.reason
+                            ),
+                            "invalid-classifier-response",
+                        ),
+                        ConsultOutcome::Unavailable(reason) => safety::fail_safe_ask(
+                            format!(
+                                "classifier denied ({}); second opinion unavailable: {reason}",
+                                first.reason
+                            ),
+                            "classifier-unavailable",
+                        ),
+                    },
+                    None => safety::unescalated_deny_to_ask(&first),
+                }
+            }
+            ConsultOutcome::Verdict(first) => first,
+            ConsultOutcome::InvalidReply => safety::fail_safe_ask(
+                "safety classifier returned an unusable reply",
+                "invalid-classifier-response",
+            ),
+            ConsultOutcome::Unavailable(reason) => safety::fail_safe_ask(
+                format!("safety classifier unavailable: {reason}"),
+                "classifier-unavailable",
+            ),
+        };
+        Ok(verdict)
     }
 }
 
@@ -592,23 +804,30 @@ impl Tool for ShellCommandTool {
     }
 
     fn description(&self) -> &str {
-        "Request approval for a shell command. The command is never run unless the configured safety agent approves it."
+        "Run a shell command. The command passes a layered safety pipeline (deterministic \
+         gates, then a safety-agent consult) and only executes once allowed. Provide a one-line \
+         `description` stating why you are running it — the safety layer weighs it as evidence."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Shell command to evaluate." },
-                "cwd": { "type": "string", "description": "Working directory for the command." }
+                "command": { "type": "string", "description": "Shell command to run." },
+                "cwd": { "type": "string", "description": "Working directory for the command." },
+                "description": {
+                    "type": "string",
+                    "description": "One short sentence stating WHY this command is being run; surfaced to the safety layer as intent."
+                }
             },
             "required": ["command"]
         })
     }
 
     fn trace_args(&self, input: &serde_json::Value) -> serde_json::Value {
-        // The command may carry credentials — record only its size, never
-        // its bytes (#c-monitoring). `cwd` is a path, kept as metadata.
+        // The command and the stated intent may carry credentials —
+        // record only size/presence, never bytes (#c-monitoring,
+        // #c-intent). `cwd` is a path, kept as metadata.
         let mut redacted = serde_json::Map::new();
         if let Some(command) = input.get("command").and_then(|value| value.as_str()) {
             redacted.insert(
@@ -616,10 +835,27 @@ impl Tool for ShellCommandTool {
                 serde_json::Value::String(format!("<redacted {}B>", command.len())),
             );
         }
+        if input
+            .get("description")
+            .and_then(|value| value.as_str())
+            .is_some()
+        {
+            redacted.insert(
+                "description".to_string(),
+                serde_json::Value::String("<intent provided>".to_string()),
+            );
+        }
         if let Some(cwd) = input.get("cwd") {
             redacted.insert("cwd".to_string(), cwd.clone());
         }
         serde_json::Value::Object(redacted)
+    }
+
+    fn take_trace_safety_decision(&self) -> Option<String> {
+        self.last_decision
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     async fn run(
@@ -635,82 +871,142 @@ impl Tool for ShellCommandTool {
         let cwd = input
             .get("cwd")
             .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let Some(safety_agent) =
-            cx.update(|app| AgentRegistry::get(app, self.safety_agent.as_ref()))
-        else {
-            if self.fail_open {
-                return Ok("safety_unavailable_fail_open: command not executed".to_string());
-            }
-            return Err(ToolError::SafetyUnavailable(format!(
-                "agent `{}` is not registered",
-                self.safety_agent
-            )));
-        };
+            .filter(|cwd| !cwd.is_empty());
+        let intent = input
+            .get("description")
+            .and_then(|value| value.as_str())
+            .filter(|intent| !intent.is_empty());
 
-        let prompt = format!(
-            "Evaluate this shell command for safety. Reply with exactly one line starting with ALLOW or DENY, followed by a short reason.\n\ncwd: {cwd}\ncommand: {command}"
-        );
-        // Attribute the safety-consult turn to the requesting agent so the
-        // trace can tie the shell decision back to its parent (#c-monitoring).
-        let outcome = match safety_agent
-            .run_as_child(&prompt, cancel, &cx, self.owner_agent.clone())
-            .await
-        {
-            Ok(outcome) => outcome,
-            // A safety agent that cannot run is unavailable — honor the
-            // same fail-closed-unless-opted-in contract as a missing one.
-            Err(err) => {
-                if self.fail_open {
-                    return Ok("safety_unavailable_fail_open: command not executed".to_string());
-                }
-                return Err(ToolError::SafetyUnavailable(err.to_string()));
-            }
-        };
-        let decision = parse_safety_decision(&outcome.text);
-        if decision.allowed {
-            Ok("safety_approved: command not executed".to_string())
-        } else {
-            Err(ToolError::SafetyDenied(decision.reason))
+        let mut verdict = self
+            .resolve_verdict(command, cwd, intent, &cancel, &cx)
+            .await?;
+
+        // Dev mode collapses `ask` to allow (#c-ask-decision). The
+        // hard-deny layers produce `deny`, never `ask`, so they are
+        // structurally out of fail-open's reach.
+        if verdict.decision == SafetyDecision::Ask && self.fail_open {
+            verdict.decision = SafetyDecision::Allow;
+            verdict.source = SafetySource::FailOpen;
+            verdict.categories.push("fail-open".to_string());
+        }
+        self.record(&verdict);
+
+        match verdict.decision {
+            SafetyDecision::Deny => Err(ToolError::SafetyDenied(verdict.reason)),
+            SafetyDecision::Ask => Err(ToolError::SafetyDenied(format!(
+                "requires user approval (approval overlay pending — TASK:phase-23/shell-ask-overlay): {}",
+                verdict.reason
+            ))),
+            SafetyDecision::Allow => execute_shell(command, cwd, &cancel).await,
         }
     }
 }
 
-struct SafetyDecision {
-    allowed: bool,
-    reason: String,
+/// Execute an approved command via `/bin/sh -c` — never the user's
+/// interactive shell — honoring `cwd`, killing the child on
+/// cancellation, and capping combined output
+/// (REQ:codon/agent-shell-safety#c-execution).
+async fn execute_shell(
+    command: &str,
+    cwd: Option<&str>,
+    cancel: &CancelToken,
+) -> Result<String, ToolError> {
+    let mut child = {
+        let mut spawn = smol::process::Command::new("/bin/sh");
+        spawn
+            .arg("-c")
+            .arg(command)
+            .stdin(smol::process::Stdio::null())
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped());
+        if let Some(cwd) = cwd {
+            spawn.current_dir(cwd);
+        }
+        spawn
+            .spawn()
+            .map_err(|err| ToolError::Failed(anyhow!("failed to spawn `/bin/sh`: {err}")))?
+    };
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let completed = {
+        // Read both pipes concurrently — draining them one after the
+        // other can deadlock a child that fills the second pipe's
+        // buffer while the first is still open.
+        let io = async {
+            let stdout_read = async {
+                let mut bytes = Vec::new();
+                if let Some(pipe) = stdout_pipe.as_mut()
+                    && let Err(err) = pipe.read_to_end(&mut bytes).await
+                {
+                    log::debug!("codon-agent: shell stdout read ended early: {err}");
+                }
+                bytes
+            };
+            let stderr_read = async {
+                let mut bytes = Vec::new();
+                if let Some(pipe) = stderr_pipe.as_mut()
+                    && let Err(err) = pipe.read_to_end(&mut bytes).await
+                {
+                    log::debug!("codon-agent: shell stderr read ended early: {err}");
+                }
+                bytes
+            };
+            let (stdout, stderr) = futures::join!(stdout_read, stderr_read);
+            let status = child.status().await;
+            (stdout, stderr, status)
+        };
+        let mut io = std::pin::pin!(io.fuse());
+        let mut cancel_fired = std::pin::pin!(cancel.cancelled().fuse());
+        select_biased! {
+            _ = cancel_fired => None,
+            done = io => Some(done),
+        }
+    };
+
+    let Some((stdout, stderr, status)) = completed else {
+        if let Err(err) = child.kill() {
+            log::warn!("codon-agent: failed to kill cancelled shell command: {err}");
+        }
+        return Err(ToolError::Cancelled);
+    };
+    let status =
+        status.map_err(|err| ToolError::Failed(anyhow!("failed to await shell command: {err}")))?;
+    Ok(render_shell_result(&stdout, &stderr, status.code()))
 }
 
-fn parse_safety_decision(text: &str) -> SafetyDecision {
-    let first_line = text.lines().next().unwrap_or("").trim();
-    let lower = first_line.to_ascii_lowercase();
-    // The safety agent is asked to answer with a line starting ALLOW or
-    // DENY. Approve only when the leading word is an explicit allow token
-    // and the line does not also deny; everything else — empty,
-    // ambiguous, prose that merely mentions "safe" or "yes" — fails
-    // closed (#c-shell-safety).
-    let first_token: String = lower
-        .chars()
-        .take_while(char::is_ascii_alphabetic)
-        .collect();
-    let allowed = matches!(
-        first_token.as_str(),
-        "allow" | "allowed" | "approve" | "approved"
-    ) && !lower.contains("deny");
-    if allowed {
-        SafetyDecision {
-            allowed: true,
-            reason: first_line.to_string(),
+/// Combined, trimmed, byte-capped output plus an exit line the model
+/// always sees.
+fn render_shell_result(stdout: &[u8], stderr: &[u8], exit_code: Option<i32>) -> String {
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    let mut body = String::new();
+    if !stdout.trim().is_empty() {
+        body.push_str(stdout.trim());
+    }
+    if !stderr.trim().is_empty() {
+        if !body.is_empty() {
+            body.push('\n');
         }
+        body.push_str(stderr.trim());
+    }
+    if body.len() > SHELL_OUTPUT_CAP {
+        let mut end = SHELL_OUTPUT_CAP;
+        while !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        body.truncate(end);
+        body.push_str("\n[truncated: output exceeded 32 KiB]");
+    }
+    let exit_line = match exit_code {
+        Some(code) => format!("[exit code: {code}]"),
+        None => "[terminated by signal]".to_string(),
+    };
+    if body.is_empty() {
+        format!("(no output)\n{exit_line}")
     } else {
-        SafetyDecision {
-            allowed: false,
-            reason: if first_line.is_empty() {
-                "safety evaluator did not return ALLOW".to_string()
-            } else {
-                first_line.to_string()
-            },
-        }
+        format!("{body}\n{exit_line}")
     }
 }
 
@@ -781,50 +1077,18 @@ mod tests {
     }
 
     #[test]
-    fn safety_decision_denies_non_allow_text() {
-        let decision = parse_safety_decision("DENY: destructive command");
-        assert!(!decision.allowed);
-        assert_eq!(decision.reason, "DENY: destructive command");
-    }
-
-    #[test]
-    fn safety_decision_accepts_allow() {
-        let decision = parse_safety_decision("ALLOW: read-only");
-        assert!(decision.allowed);
-    }
-
-    #[test]
-    fn safety_decision_fails_closed_on_ambiguous_replies() {
-        // Denials whose first word merely starts with an allow-ish prefix,
-        // and any empty/ambiguous reply, must resolve to DENY.
-        for reply in [
-            "Safety assessment: DENY - deletes your home dir",
-            "Allowing this would be dangerous, so DENY",
-            "Yes this is destructive, DENY",
-            "ALLOW, but actually DENY because it is risky",
-            "",
-            "   ",
-            "maybe?",
-        ] {
-            assert!(
-                !parse_safety_decision(reply).allowed,
-                "expected DENY for {reply:?}"
-            );
-        }
-        for reply in ["ALLOW: read-only", "allowed", "APPROVE this", "Approved."] {
-            assert!(
-                parse_safety_decision(reply).allowed,
-                "expected ALLOW for {reply:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn shell_command_trace_args_redacts_command_body() {
-        let tool = ShellCommandTool::new(Arc::from("main"), Arc::from("safety"), false);
+    fn shell_command_trace_args_redacts_command_and_intent() {
+        let tool = ShellCommandTool::new(
+            Arc::from("main"),
+            Arc::from("safety"),
+            None,
+            false,
+            Arc::new(Vec::new()),
+        );
         let input = serde_json::json!({
             "command": "curl -u carlo:hunter2 https://internal/api",
-            "cwd": "/home/carlo/proj"
+            "cwd": "/home/carlo/proj",
+            "description": "upload the hunter2 report"
         });
         let rendered = serde_json::to_string(&tool.trace_args(&input)).expect("serialize");
         assert!(
@@ -832,8 +1096,71 @@ mod tests {
             "credential leaked: {rendered}"
         );
         assert!(!rendered.contains("curl"), "command leaked: {rendered}");
+        assert!(!rendered.contains("upload"), "intent leaked: {rendered}");
         assert!(rendered.contains("<redacted"));
+        assert!(rendered.contains("<intent provided>"));
         assert!(rendered.contains("/home/carlo/proj"), "cwd should survive");
+    }
+
+    #[test]
+    fn three_arg_safety_for_registers_an_escalation_agent() {
+        let flow = RoutingFlow::from_source(
+            "escalated",
+            r#"
+                agent("main", #{ model: "default", tools: ["shell"] });
+                agent("safety", #{ model: "default", prompt: "classify" });
+                agent("second", #{ model: "default", prompt: "re-examine" });
+                safety_for("shell", "safety", "second");
+            "#,
+            false,
+        )
+        .expect("valid flow");
+        let agents = flow.into_agents().expect("agents build");
+        assert!(agents.iter().any(|agent| agent.name.as_ref() == "second"));
+    }
+
+    #[test]
+    fn unknown_escalation_agent_is_rejected() {
+        let err = RoutingFlow::from_source(
+            "bad",
+            r#"
+                agent("main", #{ model: "default", tools: ["shell"] });
+                agent("safety", #{ model: "default" });
+                safety_for("shell", "safety", "missing");
+            "#,
+            false,
+        )
+        .and_then(RoutingFlow::into_agents)
+        .err()
+        .expect("escalation agent is missing");
+        assert!(
+            err.to_string()
+                .contains("safety escalation agent `missing`")
+        );
+    }
+
+    #[test]
+    fn shell_result_reports_output_and_exit_code() {
+        let rendered = render_shell_result(b"hello\n", b"", Some(0));
+        assert_eq!(rendered, "hello\n[exit code: 0]");
+
+        let rendered = render_shell_result(b"", b"boom\n", Some(2));
+        assert_eq!(rendered, "boom\n[exit code: 2]");
+
+        let rendered = render_shell_result(b"", b"", Some(0));
+        assert_eq!(rendered, "(no output)\n[exit code: 0]");
+
+        let rendered = render_shell_result(b"out\n", b"err\n", None);
+        assert_eq!(rendered, "out\nerr\n[terminated by signal]");
+    }
+
+    #[test]
+    fn shell_result_caps_oversized_output() {
+        let big = vec![b'x'; SHELL_OUTPUT_CAP + 4096];
+        let rendered = render_shell_result(&big, b"", Some(0));
+        assert!(rendered.contains("[truncated: output exceeded 32 KiB]"));
+        assert!(rendered.ends_with("[exit code: 0]"));
+        assert!(rendered.len() < SHELL_OUTPUT_CAP + 256);
     }
 
     #[test]

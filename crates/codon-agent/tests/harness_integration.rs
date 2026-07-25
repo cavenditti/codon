@@ -5,7 +5,8 @@
 //! metadata-only trace recorder. No network, no real provider.
 
 use codon_agent::{
-    Agent, AgentError, CancelToken, ModelClient, Tool, ToolError, ToolSet, TraceLog,
+    Agent, AgentError, CancelToken, ModelClient, SafetyDecision, ShellCommandTool,
+    ShellPermissionRule, Tool, ToolError, ToolSet, TraceLog,
 };
 use futures::StreamExt as _;
 use futures::stream::BoxStream;
@@ -40,6 +41,15 @@ impl StubModel {
 
     /// Text of every error tool_result in request `ix`'s final message.
     fn error_tool_results(&self, ix: usize) -> Vec<String> {
+        self.tool_results(ix)
+            .into_iter()
+            .filter_map(|(is_error, text)| is_error.then_some(text))
+            .collect()
+    }
+
+    /// `(is_error, text)` of every tool_result in request `ix`'s final
+    /// message.
+    fn tool_results(&self, ix: usize) -> Vec<(bool, String)> {
         let requests = self.requests.lock().unwrap();
         let Some(message) = requests[ix].messages.last() else {
             return Vec::new();
@@ -49,8 +59,10 @@ impl StubModel {
             .content
             .iter()
             .filter_map(|content| match content {
-                MessageContent::ToolResult(result) if result.is_error => match &result.content[0] {
-                    LanguageModelToolResultContent::Text(text) => Some(text.to_string()),
+                MessageContent::ToolResult(result) => match &result.content[0] {
+                    LanguageModelToolResultContent::Text(text) => {
+                        Some((result.is_error, text.to_string()))
+                    }
                     other => panic!("unexpected tool result content: {other:?}"),
                 },
                 _ => None,
@@ -479,6 +491,184 @@ async fn trace_records_metadata_and_redacts_bodies(cx: &mut TestAppContext) {
         vec!["started", "finished", "started", "finished"]
     );
     assert_eq!(trace.tools.len(), 1);
+}
+
+/// A shell tool whose deterministic layers fully decide every test
+/// command — the (unregistered) safety agent is never reached.
+fn shell_tool(rules: &[(&str, SafetyDecision)], fail_open: bool) -> Arc<ShellCommandTool> {
+    Arc::new(ShellCommandTool::new(
+        Arc::from("main"),
+        Arc::from("unregistered_safety"),
+        None,
+        fail_open,
+        Arc::new(
+            rules
+                .iter()
+                .map(|(pattern, decision)| ShellPermissionRule {
+                    pattern: (*pattern).to_string(),
+                    decision: *decision,
+                })
+                .collect(),
+        ),
+    ))
+}
+
+fn shell_agent(model: Arc<StubModel>, rules: &[(&str, SafetyDecision)], fail_open: bool) -> Agent {
+    Agent::builder("main", model)
+        .tools(ToolSet::new().with(shell_tool(rules, fail_open)))
+        .build()
+}
+
+#[gpui::test]
+async fn allowed_shell_command_executes_and_reports_exit_code(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let model = StubModel::new(vec![
+        vec![
+            tool_use("t1", "shell_command", json!({"command": "echo hello"})),
+            stop(StopReason::ToolUse),
+        ],
+        vec![text("done"), stop(StopReason::EndTurn)],
+    ]);
+    let agent = shell_agent(model.clone(), &[("echo *", SafetyDecision::Allow)], false);
+    let outcome = agent
+        .run("say hello", CancelToken::new(), &cx.to_async(), None)
+        .await
+        .expect("turn should succeed");
+    assert_eq!(outcome.text, "done");
+
+    let results = model.tool_results(1);
+    assert_eq!(results.len(), 1);
+    let (is_error, text) = &results[0];
+    assert!(!is_error, "allowed command must not error: {text}");
+    assert!(text.contains("hello"), "output missing: {text}");
+    assert!(text.contains("[exit code: 0]"), "exit line missing: {text}");
+
+    // The trace carries the structured decision (#c-safety-trace).
+    let entries = cx.update(|app| TraceLog::entries(app));
+    let decision = entries[0].tools[0]
+        .safety_decision
+        .clone()
+        .expect("shell dispatch records a safety decision");
+    assert_eq!(decision, "allow(permission_rule,risk=10)");
+}
+
+#[gpui::test]
+async fn hard_denied_shell_command_is_refused(cx: &mut TestAppContext) {
+    let model = StubModel::new(vec![
+        vec![
+            tool_use("t1", "shell_command", json!({"command": "rm -rf /"})),
+            stop(StopReason::ToolUse),
+        ],
+        vec![text("understood"), stop(StopReason::EndTurn)],
+    ]);
+    // Even a user allow-everything rule cannot override hard-deny.
+    let agent = shell_agent(model.clone(), &[("*", SafetyDecision::Allow)], false);
+    agent
+        .run("clean up", CancelToken::new(), &cx.to_async(), None)
+        .await
+        .expect("fail-soft: the turn itself must not error");
+    let errors = model.error_tool_results(1);
+    assert_eq!(errors.len(), 1);
+    assert!(
+        errors[0].contains("irreversibly damage"),
+        "got: {}",
+        errors[0]
+    );
+
+    let entries = cx.update(|app| TraceLog::entries(app));
+    let decision = entries[0].tools[0]
+        .safety_decision
+        .clone()
+        .expect("denied dispatch records a safety decision");
+    assert_eq!(decision, "deny(hard_deny,risk=100)");
+}
+
+#[gpui::test]
+async fn unavailable_classifier_fails_safe_to_ask_then_refusal(cx: &mut TestAppContext) {
+    let model = StubModel::new(vec![
+        vec![
+            tool_use("t1", "shell_command", json!({"command": "make install"})),
+            stop(StopReason::ToolUse),
+        ],
+        vec![text("ok"), stop(StopReason::EndTurn)],
+    ]);
+    // No matching rule, not allowlisted, safety agent unregistered:
+    // the pipeline resolves to the fail-safe `ask`, which fails closed
+    // until the approval overlay ships (#c-ask-decision).
+    let agent = shell_agent(model.clone(), &[], false);
+    agent
+        .run("build it", CancelToken::new(), &cx.to_async(), None)
+        .await
+        .expect("fail-soft: the turn itself must not error");
+    let errors = model.error_tool_results(1);
+    assert_eq!(errors.len(), 1);
+    assert!(
+        errors[0].contains("requires user approval"),
+        "got: {}",
+        errors[0]
+    );
+}
+
+#[gpui::test]
+async fn fail_open_collapses_ask_to_allow_and_executes(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let model = StubModel::new(vec![
+        vec![
+            tool_use("t1", "shell_command", json!({"command": "true"})),
+            stop(StopReason::ToolUse),
+        ],
+        vec![text("ran"), stop(StopReason::EndTurn)],
+    ]);
+    let agent = shell_agent(model.clone(), &[], true);
+    agent
+        .run("noop", CancelToken::new(), &cx.to_async(), None)
+        .await
+        .expect("turn should succeed");
+    let results = model.tool_results(1);
+    assert_eq!(results.len(), 1);
+    let (is_error, text) = &results[0];
+    assert!(!is_error, "fail-open must execute: {text}");
+    assert!(text.contains("[exit code: 0]"), "got: {text}");
+
+    let entries = cx.update(|app| TraceLog::entries(app));
+    let decision = entries[0].tools[0]
+        .safety_decision
+        .clone()
+        .expect("fail-open dispatch records a safety decision");
+    assert!(decision.starts_with("allow(fail_open"), "got: {decision}");
+}
+
+#[gpui::test]
+async fn cancellation_kills_a_running_shell_command(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let cancel = CancelToken::new();
+    let model = StubModel::new(vec![vec![
+        tool_use("t1", "shell_command", json!({"command": "sleep 30"})),
+        stop(StopReason::ToolUse),
+    ]]);
+    let agent = Arc::new(shell_agent(
+        model.clone(),
+        &[("sleep *", SafetyDecision::Allow)],
+        false,
+    ));
+    let started = std::time::Instant::now();
+    let task = cx.foreground_executor().spawn({
+        let agent = agent.clone();
+        let cancel = cancel.clone();
+        let async_cx = cx.to_async();
+        async move { agent.run("wait", cancel, &async_cx, None).await }
+    });
+    // Let the child spawn and park on its IO…
+    cx.run_until_parked();
+    // …then cancel: the race must kill the child promptly.
+    cancel.cancel();
+    let result = task.await;
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "cancellation must not wait out the child: {:?}",
+        started.elapsed()
+    );
 }
 
 #[gpui::test]

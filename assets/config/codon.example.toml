@@ -109,9 +109,28 @@ format_on_save = "on"
 # active_flow = "default"
 # flow_paths = ["~/.config/codon/flows"]
 #
-# Development escape hatch for the scripted shell tool. Default false:
-# if the configured safety agent is missing or unavailable, shell
-# commands fail closed.
+# Shell commands requested by flow agents pass a layered safety
+# pipeline before anything executes: deterministic hard-deny/secret
+# gates (never overridable), then your shell_permissions rules below,
+# then a read-only allowlist, and only then a consult of the flow's
+# safety agent, which must answer with a strict JSON verdict
+# ({decision, risk, categories, reason}). A classifier deny is never
+# final on its own — it goes to the second-opinion agent when
+# safety_for() names one, and otherwise escalates to you. The
+# fail-safe decision is always `ask`, never `allow`.
+#
+# Ordered pattern rules, last match wins. `*` is the only wildcard.
+# `deny` refuses immediately; `allow`/`ask` resolve without a model
+# consult — but nothing here can override the hard-deny gates.
+# shell_permissions = [
+#   { pattern = "ctx7 *",     decision = "allow" },
+#   { pattern = "git push *", decision = "ask" },
+#   { pattern = "npm publish*", decision = "deny" },
+# ]
+#
+# Development escape hatch: collapse `ask` verdicts (including an
+# unavailable safety agent) to `allow`. Default false — asks fail
+# closed. Hard-deny gates ignore this flag entirely.
 # shell_safety_fail_open = false
 #
 # Example ~/.config/codon/flows/default.rhai:
@@ -119,34 +138,29 @@ format_on_save = "on"
 # provider("openrouter");
 # agent("main", #{
 #   model: "z-ai/glm-5.2",
-#   prompt: "Plan coding work, delegate critique and edit application.",
+#   prompt: "Plan coding work, delegate critique, run gated commands.",
 #   tools: ["shell"]
 # });
 # # Delegation tools come from the handoff() calls below, not from the
 # # `tools` list. `tools: ["shell"]` gates shell requests through the
-# # safety agent named by safety_for("shell", ...).
+# # safety chain named by safety_for("shell", ...).
 # agent("reckoning", #{
 #   model: "deepseek/deepseek-4-flash",
 #   prompt: "Critique plans and identify risks."
 # });
-# agent("edit_applier", #{
-#   model: "morph/morph-v3-large",
-#   prompt: "Apply concrete edits only when asked."
-# });
 # agent("safety", #{
 #   provider: "ollama",
 #   model: "qwen3",
-#   prompt: "Evaluate shell commands. Reply ALLOW or DENY."
+#   prompt: "You classify shell commands for safety. Be strict and literal."
 # });
 # handoff("main", "reckoning", #{
 #   name: "ask_reckoning",
 #   description: "Use for critique before risky changes."
 # });
-# handoff("main", "edit_applier", #{
-#   name: "apply_edits",
-#   description: "Use for concrete edit application."
-# });
-# safety_for("shell", "safety");
+# # Two-arg form: classifier only (denies escalate straight to you).
+# # Three-arg form: classifier + second-opinion agent for deny
+# # escalation — sensitive categories still always escalate to you.
+# safety_for("shell", "safety", "reckoning");
 # entrypoint("main");
 
 # ═══ Which-key chord HUD ════════════════════════════════════════════

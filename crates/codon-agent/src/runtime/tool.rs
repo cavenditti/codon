@@ -43,6 +43,14 @@ pub trait Tool: Send + Sync + 'static {
         input.clone()
     }
 
+    /// One-line, metadata-only safety-decision annotation for the
+    /// trace, taken (and cleared) by the agent loop right after `run`
+    /// returns (REQ:codon/agent-shell-safety#c-safety-trace). Tools
+    /// without a safety pipeline keep the default `None`.
+    fn take_trace_safety_decision(&self) -> Option<String> {
+        None
+    }
+
     /// Execute the tool. `input` is the parsed JSON the model sent.
     /// The runtime catches panics around this call and surfaces them
     /// as `ToolError::Failed` so the model sees a structured error

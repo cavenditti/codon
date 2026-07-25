@@ -22,6 +22,7 @@ pub mod event;
 pub mod model;
 pub mod registry;
 pub mod routing;
+pub mod safety;
 pub mod tool;
 pub mod trace;
 
@@ -37,6 +38,7 @@ pub use model::{
 };
 pub use registry::AgentRegistry;
 pub use routing::{RoutingFlow, RoutingFlowError, ShellCommandTool};
+pub use safety::{SafetyDecision, SafetySource, SafetyVerdict, ShellPermissionRule};
 pub use tool::{Tool, ToolSet};
 pub use trace::{PhaseEvent, TRACE_TURN_CAP, ToolEvent, TraceLog, TraceOutcome, TurnTrace};
 
