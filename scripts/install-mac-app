@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Build codon and install/update it as /Applications/Codon.app.
+#
+# The repeatable release flow: build the release binary, stage a fresh
+# Codon.app under target/mac-bundle/, stamp identity + provenance into
+# Info.plist, ad-hoc sign, then swap the staged bundle into place.
+# Stock macOS tooling only (plutil, codesign, ditto, lsregister).
+#
+# Usage: scripts/install-mac-app [-n] [-o]
+#   -n  skip `cargo build` (bundle the existing target/release/codon)
+#   -o  open the app after installing
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+skip_build=false
+open_after=false
+while getopts 'noh' flag; do
+    case "$flag" in
+        n) skip_build=true ;;
+        o) open_after=true ;;
+        h)
+            sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *) exit 1 ;;
+    esac
+done
+
+if ! $skip_build; then
+    echo "Building codon (release)..."
+    cargo build --release -p codon
+fi
+
+binary=target/release/codon
+if [[ ! -x "$binary" ]]; then
+    echo "error: $binary not found — build it first or drop -n" >&2
+    exit 1
+fi
+
+version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' apps/codon/Cargo.toml | head -1)
+build_stamp=$(date -u +%Y%m%d.%H%M%S)
+git_sha=$(git rev-parse --short=12 HEAD)
+if ! git diff --quiet HEAD 2>/dev/null; then
+    git_sha="${git_sha}-dirty"
+fi
+
+echo "Staging Codon.app (version ${version}, build ${build_stamp}, ${git_sha})..."
+staged=target/mac-bundle/Codon.app
+rm -rf "$staged"
+mkdir -p "$staged/Contents/MacOS" "$staged/Contents/Resources"
+
+# The binary keeps its symbol table on purpose: codon::reliability hang
+# traces symbolicate from it. Do not strip.
+cp -c "$binary" "$staged/Contents/MacOS/codon" 2>/dev/null \
+    || cp "$binary" "$staged/Contents/MacOS/codon"
+cp assets/mac/Codon.icns "$staged/Contents/Resources/Codon.icns"
+cp vendor/zed/crates/zed/resources/Document.icns "$staged/Contents/Resources/Document.icns"
+
+sed -e "s/__CODON_VERSION__/${version}/" \
+    -e "s/__CODON_BUILD__/${build_stamp}/" \
+    -e "s/__CODON_GIT_SHA__/${git_sha}/" \
+    assets/mac/Info.plist > "$staged/Contents/Info.plist"
+plutil -lint -s "$staged/Contents/Info.plist"
+
+codesign --force --sign - "$staged" 2>/dev/null
+
+dest_dir=/Applications
+if [[ ! -w "$dest_dir" ]]; then
+    dest_dir="$HOME/Applications"
+    mkdir -p "$dest_dir"
+    echo "note: /Applications not writable, installing to $dest_dir"
+fi
+dest_app="$dest_dir/Codon.app"
+
+if pgrep -xq codon; then
+    echo "note: Codon is currently running — the update lands on disk now" \
+         "but takes effect on next launch."
+fi
+
+# Swap, never mutate in place: move the old bundle aside, copy the staged
+# one in, then delete the old (roll the old one back if the copy fails).
+old_keep=""
+if [[ -d "$dest_app" ]]; then
+    old_keep="$(mktemp -d)/Codon.app"
+    mv "$dest_app" "$old_keep"
+fi
+if ditto "$staged" "$dest_app"; then
+    [[ -n "$old_keep" ]] && rm -rf "$(dirname "$old_keep")"
+else
+    echo "error: install failed, restoring previous Codon.app" >&2
+    rm -rf "$dest_app"
+    [[ -n "$old_keep" ]] && mv "$old_keep" "$dest_app"
+    exit 1
+fi
+
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+[[ -x "$lsregister" ]] && "$lsregister" -f "$dest_app"
+
+echo "Installed $dest_app ($(du -sh "$dest_app" | cut -f1)) — ${version} @ ${git_sha}"
+$open_after && open "$dest_app"
+exit 0

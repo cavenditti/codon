@@ -17,6 +17,10 @@ The binary is `apps/codon` (`codon-architecture.typ` has the long-form design do
 cargo build -p codon
 cargo run   -p codon
 
+# Build + install/update /Applications/Codon.app (the release flow)
+scripts/install-mac-app     # -n skip build, -o open after install
+scripts/gen-mac-icon        # regen assets/mac/Codon.icns from the SVG logo
+
 # Per-crate check / test
 cargo check -p codon-session
 cargo test  -p codon-keymap [test_name]

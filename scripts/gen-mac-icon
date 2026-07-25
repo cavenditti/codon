@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Regenerate assets/mac/Codon.icns from assets/codon-logo.svg.
+#
+# Needs inkscape + imagemagick (brew install inkscape imagemagick). The
+# .icns is checked in, so this only needs re-running when the logo (or
+# the tile styling below) changes — scripts/install-mac-app does not
+# depend on any SVG toolchain.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+svg=assets/codon-logo.svg
+out=assets/mac/Codon.icns
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Big Sur icon geometry: 1024 canvas, 824 rounded-rect tile, ~185 corner
+# radius; glyph sized to leave comfortable padding inside the tile.
+canvas=1024 tile=824 radius=185 glyph=560
+
+# Render the SVG glyph. The logo's default (light-scheme) fill is dark;
+# recolor to near-white with anti-aliased alpha preserved, since it sits
+# on a dark tile.
+inkscape -w "$glyph" -h "$glyph" "$svg" -o "$work/glyph.png" 2>/dev/null
+magick "$work/glyph.png" -fill '#ECEFF4' -colorize 100 "$work/glyph-light.png"
+
+# Dark tile with a subtle vertical gradient, masked to a rounded rect.
+magick -size "${tile}x${tile}" gradient:'#2E3440'-'#16181D' \
+  \( -size "${tile}x${tile}" xc:none -fill white \
+     -draw "roundrectangle 0,0 $((tile - 1)),$((tile - 1)) $radius,$radius" \) \
+  -alpha off -compose CopyOpacity -composite "$work/tile.png"
+
+magick -size "${canvas}x${canvas}" xc:none \
+  "$work/tile.png" -gravity center -composite \
+  "$work/glyph-light.png" -gravity center -composite \
+  "$work/master.png"
+
+iconset="$work/Codon.iconset"
+mkdir "$iconset"
+for s in 16 32 128 256 512; do
+  sips -z "$s" "$s" "$work/master.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null
+  d=$((s * 2))
+  sips -z "$d" "$d" "$work/master.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
+done
+
+mkdir -p "$(dirname "$out")"
+iconutil -c icns "$iconset" -o "$out"
+echo "wrote $out"
