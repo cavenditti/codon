@@ -202,10 +202,7 @@ pub fn apply_user_openers(cx: &mut App) {
                 cx.update_global::<OpenerStore, _>(|store, _| store.install(doc));
                 log::debug!("openers: loaded {}", path.display());
             }
-            Err(err) => log::warn!(
-                "openers: ignoring malformed {} ({err:#})",
-                path.display()
-            ),
+            Err(err) => log::warn!("openers: ignoring malformed {} ({err:#})", path.display()),
         },
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             log::debug!("openers: {} not present", path.display());
@@ -299,14 +296,12 @@ mod tests {
     #[test]
     fn glob_row_matches_by_extension() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.png"
             cmd = "qlmanage -p {path}"
             description = "Quick Look"
-            "#,
-        ));
+            "#));
         let matches = store.matches_for(Path::new("/tmp/cat.png"));
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].description, "Quick Look");
@@ -315,13 +310,11 @@ mod tests {
     #[test]
     fn brace_expansion_matches_multiple_extensions() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.{png,jpg}"
             cmd = "open {path}"
-            "#,
-        ));
+            "#));
         assert_eq!(store.matches_for(Path::new("/tmp/a.png")).len(), 1);
         assert_eq!(store.matches_for(Path::new("/tmp/a.jpg")).len(), 1);
         assert!(store.matches_for(Path::new("/tmp/a.txt")).is_empty());
@@ -332,14 +325,12 @@ mod tests {
         // text/plain is what mime_guess returns for .txt — we rely on
         // that mapping to keep the test deterministic across platforms.
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             mime = "text/plain"
             cmd = "vim {path}"
             description = "Vim"
-            "#,
-        ));
+            "#));
         let matches = store.matches_for(Path::new("/tmp/notes.txt"));
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].description, "Vim");
@@ -348,52 +339,44 @@ mod tests {
     #[test]
     fn rows_without_predicate_are_dropped() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             cmd = "echo hi"
             description = "No predicate"
-            "#,
-        ));
+            "#));
         assert!(store.all().is_empty());
     }
 
     #[test]
     fn empty_cmd_is_dropped() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.md"
             cmd = ""
-            "#,
-        ));
+            "#));
         assert!(store.all().is_empty());
     }
 
     #[test]
     fn invalid_glob_is_dropped_without_panicking() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "**unbalanced["
             cmd = "open {path}"
-            "#,
-        ));
+            "#));
         assert!(store.all().is_empty());
     }
 
     #[test]
     fn block_defaults_to_false() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.md"
             cmd = "open {path}"
-            "#,
-        ));
+            "#));
         assert_eq!(store.all().len(), 1);
         assert!(!store.all()[0].block);
     }
@@ -401,35 +384,30 @@ mod tests {
     #[test]
     fn block_true_round_trips() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.md"
             cmd = "less {path}"
             block = true
-            "#,
-        ));
+            "#));
         assert!(store.all()[0].block);
     }
 
     #[test]
     fn label_falls_back_to_cmd_without_description() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.zip"
             cmd = "unzip {path}"
-            "#,
-        ));
+            "#));
         assert_eq!(store.all()[0].label(), "unzip {path}");
     }
 
     #[test]
     fn ordering_preserved_across_reload() {
         let mut store = OpenerStore::default();
-        store.install(doc(
-            r#"
+        store.install(doc(r#"
             [[opener]]
             glob = "*.png"
             cmd = "viewer-a {path}"
@@ -439,8 +417,7 @@ mod tests {
             glob = "*.png"
             cmd = "viewer-b {path}"
             description = "B"
-            "#,
-        ));
+            "#));
         let matches = store.matches_for(Path::new("/tmp/x.png"));
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].description, "A");

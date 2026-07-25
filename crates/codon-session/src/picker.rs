@@ -94,16 +94,9 @@ impl PickerDelegate for SessionPickerDelegate {
         let cancel = std::sync::atomic::AtomicBool::new(false);
 
         cx.spawn(async move |this, cx| {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                true,
-                100,
-                &cancel,
-                executor,
-            )
-            .await;
+            let matches =
+                fuzzy::match_strings(&candidates, &query, false, true, 100, &cancel, executor)
+                    .await;
             this.update(cx, |picker, cx| {
                 picker.delegate.matches = matches;
                 if picker.delegate.selected_index >= picker.delegate.matches.len() {
@@ -178,8 +171,7 @@ impl SessionSwitchModal {
         cx.on_release(|this: &mut Self, cx| this.scaffold.on_dismiss(cx))
             .detach();
         let delegate = SessionPickerDelegate::new(cx);
-        let picker =
-            cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
         let on_select = cx.subscribe_in(
             &picker,
@@ -195,10 +187,13 @@ impl SessionSwitchModal {
             },
         );
 
-        let on_dismiss =
-            cx.subscribe_in(&picker, window, |this, _, _: &PickerDismissed, window, cx| {
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
                 this.dismiss(window, cx);
-            });
+            },
+        );
 
         Self {
             scaffold,

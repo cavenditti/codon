@@ -660,18 +660,12 @@ mod tests {
 
         let boundaries = scanner.feed(&bytes);
         assert_eq!(boundaries.len(), 4);
-        assert!(matches!(
-            boundaries[0].kind,
-            BlockBoundaryKind::PromptStart
-        ));
+        assert!(matches!(boundaries[0].kind, BlockBoundaryKind::PromptStart));
         assert!(matches!(
             boundaries[1].kind,
             BlockBoundaryKind::CommandStart
         ));
-        assert!(matches!(
-            boundaries[2].kind,
-            BlockBoundaryKind::OutputStart
-        ));
+        assert!(matches!(boundaries[2].kind, BlockBoundaryKind::OutputStart));
         assert_eq!(
             boundaries[3].kind,
             BlockBoundaryKind::OutputEnd { exit: Some(0) }
@@ -685,10 +679,7 @@ mod tests {
         let mut scanner = Osc133Scanner::new();
         let boundaries = scanner.feed(b"\x1b]133;A\x1b\\");
         assert_eq!(boundaries.len(), 1);
-        assert!(matches!(
-            boundaries[0].kind,
-            BlockBoundaryKind::PromptStart
-        ));
+        assert!(matches!(boundaries[0].kind, BlockBoundaryKind::PromptStart));
     }
 
     /// Scanner's state survives across `feed` calls — a sequence

@@ -201,8 +201,7 @@ fn record_from_keystroke(cx: &mut App, action: &dyn Action) {
 /// outside this crate can use it without holding a borrow on the
 /// global).
 pub fn last(cx: &App) -> Option<HistoryEntry> {
-    cx.try_global::<History>()
-        .and_then(|h| h.last().cloned())
+    cx.try_global::<History>().and_then(|h| h.last().cloned())
 }
 
 /// Snapshot of the ring (oldest first). Used by the picker.

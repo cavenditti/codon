@@ -27,7 +27,7 @@ use ui::SharedString;
 use vim::shell::{ShellMode, ShellRun};
 use workspace::Workspace;
 
-use crate::completer::{CompletionItem, Completer, register};
+use crate::completer::{Completer, CompletionItem, register};
 
 /// Register the six shell verbs (`pipe`, `pipe-to`, `insert-output`,
 /// `append-output`, `keep-pipe`, `sh`) on the global completer

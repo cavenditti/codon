@@ -152,8 +152,7 @@ mod tests {
                 settings.min_column_width = width.max(60.0);
             }
             if let Some(threshold) = table.flip_threshold {
-                settings.flip_threshold =
-                    threshold.clamp(FLIP_THRESHOLD_MIN, FLIP_THRESHOLD_MAX);
+                settings.flip_threshold = threshold.clamp(FLIP_THRESHOLD_MIN, FLIP_THRESHOLD_MAX);
             }
         }
         settings

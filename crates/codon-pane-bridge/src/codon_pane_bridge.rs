@@ -117,16 +117,16 @@ impl CodonGlanceTable {
     /// slice if no entry exists for the pair.
     pub fn verbs(&self, pane_kind: &str, mode: &str) -> &[SharedString] {
         let key = format!("{pane_kind}.{mode}");
-        self.entries
-            .get(&key)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.entries.get(&key).map(|v| v.as_slice()).unwrap_or(&[])
     }
 }
 
 impl Global for CodonGlanceTable {}
 
-actions!(codon_mode, [SwitchToNormal, SwitchToInsert, SwitchToCommand]);
+actions!(
+    codon_mode,
+    [SwitchToNormal, SwitchToInsert, SwitchToCommand]
+);
 
 /// Implemented by every codon-owned pane / modal that participates
 /// in the modal status-bar layer.

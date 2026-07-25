@@ -75,8 +75,8 @@ async fn write_settings(fs: Arc<dyn Fs>, new_json: String) -> Result<()> {
             .with_context(|| format!("creating {} for codon.toml", parent.display()))?;
     }
     let existing = load_or_empty(&fs, &path).await?;
-    let new_settings_value: Value = serde_json::from_str(&new_json)
-        .context("parsing JSON returned by settings_ui edit")?;
+    let new_settings_value: Value =
+        serde_json::from_str(&new_json).context("parsing JSON returned by settings_ui edit")?;
     let new_settings_toml = json_to_toml(&new_settings_value);
 
     // Round-trip the new settings sub-tree through `toml::to_string` →
@@ -84,8 +84,8 @@ async fn write_settings(fs: Arc<dyn Fs>, new_json: String) -> Result<()> {
     // `toml_edit::Item` to splice into the existing document.
     let mut wrapper = toml::value::Table::new();
     wrapper.insert("settings".to_string(), new_settings_toml);
-    let serialised = toml::to_string_pretty(&wrapper)
-        .context("serialising updated [settings] to TOML")?;
+    let serialised =
+        toml::to_string_pretty(&wrapper).context("serialising updated [settings] to TOML")?;
     let new_doc: DocumentMut = serialised
         .parse()
         .context("re-parsing serialised [settings] as toml_edit")?;
@@ -206,8 +206,7 @@ mode = \"system\"
 \"cmd-w\" = \"foo\"
 # bindings comment kept
 ";
-        let replacement =
-            "[settings]\nfont_size = 14\n\n[settings.theme]\nmode = \"dark\"\n";
+        let replacement = "[settings]\nfont_size = 14\n\n[settings.theme]\nmode = \"dark\"\n";
         let merged = splice(existing, replacement);
         assert!(merged.contains("font_size = 14"));
         assert!(merged.contains("mode = \"dark\""));

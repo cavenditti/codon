@@ -10,7 +10,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use workspace::{
     CloseActiveItem, Workspace,
-    notifications::{NotificationId, NotifyTaskExt as _, simple_message_notification::MessageNotification},
+    notifications::{
+        NotificationId, NotifyTaskExt as _, simple_message_notification::MessageNotification,
+    },
 };
 
 use crate::{
@@ -549,21 +551,19 @@ fn handle_window_close(
     // upstream save/discard/cancel dialog; only proceed when the user
     // confirms.
     let prompt = workspace.prompt_to_save_or_discard_dirty_items(window, cx);
-    cx.spawn_in(window, async move |workspace, cx| {
-        match prompt.await {
-            Ok(true) => {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        finish_window_close(workspace, active_id, window, cx);
-                    })
-                    .ok();
-            }
-            Ok(false) => {
-                log::debug!("WindowClose cancelled by user");
-            }
-            Err(err) => {
-                log::warn!("WindowClose save prompt failed: {err:?}");
-            }
+    cx.spawn_in(window, async move |workspace, cx| match prompt.await {
+        Ok(true) => {
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    finish_window_close(workspace, active_id, window, cx);
+                })
+                .ok();
+        }
+        Ok(false) => {
+            log::debug!("WindowClose cancelled by user");
+        }
+        Err(err) => {
+            log::warn!("WindowClose save prompt failed: {err:?}");
         }
     })
     .detach();
@@ -892,17 +892,11 @@ fn handle_safe_close_active_item(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    log::info!(
-        "codon_session::SafeCloseActiveItem is deprecated; rebind to codon_session::Close"
-    );
+    log::info!("codon_session::SafeCloseActiveItem is deprecated; rebind to codon_session::Close");
     close_cascade(workspace, window, cx);
 }
 
-fn close_cascade(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn close_cascade(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     let active_pane = workspace.active_pane().clone();
     let item_count = active_pane.read(cx).items_len();
 
@@ -927,7 +921,9 @@ fn close_cascade(
     // workspace::handle_pane_event already routes to remove_pane.
     if workspace.panes().len() > 1 {
         active_pane.update(cx, |_, cx| {
-            cx.emit(workspace::pane::Event::Remove { focus_on_pane: None });
+            cx.emit(workspace::pane::Event::Remove {
+                focus_on_pane: None,
+            });
         });
         return;
     }
@@ -1152,11 +1148,7 @@ fn capture_runtime(workspace: &Workspace, cx: &App) -> Option<WindowRuntime> {
 /// session's active-window layout + runtime. Idempotent if there is no
 /// active session. Caller is responsible for flipping the active session
 /// afterwards.
-fn stash_outgoing(
-    workspace: &mut Workspace,
-    _window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn stash_outgoing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
     let _ = stash_outgoing_timed(workspace, cx);
 }
 
@@ -1172,10 +1164,7 @@ struct StashTiming {
 /// call site because the conditional early-returns (no active session,
 /// no active window) need to surface as zero values rather than an
 /// outer-`Instant` measurement that misattributes the no-op cost.
-fn stash_outgoing_timed(
-    workspace: &mut Workspace,
-    cx: &mut Context<Workspace>,
-) -> StashTiming {
+fn stash_outgoing_timed(workspace: &mut Workspace, cx: &mut Context<Workspace>) -> StashTiming {
     let registry = SessionRegistry::global(cx);
     let Some(outgoing_session_id) = registry.active_id() else {
         return StashTiming::default();
@@ -1235,10 +1224,12 @@ fn restore_incoming_timed(
     let registry = SessionRegistry::global(cx);
     let session = registry.get(target_id);
     let incoming_window_id = session.as_ref().and_then(|s| s.active().map(|w| w.id));
-    let incoming_layout = session.as_ref().and_then(|s| s.active().and_then(|w| w.layout.clone()));
+    let incoming_layout = session
+        .as_ref()
+        .and_then(|s| s.active().and_then(|w| w.layout.clone()));
 
-    let cached = incoming_window_id
-        .and_then(|id| WindowRuntimeCache::global(cx).take(target_id, id));
+    let cached =
+        incoming_window_id.and_then(|id| WindowRuntimeCache::global(cx).take(target_id, id));
 
     let _ = take_restore_timing();
     let restore_started = Instant::now();
@@ -1333,7 +1324,9 @@ fn unique_name(base: &str, cx: &App) -> String {
 /// consistent at the boundary. The returned task spawns immediately on
 /// the background executor.
 pub(crate) fn persist_lifecycle(cx: &App) {
-    crate::registry::persist_scheduler(cx).flush_now(cx).detach();
+    crate::registry::persist_scheduler(cx)
+        .flush_now(cx)
+        .detach();
 }
 
 /// Mark the registry dirty and let the persist scheduler debounce the
@@ -1400,7 +1393,10 @@ fn handle_hold_quit(
     cx: &mut Context<Workspace>,
 ) {
     let now = Instant::now();
-    let mut state = cx.try_global::<HoldQuitState>().copied().unwrap_or_default();
+    let mut state = cx
+        .try_global::<HoldQuitState>()
+        .copied()
+        .unwrap_or_default();
 
     // Stale state (released and pressed again later) → start fresh.
     let started = match state.last_press {
@@ -1424,10 +1420,7 @@ fn handle_hold_quit(
         let id = NotificationId::unique::<HoldQuit>();
         workspace.show_notification(id, cx, |cx| {
             cx.new(|cx| {
-                MessageNotification::new(
-                    "Hold ⌘Q to quit, or press ⇧⌘Q for an immediate quit.",
-                    cx,
-                )
+                MessageNotification::new("Hold ⌘Q to quit, or press ⇧⌘Q for an immediate quit.", cx)
             })
         });
     }

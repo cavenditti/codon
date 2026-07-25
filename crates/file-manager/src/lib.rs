@@ -21,8 +21,8 @@ mod view;
 pub use file_manager::{
     ChooseOpener, CopyMarked, CreateDirectory, CreateFile, DeleteEntry, FileManager, GotoPath,
     HistoryBack, HistoryForward, MoveMarked, Open, RenameEntry, Reveal, SortByBtime,
-    SortByExtension, SortByMtime, SortByName, SortByNatural, SortByRandom, SortBySize,
-    ToggleMark, ToggleSortReverse, YankPath,
+    SortByExtension, SortByMtime, SortByName, SortByNatural, SortByRandom, SortBySize, ToggleMark,
+    ToggleSortReverse, YankPath,
 };
 pub use openers::{Opener, OpenerStore};
 pub use render::trace::{

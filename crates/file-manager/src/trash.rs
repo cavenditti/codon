@@ -269,16 +269,7 @@ impl PickerDelegate for TrashPickerDelegate {
                     })
                     .collect()
             } else {
-                fuzzy::match_strings(
-                    &candidates,
-                    &query,
-                    false,
-                    true,
-                    100,
-                    &cancel,
-                    executor,
-                )
-                .await
+                fuzzy::match_strings(&candidates, &query, false, true, 100, &cancel, executor).await
             };
             this.update(cx, |picker, cx| {
                 picker.delegate.matches = matches;
@@ -316,7 +307,11 @@ impl PickerDelegate for TrashPickerDelegate {
         if !self.confirm_purge {
             return None;
         }
-        let count = if self.marked.is_empty() { 1 } else { self.marked.len() };
+        let count = if self.marked.is_empty() {
+            1
+        } else {
+            self.marked.len()
+        };
         let prompt = format!(
             "Permanently delete {count} item{}? Enter / y to confirm, anything else cancels.",
             if count == 1 { "" } else { "s" },
@@ -372,11 +367,7 @@ impl PickerDelegate for TrashPickerDelegate {
                                 matched.string.clone(),
                                 matched.positions.clone(),
                             ))
-                            .child(
-                                Label::new(name)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
+                            .child(Label::new(name).color(Color::Muted).size(LabelSize::Small)),
                     ),
                 ),
         )
@@ -431,10 +422,13 @@ impl TrashModal {
                 this.dismiss(window, cx);
             },
         );
-        let on_dismissed =
-            cx.subscribe_in(&picker, window, |this, _, _: &PickerDismissed, window, cx| {
+        let on_dismissed = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
                 this.dismiss(window, cx);
-            });
+            },
+        );
 
         Self {
             picker,
@@ -447,12 +441,7 @@ impl TrashModal {
         cx.emit(DismissEvent);
     }
 
-    fn intercept_key(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn intercept_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
         let shift = event.keystroke.modifiers.shift;
         let ctrl = event.keystroke.modifiers.control;
@@ -462,11 +451,7 @@ impl TrashModal {
             return;
         }
 
-        let pending_confirm = self
-            .picker
-            .read(cx)
-            .delegate
-            .confirm_purge;
+        let pending_confirm = self.picker.read(cx).delegate.confirm_purge;
         if pending_confirm {
             match key {
                 "y" | "enter" | "\n" if !shift => {

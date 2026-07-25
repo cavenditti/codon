@@ -118,19 +118,17 @@ pub fn migrate_if_needed() -> Result<MigrationOutcome> {
         // of the migration (we round-trip the parsed value, but stable
         // serialisation is close enough that hand-formatted keymaps stay
         // readable).
-        let serialised = toml::to_string_pretty(keymap)
-            .context("serialising migrated keymap to TOML")?;
+        let serialised =
+            toml::to_string_pretty(keymap).context("serialising migrated keymap to TOML")?;
         output.push_str(&serialised);
         output.push('\n');
     }
 
     if let Some(parent) = unified.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("creating {} for codon.toml", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating {} for codon.toml", parent.display()))?;
     }
-    fs::write(&unified, &output)
-        .with_context(|| format!("writing {}", unified.display()))?;
+    fs::write(&unified, &output).with_context(|| format!("writing {}", unified.display()))?;
 
     if zed_doc.is_some() {
         prepend_header(&zed_settings, ZED_SETTINGS_HEADER)?;
@@ -164,9 +162,7 @@ pub fn json_to_toml(value: &Value) -> toml::Value {
             }
         }
         Value::String(s) => toml::Value::String(s.clone()),
-        Value::Array(items) => {
-            toml::Value::Array(items.iter().map(json_to_toml).collect())
-        }
+        Value::Array(items) => toml::Value::Array(items.iter().map(json_to_toml).collect()),
         Value::Object(map) => {
             let mut table = toml::value::Table::new();
             for (key, child) in map {
@@ -219,7 +215,8 @@ fn strip_deprecation_header(content: &str) -> &str {
 }
 
 fn prepend_header(path: &PathBuf, header: &str) -> Result<()> {
-    let existing = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let existing =
+        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     if existing.starts_with(header) {
         return Ok(()); // already annotated
     }

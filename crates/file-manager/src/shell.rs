@@ -68,12 +68,7 @@ pub fn apply_substitutions(
     out
 }
 
-fn expand_token(
-    token: &str,
-    cursor: &Path,
-    marked: &[PathBuf],
-    cwd: &Path,
-) -> Option<String> {
+fn expand_token(token: &str, cursor: &Path, marked: &[PathBuf], cwd: &Path) -> Option<String> {
     match token {
         "path" => Some(quote_path(cursor)),
         "paths" => {
@@ -341,12 +336,7 @@ mod tests {
 
     #[test]
     fn path_quotes_special_characters() {
-        let out = apply_substitutions(
-            "cat {path}",
-            &p("/tmp/has space.txt"),
-            &[],
-            &p("/tmp"),
-        );
+        let out = apply_substitutions("cat {path}", &p("/tmp/has space.txt"), &[], &p("/tmp"));
         assert_eq!(out, "cat '/tmp/has space.txt'");
     }
 
@@ -437,12 +427,7 @@ mod tests {
     #[test]
     fn multiple_substitutions_in_one_template() {
         let marked = vec![p("/tmp/a"), p("/tmp/b")];
-        let out = apply_substitutions(
-            "cp {paths} {cwd}/dest",
-            &p("/tmp/a"),
-            &marked,
-            &p("/tmp"),
-        );
+        let out = apply_substitutions("cp {paths} {cwd}/dest", &p("/tmp/a"), &marked, &p("/tmp"));
         assert_eq!(out, "cp /tmp/a /tmp/b /tmp/dest");
     }
 
@@ -450,12 +435,7 @@ mod tests {
     fn fallback_single_quote_escapes_inner_quotes() {
         // No exposed API, but verify the helper logic via a string
         // shlex can quote — ensure the round-trip preserves the value.
-        let out = apply_substitutions(
-            "echo {name}",
-            &p("/tmp/it's.txt"),
-            &[],
-            &p("/tmp"),
-        );
+        let out = apply_substitutions("echo {name}", &p("/tmp/it's.txt"), &[], &p("/tmp"));
         // shlex produces `'it'\''s.txt'` for inputs with a single quote.
         assert!(out.starts_with("echo "));
         assert!(out.contains("it"));

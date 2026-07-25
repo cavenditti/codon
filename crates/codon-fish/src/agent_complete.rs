@@ -16,8 +16,8 @@
 use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use codon_agent::{AgentRegistry, CancelToken};
 use codon_agent::agents::FISH_COMPLETE;
+use codon_agent::{AgentRegistry, CancelToken};
 use gpui::AsyncApp;
 use serde::Deserialize;
 
@@ -37,7 +37,9 @@ pub async fn handle(params_json: serde_json::Value, cx: AsyncApp) -> Result<serd
     let params: Params =
         serde_json::from_value(params_json).context("parse agent.complete params")?;
     if params.partial.trim().is_empty() && params.description.trim().is_empty() {
-        return Err(anyhow!("empty request: both `partial` and `description` are blank"));
+        return Err(anyhow!(
+            "empty request: both `partial` and `description` are blank"
+        ));
     }
     let agent = cx
         .update(|app| AgentRegistry::get(app, FISH_COMPLETE))

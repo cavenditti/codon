@@ -118,8 +118,12 @@ fn collect_rows(workspace: &Workspace, cx: &App) -> Vec<ChangedFileRow> {
     let project = workspace.project().clone();
     let git_store = project.read(cx).git_store().clone();
     let mut rows: Vec<ChangedFileRow> = Vec::new();
-    let repositories: Vec<Entity<project::git_store::Repository>> =
-        git_store.read(cx).repositories().values().cloned().collect();
+    let repositories: Vec<Entity<project::git_store::Repository>> = git_store
+        .read(cx)
+        .repositories()
+        .values()
+        .cloned()
+        .collect();
     for repo in repositories {
         let repo_ref = repo.read(cx);
         for entry in repo_ref.cached_status() {
@@ -155,9 +159,7 @@ fn is_picker_visible(status: &git::status::FileStatus) -> bool {
         FileStatus::Tracked(TrackedStatus {
             index_status,
             worktree_status,
-        }) => {
-            *index_status != StatusCode::Unmodified || *worktree_status != StatusCode::Unmodified
-        }
+        }) => *index_status != StatusCode::Unmodified || *worktree_status != StatusCode::Unmodified,
     }
 }
 
@@ -276,8 +278,7 @@ impl PickerDelegate for ChangedFilesPickerDelegate {
         cx.spawn_in(window, async move |_picker, cx| {
             let item = open_task.await.log_err()?;
             let editor = item.downcast::<Editor>()?;
-            let diff_task =
-                editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load());
+            let diff_task = editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load());
             if let Some(diff_task) = diff_task {
                 diff_task.await;
             }

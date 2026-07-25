@@ -56,7 +56,10 @@ pub trait SelectionSource {
     /// the *first listed* isn't the natural target (e.g. an editor
     /// pane returning `Text` even though it also produces hunks).
     fn primary_object_kind(&self) -> ObjectKind {
-        self.object_kinds().first().copied().unwrap_or(ObjectKind::Text)
+        self.object_kinds()
+            .first()
+            .copied()
+            .unwrap_or(ObjectKind::Text)
     }
 }
 

@@ -115,16 +115,9 @@ impl PickerDelegate for WindowPickerDelegate {
         let cancel = std::sync::atomic::AtomicBool::new(false);
 
         cx.spawn(async move |this, cx| {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                true,
-                100,
-                &cancel,
-                executor,
-            )
-            .await;
+            let matches =
+                fuzzy::match_strings(&candidates, &query, false, true, 100, &cancel, executor)
+                    .await;
             this.update(cx, |picker, cx| {
                 picker.delegate.matches = matches;
                 if picker.delegate.selected_index >= picker.delegate.matches.len() {
@@ -215,10 +208,13 @@ impl WindowSwitchModal {
             },
         );
 
-        let on_dismiss =
-            cx.subscribe_in(&picker, window, |this, _, _: &PickerDismissed, window, cx| {
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
                 this.dismiss(window, cx);
-            });
+            },
+        );
 
         Self {
             scaffold,

@@ -9,7 +9,7 @@
 //! adapter or by the peek dock.
 
 use git_ui::git_panel::GitPanel;
-use gpui::{AppContext as _, Context, Entity, Focusable as _, Window, WeakEntity};
+use gpui::{AppContext as _, Context, Entity, Focusable as _, WeakEntity, Window};
 use workspace::Workspace;
 
 use crate::actions::{OpenGit, PeekGit};

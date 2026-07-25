@@ -54,12 +54,7 @@ impl<P: Panel> PanelItemAdapter<P> {
         self.inner.entity_id()
     }
 
-    fn on_panel_event(
-        &mut self,
-        _entity: Entity<P>,
-        event: &PanelEvent,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_panel_event(&mut self, _entity: Entity<P>, event: &PanelEvent, cx: &mut Context<Self>) {
         match event {
             PanelEvent::Activate => cx.emit(PanelItemEvent::Activate),
             PanelEvent::Close => cx.emit(PanelItemEvent::Close),
@@ -106,12 +101,7 @@ impl<P: Panel> Item for PanelItemAdapter<P> {
         SharedString::from(P::persistent_name())
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &App,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         let inner = self.inner.read(cx);
         let label = inner
             .icon_label(window, cx)
@@ -201,4 +191,3 @@ impl<P: Panel> Item for PanelItemAdapter<P> {
 pub fn inner_pane<P: Panel>(adapter: &PanelItemAdapter<P>, cx: &App) -> Option<Entity<Pane>> {
     adapter.inner.read(cx).pane()
 }
-

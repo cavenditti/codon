@@ -133,7 +133,12 @@ fn collect_rows(workspace: &Workspace, cx: &App) -> Vec<JumplistRow> {
             .abs_path
             .clone()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| jump.project_path.path.display(util::paths::PathStyle::local()).into_owned());
+            .unwrap_or_else(|| {
+                jump.project_path
+                    .path
+                    .display(util::paths::PathStyle::local())
+                    .into_owned()
+            });
         let row_label = match jump.row {
             Some(r) => format!("[jump] {path}:{r}"),
             None => format!("[jump] {path}"),
@@ -240,17 +245,13 @@ impl PickerDelegate for JumplistPickerDelegate {
         match row.kind {
             JumplistRowKind::Jump => {
                 if let Some(entry) = row.jump.as_ref() {
-                    codon_jumplist::jump_to_entry(&workspace, entry, window, cx)
-                        .detach();
+                    codon_jumplist::jump_to_entry(&workspace, entry, window, cx).detach();
                 }
             }
             JumplistRowKind::Pane => {
                 if let Some(ix) = row.pane_index {
                     let handle = workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .panes()
-                            .get(ix)
-                            .map(|pane| pane.focus_handle(cx))
+                        workspace.panes().get(ix).map(|pane| pane.focus_handle(cx))
                     });
                     if let Some(handle) = handle {
                         window.focus(&handle, cx);

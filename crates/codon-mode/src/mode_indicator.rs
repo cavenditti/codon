@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Element, Entity, FontWeight, Render, SharedString, Subscription, WeakEntity, Window};
+use gpui::{
+    Context, Element, Entity, FontWeight, Render, SharedString, Subscription, WeakEntity, Window,
+};
 use ui::prelude::*;
 use workspace::{StatusItemView, item::ItemHandle};
 
@@ -49,18 +51,16 @@ impl CodonModeIndicator {
                 return;
             }
             let vim = cx.entity();
-            handle
-                .update(cx, |_, cx| {
-                    cx.subscribe(&vim, |indicator, vim, event, cx| match event {
-                        VimEvent::Focused => {
-                            indicator.vim_focused = true;
-                            indicator.vim_subscription =
-                                Some(cx.observe(&vim, |_, _, cx| cx.notify()));
-                            indicator.vim = Some(vim.downgrade());
-                        }
-                    })
-                    .detach()
+            handle.update(cx, |_, cx| {
+                cx.subscribe(&vim, |indicator, vim, event, cx| match event {
+                    VimEvent::Focused => {
+                        indicator.vim_focused = true;
+                        indicator.vim_subscription = Some(cx.observe(&vim, |_, _, cx| cx.notify()));
+                        indicator.vim = Some(vim.downgrade());
+                    }
                 })
+                .detach()
+            })
         })
         .detach();
 
@@ -109,9 +109,9 @@ impl CodonModeIndicator {
 
     fn detail_from_vim(mode: vim::state::Mode) -> Option<SharedString> {
         match mode {
-            vim::state::Mode::Normal
-            | vim::state::Mode::HelixNormal
-            | vim::state::Mode::Insert => None,
+            vim::state::Mode::Normal | vim::state::Mode::HelixNormal | vim::state::Mode::Insert => {
+                None
+            }
             _ => Some(mode.to_string().into()),
         }
     }
@@ -124,7 +124,9 @@ impl Render for CodonModeIndicator {
 
         let (pane_mode, detail, temp_mode) = if command_active {
             (PaneMode::Command, None, false)
-        } else if self.vim_focused && let Some(vim) = self.vim() {
+        } else if self.vim_focused
+            && let Some(vim) = self.vim()
+        {
             let vim_readable = vim.read(cx);
             let mode = vim_readable.mode;
             let temp = vim_readable.temp_mode;
@@ -133,11 +135,7 @@ impl Render for CodonModeIndicator {
             if let Some(label) = status_label {
                 (Self::mode_from_vim(mode), Some(label), temp)
             } else {
-                (
-                    Self::mode_from_vim(mode),
-                    Self::detail_from_vim(mode),
-                    temp,
-                )
+                (Self::mode_from_vim(mode), Self::detail_from_vim(mode), temp)
             }
         } else {
             (tracker.mode, tracker.detail.clone(), false)
@@ -178,8 +176,16 @@ impl Render for CodonModeIndicator {
             PaneMode::Insert => (status.success_background, status.success),
             PaneMode::Command => (status.warning_background, status.warning),
         };
-        let bg = if vim_bg == transparent { fallback_bg } else { vim_bg };
-        let fg = if vim_fg == transparent { fallback_fg } else { vim_fg };
+        let bg = if vim_bg == transparent {
+            fallback_bg
+        } else {
+            vim_bg
+        };
+        let fg = if vim_fg == transparent {
+            fallback_fg
+        } else {
+            vim_fg
+        };
 
         let flash_active = self
             .flash_until

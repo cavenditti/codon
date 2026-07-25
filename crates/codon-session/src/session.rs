@@ -12,9 +12,7 @@ use workspace::codon_bridge::LayoutSnapshot;
 /// invisible until the user puts something in it.
 pub const WINDOW_SLOTS: usize = 9;
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionId(pub Uuid);
 
 impl SessionId {
@@ -29,9 +27,7 @@ impl std::fmt::Display for SessionId {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WindowId(pub u64);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

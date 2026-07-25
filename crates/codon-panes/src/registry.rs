@@ -24,16 +24,12 @@ pub(crate) fn focus_existing_adapter<P: Panel>(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> bool {
-    let target = workspace
-        .panes()
-        .iter()
-        .cloned()
-        .find_map(|pane| {
-            pane.read(cx)
-                .items()
-                .find(|item| item.downcast::<PanelItemAdapter<P>>().is_some())
-                .map(|item| (pane.clone(), item.item_id()))
-        });
+    let target = workspace.panes().iter().cloned().find_map(|pane| {
+        pane.read(cx)
+            .items()
+            .find(|item| item.downcast::<PanelItemAdapter<P>>().is_some())
+            .map(|item| (pane.clone(), item.item_id()))
+    });
     if let Some((pane, item_id)) = target {
         pane.update(cx, |pane, cx| {
             let active_index = pane

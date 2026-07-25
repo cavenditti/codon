@@ -3,7 +3,10 @@ use gpui::{
     AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, Styled, Window, div,
 };
-use ui::{ActiveTheme as _, Color, FluentBuilder, Label, LabelCommon, LabelSize, StyledExt, h_flex, v_flex};
+use ui::{
+    ActiveTheme as _, Color, FluentBuilder, Label, LabelCommon, LabelSize, StyledExt, h_flex,
+    v_flex,
+};
 use workspace::{ModalView, Workspace};
 
 use crate::{actions::persist_lifecycle, registry::SessionRegistry};

@@ -39,7 +39,10 @@ use std::{
     fs::{self, File},
     io::{BufWriter, Write as _},
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicU64, Ordering}, Mutex, OnceLock},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Instant,
 };
 

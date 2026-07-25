@@ -35,7 +35,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::completer::{self, CompletionItem, Completer};
+use crate::completer::{self, Completer, CompletionItem};
 
 pub struct CodonPalette {
     scaffold: ModalScaffold,
@@ -117,10 +117,7 @@ impl CodonPalette {
                 let m = d.matches.get(d.selected_ix)?;
                 let cmd = d.all_commands.get(m.candidate_id)?;
                 let arg_hint = completer::for_action_name(cmd.action.name()).map(|c| {
-                    SharedString::from(format!(
-                        "Type `{} ` to set arguments",
-                        c.aliases()[0]
-                    ))
+                    SharedString::from(format!("Type `{} ` to set arguments", c.aliases()[0]))
                 });
                 Some(AsideSnapshot {
                     title: cmd.name.clone(),
@@ -190,18 +187,10 @@ fn render_aside(snap: AsideSnapshot, cx: &App) -> AnyElement {
         col = col.child(Label::new(d).size(LabelSize::Small));
     }
     if let Some(h) = snap.arg_hint {
-        col = col.child(
-            Label::new(h)
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        );
+        col = col.child(Label::new(h).size(LabelSize::Small).color(Color::Muted));
     }
     if let Some(p) = snap.enter_preview {
-        col = col.child(
-            Label::new(p)
-                .size(LabelSize::Small)
-                .color(Color::Accent),
-        );
+        col = col.child(Label::new(p).size(LabelSize::Small).color(Color::Accent));
     }
     col.into_any_element()
 }
@@ -352,7 +341,7 @@ impl PickerDelegate for CodonPaletteDelegate {
                         self.mode = Mode::Command;
                         self.selected_ix = 0;
                         self.arg_items.clear();
-                self.arg_error = None;
+                        self.arg_error = None;
                         self.spawn_command_match(query, cx)
                     }
                 }
@@ -360,12 +349,7 @@ impl PickerDelegate for CodonPaletteDelegate {
         }
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let action: Box<dyn Action> = match &self.mode {
             Mode::Command => {
                 let Some(m) = self.matches.get(self.selected_ix) else {
@@ -449,12 +433,10 @@ impl PickerDelegate for CodonPaletteDelegate {
                 let chord_chip: gpui::AnyElement = {
                     let chord = codon_keymap::chord_for_action(cx, cmd.action.name(), &[]);
                     if chord.as_ref() == codon_keymap::UNBOUND_CHORD_PLACEHOLDER {
-                        Label::new(SharedString::from(
-                            codon_keymap::UNBOUND_CHORD_PLACEHOLDER,
-                        ))
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .into_any_element()
+                        Label::new(SharedString::from(codon_keymap::UNBOUND_CHORD_PLACEHOLDER))
+                            .color(Color::Muted)
+                            .size(LabelSize::Small)
+                            .into_any_element()
                     } else {
                         KeyBinding::for_action_in(
                             cmd.action.as_ref(),
@@ -474,10 +456,7 @@ impl PickerDelegate for CodonPaletteDelegate {
                                 .w_full()
                                 .py_px()
                                 .justify_between()
-                                .child(HighlightedLabel::new(
-                                    cmd.name.clone(),
-                                    m.positions.clone(),
-                                ))
+                                .child(HighlightedLabel::new(cmd.name.clone(), m.positions.clone()))
                                 .child(chord_chip),
                         ),
                 )
@@ -511,9 +490,17 @@ impl PickerDelegate for CodonPaletteDelegate {
                 // Single-row layout: leading folder/file icon, then label
                 // tinted by kind. Drops the previous second-line detail so
                 // every entry is the same height — file-manager-style.
-                let icon = if is_nav { IconName::Folder } else { IconName::File };
+                let icon = if is_nav {
+                    IconName::Folder
+                } else {
+                    IconName::File
+                };
                 let icon_color = if is_nav { Color::Accent } else { Color::Muted };
-                let label_color = if is_nav { Color::Accent } else { Color::Default };
+                let label_color = if is_nav {
+                    Color::Accent
+                } else {
+                    Color::Default
+                };
                 Some(
                     ListItem::new(ix)
                         .inset(true)
@@ -541,16 +528,10 @@ impl PickerDelegate for CodonPaletteDelegate {
 
 impl CodonPaletteDelegate {
     fn emit_dismiss(&self, cx: &mut Context<Picker<Self>>) {
-        self.palette
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .ok();
+        self.palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
-    fn spawn_command_match(
-        &mut self,
-        query: String,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Task<()> {
+    fn spawn_command_match(&mut self, query: String, cx: &mut Context<Picker<Self>>) -> Task<()> {
         let candidates: Vec<StringMatchCandidate> = self
             .all_commands
             .iter()
@@ -676,7 +657,10 @@ mod tests {
     #[test]
     fn strip_alias_prefix_handles_aliases() {
         let aliases: &[&'static str] = &["open", "e"];
-        assert_eq!(strip_alias_prefix("open foo", aliases).as_deref(), Some("foo"));
+        assert_eq!(
+            strip_alias_prefix("open foo", aliases).as_deref(),
+            Some("foo")
+        );
         assert_eq!(strip_alias_prefix("e bar", aliases).as_deref(), Some("bar"));
         assert_eq!(strip_alias_prefix("openfoo", aliases), None);
         assert_eq!(strip_alias_prefix("other", aliases), None);

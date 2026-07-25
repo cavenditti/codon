@@ -4,13 +4,13 @@ use std::{
     sync::Arc,
 };
 
+use crate::scaffold::{ModalModeTag, ModalScaffold};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, Styled, Subscription, Task,
     WeakEntity, Window, actions, div,
 };
-use crate::scaffold::{ModalModeTag, ModalScaffold};
 use picker::{Picker, PickerDelegate};
 use ui::{
     Color, FluentBuilder as _, HighlightedLabel, Icon, IconName, Label, LabelCommon, LabelSize,
@@ -29,11 +29,7 @@ actions!(
 /// Register default keybindings for the dir picker. Idempotent — safe
 /// to call multiple times because `cx.bind_keys` appends to a registry.
 pub(crate) fn register_default_keybindings(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new(
-        "space",
-        ToggleMark,
-        Some("DirPickerMulti"),
-    )]);
+    cx.bind_keys([KeyBinding::new("space", ToggleMark, Some("DirPickerMulti"))]);
 }
 
 /// Event emitted when the user confirms the current directory
@@ -255,16 +251,9 @@ impl PickerDelegate for DirPickerDelegate {
         let cancel = std::sync::atomic::AtomicBool::new(false);
 
         cx.spawn(async move |this, cx| {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                true,
-                100,
-                &cancel,
-                executor,
-            )
-            .await;
+            let matches =
+                fuzzy::match_strings(&candidates, &query, false, true, 100, &cancel, executor)
+                    .await;
             this.update(cx, |picker, cx| {
                 picker.delegate.matches = matches;
                 if picker.delegate.selected_index >= picker.delegate.matches.len() {
@@ -439,10 +428,13 @@ impl DirPickerModal {
             },
         );
 
-        let on_dismiss =
-            cx.subscribe_in(&picker, window, |this, _, _: &PickerDismissed, window, cx| {
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
                 this.dismiss(window, cx);
-            });
+            },
+        );
 
         Self {
             scaffold,
@@ -483,10 +475,13 @@ impl DirPickerModal {
             },
         );
 
-        let on_dismiss =
-            cx.subscribe_in(&picker, window, |this, _, _: &PickerDismissed, window, cx| {
+        let on_dismiss = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &PickerDismissed, window, cx| {
                 this.dismiss(window, cx);
-            });
+            },
+        );
 
         Self {
             scaffold,
@@ -504,12 +499,7 @@ impl DirPickerModal {
         self.picker.read(cx).delegate.current_dir.clone()
     }
 
-    fn handle_toggle_mark(
-        &mut self,
-        _: &ToggleMark,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_toggle_mark(&mut self, _: &ToggleMark, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.multi {
             return;
         }
@@ -551,10 +541,8 @@ mod tests {
         // For a path with a parent we expect `.` then `..` as the first
         // two header rows. Real children may or may not be present (the
         // path is fabricated and read_dir fails silently).
-        let candidates = build_candidates(
-            Path::new("/codon-tests/synthetic/does/not/exist"),
-            false,
-        );
+        let candidates =
+            build_candidates(Path::new("/codon-tests/synthetic/does/not/exist"), false);
         assert!(candidates.len() >= 2);
         assert_eq!(candidates[0].kind, CandidateKind::SelfDir);
         assert_eq!(candidates[1].kind, CandidateKind::ParentDir);
@@ -580,7 +568,10 @@ mod tests {
     fn toggle_mark_at_selected_is_noop_in_single_select_mode() {
         let mut d = delegate_at_unreadable(false);
         d.toggle_mark_at_selected();
-        assert!(d.marked.is_empty(), "single-select must never accumulate marks");
+        assert!(
+            d.marked.is_empty(),
+            "single-select must never accumulate marks"
+        );
     }
 
     #[test]

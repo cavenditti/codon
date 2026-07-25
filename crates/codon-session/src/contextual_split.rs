@@ -70,16 +70,40 @@ pub fn register_for_workspace(workspace: &mut Workspace) {
         split_with_file_manager(workspace, SplitDirection::Down, window, cx);
     });
     workspace.register_action(|workspace, _: &SplitRight, window, cx| {
-        contextual_split(workspace, SplitDirection::Right, /*flip=*/ false, window, cx);
+        contextual_split(
+            workspace,
+            SplitDirection::Right,
+            /*flip=*/ false,
+            window,
+            cx,
+        );
     });
     workspace.register_action(|workspace, _: &SplitDown, window, cx| {
-        contextual_split(workspace, SplitDirection::Down, /*flip=*/ false, window, cx);
+        contextual_split(
+            workspace,
+            SplitDirection::Down,
+            /*flip=*/ false,
+            window,
+            cx,
+        );
     });
     workspace.register_action(|workspace, _: &SplitRightOther, window, cx| {
-        contextual_split(workspace, SplitDirection::Right, /*flip=*/ true, window, cx);
+        contextual_split(
+            workspace,
+            SplitDirection::Right,
+            /*flip=*/ true,
+            window,
+            cx,
+        );
     });
     workspace.register_action(|workspace, _: &SplitDownOther, window, cx| {
-        contextual_split(workspace, SplitDirection::Down, /*flip=*/ true, window, cx);
+        contextual_split(
+            workspace,
+            SplitDirection::Down,
+            /*flip=*/ true,
+            window,
+            cx,
+        );
     });
 }
 

@@ -159,9 +159,7 @@ mod tests {
         init(cx);
 
         let host = cx.new(|_| TestHost);
-        let scaffold = host.update(cx, |_, cx| {
-            ModalScaffold::new(cx, ModalModeTag::Inert)
-        });
+        let scaffold = host.update(cx, |_, cx| ModalScaffold::new(cx, ModalModeTag::Inert));
 
         cx.update(|cx| {
             // Pre-seed the flag to a non-default value so we can

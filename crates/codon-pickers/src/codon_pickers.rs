@@ -8,9 +8,7 @@ pub mod open_rewire;
 pub mod scaffold;
 
 pub use changed_files::ChangedFilesPicker;
-pub use dir_picker::{
-    DirPickerDelegate, DirPickerModal, DirSelected, FilesSelected, ToggleMark,
-};
+pub use dir_picker::{DirPickerDelegate, DirPickerModal, DirSelected, FilesSelected, ToggleMark};
 pub use jumplist::JumplistPicker;
 pub use last_picker::{LastPicker, record_dismissed, take_query_for};
 pub use scaffold::{ModalModeTag, ModalScaffold};

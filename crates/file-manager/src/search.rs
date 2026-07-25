@@ -1,7 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
@@ -157,12 +157,7 @@ impl PickerDelegate for NameSearchDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(matched) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -292,9 +287,7 @@ fn spawn_name_producer(
     let has_fd = which("fd").is_some() || which("fdfind").is_some();
     if has_fd {
         cx.spawn_in(window, async move |_modal, cx| {
-            let batches = cx
-                .background_spawn(async move { run_fd(&root) })
-                .await;
+            let batches = cx.background_spawn(async move { run_fd(&root) }).await;
             for batch in batches {
                 weak_picker
                     .update_in(cx, |picker, window, cx| {
@@ -305,9 +298,7 @@ fn spawn_name_producer(
         })
     } else {
         cx.spawn_in(window, async move |_modal, cx| {
-            let (batch, _truncated) = cx
-                .background_spawn(async move { run_walkdir(&root) })
-                .await;
+            let (batch, _truncated) = cx.background_spawn(async move { run_walkdir(&root) }).await;
             weak_picker
                 .update_in(cx, |picker, window, cx| {
                     picker.delegate.append_batch(batch, window, cx);
@@ -322,7 +313,11 @@ fn spawn_name_producer(
 /// because the picker can't accept events from a background task without
 /// holding the main `Context`; chunked batches strike a workable middle.
 fn run_fd(root: &Path) -> Vec<Vec<NameMatch>> {
-    let bin = if which("fd").is_some() { "fd" } else { "fdfind" };
+    let bin = if which("fd").is_some() {
+        "fd"
+    } else {
+        "fdfind"
+    };
     let output = std::process::Command::new(bin)
         .args(["--type", "f", "--type", "d", "--hidden", "--no-ignore"])
         .arg(".")
@@ -589,12 +584,7 @@ impl PickerDelegate for ContentSearchDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(matched) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -1008,12 +998,7 @@ impl PickerDelegate for ZoxideDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(matched) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -1079,7 +1064,10 @@ impl ZoxideModal {
             .into_iter()
             .map(|p| {
                 let display = p.display().to_string();
-                ZoxideEntry { abs_path: p, display }
+                ZoxideEntry {
+                    abs_path: p,
+                    display,
+                }
             })
             .collect::<Vec<_>>();
         let delegate = ZoxideDelegate::new(entries);

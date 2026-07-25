@@ -65,10 +65,7 @@ pub fn apply_user_config(cx: &mut App) {
     match std::fs::read_to_string(&path) {
         Ok(content) => match apply_from_str(&content, cx) {
             Ok(()) => log::debug!("codon-config: loaded {}", path.display()),
-            Err(err) => log::warn!(
-                "codon-config: failed to apply {}: {err:#}",
-                path.display()
-            ),
+            Err(err) => log::warn!("codon-config: failed to apply {}: {err:#}", path.display()),
         },
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             log::debug!(
@@ -77,10 +74,7 @@ pub fn apply_user_config(cx: &mut App) {
             );
         }
         Err(err) => {
-            log::warn!(
-                "codon-config: could not read {}: {err}",
-                path.display()
-            );
+            log::warn!("codon-config: could not read {}: {err}", path.display());
         }
     }
 }
@@ -89,9 +83,7 @@ pub fn apply_user_config(cx: &mut App) {
 /// for the migration step (which writes a fresh document and then re-applies
 /// it without round-tripping through disk).
 pub fn apply_from_str(content: &str, cx: &mut App) -> Result<()> {
-    let toml_doc: toml::Value = content
-        .parse()
-        .context("parsing codon.toml as TOML")?;
+    let toml_doc: toml::Value = content.parse().context("parsing codon.toml as TOML")?;
 
     if let Some(settings_table) = toml_doc.get("settings") {
         let json_value = toml_to_json::translate(settings_table);
@@ -188,9 +180,7 @@ fn apply_window_chrome(toml_doc: &toml::Value, cx: &mut App) {
 /// The raw `[bindings]` sub-tree as a `toml::Value`. Codon-keymap consumes
 /// this via [`load_bindings`] once the merge-keymap task wires the path.
 pub fn bindings_toml(content: &str) -> Result<Option<toml::Value>> {
-    let toml_doc: toml::Value = content
-        .parse()
-        .context("parsing codon.toml as TOML")?;
+    let toml_doc: toml::Value = content.parse().context("parsing codon.toml as TOML")?;
     Ok(toml_doc.get("bindings").cloned())
 }
 

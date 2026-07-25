@@ -1,6 +1,4 @@
-use gpui::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
-};
+use gpui::{AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled, Window};
 use ui::{Color, Label, LabelCommon, LabelSize, h_flex};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
@@ -26,11 +24,9 @@ impl Render for SessionStatusItem {
             .active()
             .map(|s| format!("⌘ {}", s.name))
             .unwrap_or_else(|| "⌘ —".to_string());
-        h_flex().gap_1().child(
-            Label::new(label)
-                .color(Color::Muted)
-                .size(LabelSize::Small),
-        )
+        h_flex()
+            .gap_1()
+            .child(Label::new(label).color(Color::Muted).size(LabelSize::Small))
     }
 }
 

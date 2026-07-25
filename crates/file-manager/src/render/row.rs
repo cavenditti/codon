@@ -28,8 +28,8 @@ use std::sync::Arc;
 
 use gpui::{
     App, Bounds, Element, ElementId, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine, SharedString,
-    Style, TextAlign, TextRun, Window, fill, point, px, size,
+    InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine, SharedString, Style,
+    TextAlign, TextRun, Window, fill, point, px, size,
 };
 
 use crate::file_manager::DirEntry;
@@ -250,13 +250,7 @@ impl Element for FmRowElement {
         let name_line = if name_text.is_empty() {
             None
         } else {
-            Some(cache.get_or_shape(
-                &name_text,
-                font_id,
-                font_size,
-                &text_system,
-                &name_run,
-            ))
+            Some(cache.get_or_shape(&name_text, font_id, font_size, &text_system, &name_run))
         };
 
         let meta_line = self.meta_text.as_ref().map(|text| {
@@ -326,16 +320,14 @@ impl Element for FmRowElement {
                 self.theme.text_muted,
                 cx,
             ) {
-                log::debug!(
-                    "fm row: paint_svg for {:?} failed: {err}",
-                    self.entry.path
-                );
+                log::debug!("fm row: paint_svg for {:?} failed: {err}", self.entry.path);
             }
         }
         pen_x += icon_size + self.metrics.gap;
 
         // 6. Name glyph run.
-        let text_baseline_y = bounds.origin.y + (self.metrics.row_height - self.metrics.font_size) / 2.0;
+        let text_baseline_y =
+            bounds.origin.y + (self.metrics.row_height - self.metrics.font_size) / 2.0;
         if let Some(name_line) = prepaint.name_line.take() {
             // `ShapedLine::paint` expects to take ownership of the
             // line's internal state for painting. We hold an `Arc<_>`
@@ -356,8 +348,9 @@ impl Element for FmRowElement {
 
         // 7. Meta glyph run, right-aligned in its reserved column.
         if let Some(meta_line) = prepaint.meta_line.take() {
-            let meta_x =
-                bounds.origin.x + bounds.size.width - self.metrics.right_pad - self.metrics.meta_width;
+            let meta_x = bounds.origin.x + bounds.size.width
+                - self.metrics.right_pad
+                - self.metrics.meta_width;
             let line: ShapedLine = (*meta_line).clone();
             if let Err(err) = line.paint(
                 Point::new(meta_x, text_baseline_y),

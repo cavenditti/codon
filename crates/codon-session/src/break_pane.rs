@@ -40,10 +40,9 @@ fn has_active_pane(snap: &LayoutSnapshot) -> bool {
     match snap {
         LayoutSnapshot::Pane(p) => p.active,
         LayoutSnapshot::Group { children, .. } => children.iter().any(has_active_pane),
-        LayoutSnapshot::Stack { members, active, .. } => members
-            .get(*active)
-            .map(has_active_pane)
-            .unwrap_or(false),
+        LayoutSnapshot::Stack {
+            members, active, ..
+        } => members.get(*active).map(has_active_pane).unwrap_or(false),
     }
 }
 
@@ -141,9 +140,7 @@ fn collapse_in_place(snap: &mut LayoutSnapshot) {
 /// `broken` is always a `LayoutSnapshot::Pane` with `active = true`.
 /// `remaining` matches the input shape with the broken pane removed
 /// and degenerate containers collapsed.
-pub fn split_off_active(
-    snapshot: LayoutSnapshot,
-) -> Option<(LayoutSnapshot, LayoutSnapshot)> {
+pub fn split_off_active(snapshot: LayoutSnapshot) -> Option<(LayoutSnapshot, LayoutSnapshot)> {
     if count_panes(&snapshot) <= 1 {
         return None;
     }
@@ -290,7 +287,11 @@ mod tests {
     /// before applying them to the visible workspace.
     #[test]
     fn move_pane_end_to_end_grafts_onto_target() {
-        let source = group(vec![pane("src-a", false), pane("src-b", true), pane("src-c", false)]);
+        let source = group(vec![
+            pane("src-a", false),
+            pane("src-b", true),
+            pane("src-c", false),
+        ]);
         let target = group(vec![pane("tgt-a", true), pane("tgt-b", false)]);
 
         let (source_remaining, broken) = split_off_active(source).expect("multi-pane source");
@@ -325,7 +326,11 @@ mod tests {
         assert!(moved.active);
         assert_eq!(moved.items[0].kind, "src-b");
 
-        let LayoutSnapshot::Group { children: tgt_inner, .. } = &children[0] else {
+        let LayoutSnapshot::Group {
+            children: tgt_inner,
+            ..
+        } = &children[0]
+        else {
             panic!("expected original target group on left");
         };
         for child in tgt_inner {
@@ -387,7 +392,10 @@ mod tests {
                 assert_eq!(children.len(), 2);
                 // Every pane in the existing subtree must have active=false
                 // — only the moved-in pane on the right keeps focus.
-                let LayoutSnapshot::Group { children: inner, .. } = &children[0] else {
+                let LayoutSnapshot::Group {
+                    children: inner, ..
+                } = &children[0]
+                else {
                     panic!("expected inner group");
                 };
                 for child in inner {

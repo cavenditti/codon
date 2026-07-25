@@ -127,10 +127,18 @@ pub fn register_builtins() {
 struct FilePathCompleter;
 
 impl Completer for FilePathCompleter {
-    fn id(&self) -> &'static str { "file_path" }
-    fn aliases(&self) -> &'static [&'static str] { &["open", "edit", "e"] }
-    fn action_name(&self) -> &'static str { "codon_command_palette::OpenFile" }
-    fn placeholder(&self) -> &'static str { "file path" }
+    fn id(&self) -> &'static str {
+        "file_path"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["open", "edit", "e"]
+    }
+    fn action_name(&self) -> &'static str {
+        "codon_command_palette::OpenFile"
+    }
+    fn placeholder(&self) -> &'static str {
+        "file path"
+    }
 
     /// Breadth-first navigation: parse the query as `<dir>/<partial>`,
     /// list only the entries of `<dir>` (relative to the first visible
@@ -174,7 +182,11 @@ impl Completer for FilePathCompleter {
                     format!("{}/{}", subdir, name)
                 };
                 if is_dir {
-                    let nav = if rel.ends_with('/') { rel.clone() } else { format!("{rel}/") };
+                    let nav = if rel.ends_with('/') {
+                        rel.clone()
+                    } else {
+                        format!("{rel}/")
+                    };
                     dirs.push(CompletionItem {
                         value: abs.to_string_lossy().to_string(),
                         label: SharedString::from(format!("{name}/")),
@@ -217,10 +229,18 @@ fn split_dir_and_partial(query: &str) -> (String, String) {
 struct ThemeCompleter;
 
 impl Completer for ThemeCompleter {
-    fn id(&self) -> &'static str { "theme" }
-    fn aliases(&self) -> &'static [&'static str] { &["theme", "colorscheme", "colo"] }
-    fn action_name(&self) -> &'static str { "theme_selector::Toggle" }
-    fn placeholder(&self) -> &'static str { "theme name" }
+    fn id(&self) -> &'static str {
+        "theme"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["theme", "colorscheme", "colo"]
+    }
+    fn action_name(&self) -> &'static str {
+        "theme_selector::Toggle"
+    }
+    fn placeholder(&self) -> &'static str {
+        "theme name"
+    }
 
     fn complete(
         &self,
@@ -255,10 +275,18 @@ impl Completer for ThemeCompleter {
 struct LineNumberCompleter;
 
 impl Completer for LineNumberCompleter {
-    fn id(&self) -> &'static str { "line_number" }
-    fn aliases(&self) -> &'static [&'static str] { &["goto", "line"] }
-    fn action_name(&self) -> &'static str { "editor::ToggleGoToLine" }
-    fn placeholder(&self) -> &'static str { "line number" }
+    fn id(&self) -> &'static str {
+        "line_number"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["goto", "line"]
+    }
+    fn action_name(&self) -> &'static str {
+        "editor::ToggleGoToLine"
+    }
+    fn placeholder(&self) -> &'static str {
+        "line number"
+    }
 
     fn complete(
         &self,
@@ -300,10 +328,18 @@ impl Completer for LineNumberCompleter {
 struct SearchCompleter;
 
 impl Completer for SearchCompleter {
-    fn id(&self) -> &'static str { "search" }
-    fn aliases(&self) -> &'static [&'static str] { &["search", "rg", "grep"] }
-    fn action_name(&self) -> &'static str { "workspace::NewSearch" }
-    fn placeholder(&self) -> &'static str { "search query" }
+    fn id(&self) -> &'static str {
+        "search"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["search", "rg", "grep"]
+    }
+    fn action_name(&self) -> &'static str {
+        "workspace::NewSearch"
+    }
+    fn placeholder(&self) -> &'static str {
+        "search query"
+    }
 
     fn complete(
         &self,
@@ -323,9 +359,7 @@ impl Completer for SearchCompleter {
             vec![CompletionItem {
                 value: q.to_string(),
                 label: SharedString::from(q.to_string()),
-                detail: Some(SharedString::from(
-                    "Press Enter to open project search",
-                )),
+                detail: Some(SharedString::from("Press Enter to open project search")),
                 navigates_to: None,
             }]
         };
@@ -344,10 +378,18 @@ mod tests {
 
     struct StubCompleter;
     impl Completer for StubCompleter {
-        fn id(&self) -> &'static str { "stub" }
-        fn aliases(&self) -> &'static [&'static str] { &["stub", "s"] }
-        fn action_name(&self) -> &'static str { "stub::Run" }
-        fn placeholder(&self) -> &'static str { "stub" }
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+        fn aliases(&self) -> &'static [&'static str] {
+            &["stub", "s"]
+        }
+        fn action_name(&self) -> &'static str {
+            "stub::Run"
+        }
+        fn placeholder(&self) -> &'static str {
+            "stub"
+        }
         fn complete(
             &self,
             _q: &str,

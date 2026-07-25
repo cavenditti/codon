@@ -9,7 +9,7 @@
 //! and adapter-hosted tabs share the same singleton entity.
 
 use agent_ui::AgentPanel;
-use gpui::{AppContext as _, Context, Entity, Focusable as _, Window, WeakEntity};
+use gpui::{AppContext as _, Context, Entity, Focusable as _, WeakEntity, Window};
 use workspace::Workspace;
 
 use crate::actions::{OpenAgent, PeekAgent};

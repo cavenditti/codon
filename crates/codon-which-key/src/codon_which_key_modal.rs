@@ -26,9 +26,7 @@ use gpui::{
     Pixels, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
-use ui::{
-    Divider, DividerColor, DynamicSpacing, WithScrollbar, prelude::*, text_for_keystrokes,
-};
+use ui::{Divider, DividerColor, DynamicSpacing, WithScrollbar, prelude::*, text_for_keystrokes};
 use workspace::{ModalView, Workspace};
 
 use crate::FILTERED_KEYSTROKES;
@@ -229,15 +227,13 @@ impl Render for CodonWhichKeyModal {
                     .color(Color::Accent),
             );
 
-        let title_wrapper = v_flex()
-            .child(title_section)
-            .when(has_rows, |el| {
-                el.child(
-                    div()
-                        .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                        .mb(px(2.)),
-                )
-            });
+        let title_wrapper = v_flex().child(title_section).when(has_rows, |el| {
+            el.child(
+                div()
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    .mb(px(2.)),
+            )
+        });
 
         let column_views = (0..columns.max(1)).map(|column_index| {
             let start = column_index * rows_per_column;
@@ -260,16 +256,14 @@ impl Render for CodonWhichKeyModal {
             .max_h(clamped_height)
             .children(column_views);
 
-        let panel_body = v_flex()
-            .child(title_wrapper)
-            .when(has_rows, |el| {
-                el.child(
-                    div()
-                        .max_h(clamped_height)
-                        .child(content)
-                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
-                )
-            });
+        let panel_body = v_flex().child(title_wrapper).when(has_rows, |el| {
+            el.child(
+                div()
+                    .max_h(clamped_height)
+                    .child(content)
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+            )
+        });
 
         let panel = div()
             .id("codon-which-key-panel")
@@ -344,7 +338,11 @@ fn render_column(rows: Vec<BindingRow>) -> gpui::AnyElement {
 /// Single column when `pane_width` is below `min_column_width` or the
 /// binding list is empty. Otherwise `floor(pane_width / min_column_width)`,
 /// capped at `binding_count` (no empty columns).
-pub fn compute_columns(pane_width: Pixels, min_column_width: Pixels, binding_count: usize) -> usize {
+pub fn compute_columns(
+    pane_width: Pixels,
+    min_column_width: Pixels,
+    binding_count: usize,
+) -> usize {
     if binding_count == 0 {
         return 1;
     }

@@ -1,12 +1,9 @@
 use gpui::{
     Context, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
-    div, hsla, px,
+    ParentElement, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    hsla, px,
 };
-use ui::{
-    ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon, LabelSize,
-    h_flex,
-};
+use ui::{ActiveTheme as _, Color, FluentBuilder as _, Label, LabelCommon, LabelSize, h_flex};
 use workspace::{
     ItemHandle, StatusItemView, Workspace, codon_bridge::PaneSnapshot,
     notifications::NotifyTaskExt as _,
@@ -335,7 +332,10 @@ pub(crate) fn switch_to_window(
 
     session.set_active_window(target_idx);
     let incoming_window_id = session.windows.get(target_idx).map(|w| w.id);
-    let incoming_layout = session.windows.get(target_idx).and_then(|w| w.layout.clone());
+    let incoming_layout = session
+        .windows
+        .get(target_idx)
+        .and_then(|w| w.layout.clone());
     if let Err(err) = registry.upsert(session) {
         log::warn!("could not save window switch: {err:?}");
     }
@@ -411,7 +411,8 @@ pub(crate) fn preview_switch_to_window(
             if let Err(err) = apply_task.await {
                 log::warn!("preview swap failed: {err:?}");
             }
-            cx.update(|window, cx| window.focus(&restore_focus, cx)).ok();
+            cx.update(|window, cx| window.focus(&restore_focus, cx))
+                .ok();
         })
         .detach();
     } else {

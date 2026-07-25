@@ -88,10 +88,23 @@ impl FmTaskKind {
 /// notification on screen.
 #[derive(Clone, Debug)]
 pub enum FmTaskState {
-    Running { processed: usize, total: usize },
-    Done { processed: usize, total: usize },
-    Failed { processed: usize, total: usize, errors: Vec<String> },
-    Cancelled { processed: usize, total: usize },
+    Running {
+        processed: usize,
+        total: usize,
+    },
+    Done {
+        processed: usize,
+        total: usize,
+    },
+    Failed {
+        processed: usize,
+        total: usize,
+        errors: Vec<String>,
+    },
+    Cancelled {
+        processed: usize,
+        total: usize,
+    },
 }
 
 impl FmTaskState {
@@ -167,9 +180,18 @@ impl FmTask {
                 format!("{} {} of {} …", self.kind.verb_running(), processed, total)
             }
             FmTaskState::Done { processed, .. } => {
-                format!("{} {} entr{}", self.kind.verb_done(), processed, plural_y(*processed))
+                format!(
+                    "{} {} entr{}",
+                    self.kind.verb_done(),
+                    processed,
+                    plural_y(*processed)
+                )
             }
-            FmTaskState::Failed { processed, total, errors } => {
+            FmTaskState::Failed {
+                processed,
+                total,
+                errors,
+            } => {
                 let first = errors.first().map(String::as_str).unwrap_or("see log");
                 format!(
                     "{} {} of {} — {} failed ({})",
@@ -293,7 +315,10 @@ pub fn begin(
         id,
         kind,
         label,
-        state: FmTaskState::Running { processed: 0, total },
+        state: FmTaskState::Running {
+            processed: 0,
+            total,
+        },
         cancel: cancel.clone(),
         started_at: Instant::now(),
         completed_at: None,
@@ -352,7 +377,11 @@ pub fn finish(
         task.completed_at = Some(Instant::now());
         task.state = match outcome {
             FmTaskOutcome::Done => FmTaskState::Done { processed, total },
-            FmTaskOutcome::Failed { errors } => FmTaskState::Failed { processed, total, errors },
+            FmTaskOutcome::Failed { errors } => FmTaskState::Failed {
+                processed,
+                total,
+                errors,
+            },
             FmTaskOutcome::Cancelled => FmTaskState::Cancelled { processed, total },
         };
     });
@@ -411,7 +440,10 @@ mod tests {
 
     #[test]
     fn running_summary_mentions_running_verb_and_counts() {
-        let task = sample_task(FmTaskState::Running { processed: 4, total: 12 });
+        let task = sample_task(FmTaskState::Running {
+            processed: 4,
+            total: 12,
+        });
         let s = task.summary();
         assert!(s.contains("Trashing"), "{s}");
         assert!(s.contains("4 of 12"), "{s}");
@@ -419,7 +451,10 @@ mod tests {
 
     #[test]
     fn cancelled_summary_names_skipped_count() {
-        let task = sample_task(FmTaskState::Cancelled { processed: 7, total: 12 });
+        let task = sample_task(FmTaskState::Cancelled {
+            processed: 7,
+            total: 12,
+        });
         let s = task.summary();
         assert!(s.contains("cancelled"), "{s}");
         assert!(s.contains("7 of 12"), "{s}");
@@ -428,7 +463,10 @@ mod tests {
 
     #[test]
     fn done_summary_uses_past_tense_verb() {
-        let task = sample_task(FmTaskState::Done { processed: 12, total: 12 });
+        let task = sample_task(FmTaskState::Done {
+            processed: 12,
+            total: 12,
+        });
         assert!(task.summary().starts_with("Trashed"), "{}", task.summary());
     }
 
@@ -452,7 +490,10 @@ mod tests {
                 id: i,
                 kind: FmTaskKind::Paste,
                 label: SharedString::from(format!("task {i}")),
-                state: FmTaskState::Done { processed: 1, total: 1 },
+                state: FmTaskState::Done {
+                    processed: 1,
+                    total: 1,
+                },
                 cancel: Arc::new(AtomicBool::new(false)),
                 started_at: Instant::now(),
                 completed_at: Some(Instant::now()),
@@ -472,7 +513,10 @@ mod tests {
             id: 1,
             kind: FmTaskKind::Delete,
             label: SharedString::from("Trashing 3 entries"),
-            state: FmTaskState::Running { processed: 0, total: 3 },
+            state: FmTaskState::Running {
+                processed: 0,
+                total: 3,
+            },
             cancel: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             completed_at: None,
@@ -487,7 +531,10 @@ mod tests {
             .expect("task exists");
         assert!(matches!(
             updated.state,
-            FmTaskState::Running { processed: 2, total: 3 }
+            FmTaskState::Running {
+                processed: 2,
+                total: 3
+            }
         ));
     }
 

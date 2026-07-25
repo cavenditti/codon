@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use editor::Editor;
 use fs::RenameOptions;
-use gpui::{prelude::*, App, Context, WeakEntity, Window};
+use gpui::{App, Context, WeakEntity, Window, prelude::*};
 use multi_buffer::MultiBuffer;
 use workspace::Workspace;
 
@@ -48,9 +48,8 @@ pub(crate) fn open_bulk_rename_editor(
             project.create_local_buffer(&seed, None, false, cx)
         });
         let editor = cx.new(|cx| {
-            let multibuffer = cx.new(|cx| {
-                MultiBuffer::singleton(buffer.clone(), cx).with_title(title.clone())
-            });
+            let multibuffer =
+                cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx).with_title(title.clone()));
             Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
 
@@ -207,10 +206,7 @@ fn apply_bulk_rename(
         fm_for_spawn
             .update(cx, |fm, cx| {
                 let applied_count = applied.len();
-                fm.surface_error(
-                    format!("Bulk rename: applied {applied_count} entries"),
-                    cx,
-                );
+                fm.surface_error(format!("Bulk rename: applied {applied_count} entries"), cx);
                 fm.reload_entries_after_bulk_rename(cx);
             })
             .ok();

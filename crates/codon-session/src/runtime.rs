@@ -87,17 +87,13 @@ impl WindowRuntimeCache {
             return false;
         };
         let Some(target) = session.windows.iter_mut().find(|w| w.id == window_id) else {
-            log::warn!(
-                "evict_and_persist: window {window_id:?} missing from session {session_id}"
-            );
+            log::warn!("evict_and_persist: window {window_id:?} missing from session {session_id}");
             return false;
         };
         target.layout = Some(snapshot);
         target.layout_stale = false;
         if let Err(err) = registry.upsert(session) {
-            log::warn!(
-                "evict_and_persist: failed to upsert session after materialise: {err:?}"
-            );
+            log::warn!("evict_and_persist: failed to upsert session after materialise: {err:?}");
             return false;
         }
         true
