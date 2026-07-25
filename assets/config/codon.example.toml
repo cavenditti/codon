@@ -334,6 +334,11 @@ format_on_save = "on"
 # "prefix d"       = "codon_panes::OpenDebug"     # debug panel as pane
 # "prefix shift-d" = "codon_panes::PeekDebug"     # debug panel bottom peek
 
+# OS-window maximize — codon draws no titlebar (no traffic lights), so
+# `zed::Zoom` is the keyboard verb for AppKit zoom (fill screen /
+# restore). Native fullscreen stays on Zed's stock `ctrl-cmd-f`.
+"prefix enter" = "zed::Zoom"
+
 # Help / cheatsheet — full-screen list of every active binding.
 "prefix f1" = "codon_keymap::ShowKeymap"
 

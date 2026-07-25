@@ -388,6 +388,15 @@ const DEFAULT_KEYMAP: &str = r#"
 # Silent no-op outside terminals. See `passthrough.rs`.
 "prefix prefix" = "codon_keymap::SendPrefixToFocus"
 
+# OS-window maximize. Codon windows draw no titlebar, so there is no
+# green traffic-light button — `zed::Zoom` is the keyboard verb for
+# AppKit's zoom (fill the current screen / restore the previous
+# bounds). Native fullscreen stays on Zed's stock `ctrl-cmd-f`
+# (`zed::ToggleFullScreen`). `enter` mirrors the Rectangle/Magnet
+# maximize convention; `prefix m` is reserved for the memory picker
+# (TASK:phase-22/memory-picker).
+"prefix enter" = "zed::Zoom"
+
 # Help / cheatsheet
 "prefix f1" = "codon_keymap::ShowKeymap"
 
