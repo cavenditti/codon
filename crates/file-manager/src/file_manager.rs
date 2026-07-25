@@ -331,6 +331,10 @@ pub struct FileManager {
     pub(crate) reverse: bool,
     pub(crate) line_mode: crate::prefs::LineMode,
     pub(crate) show_gitignored: bool,
+    /// Whether the custom FM render pipeline is active. Loaded once
+    /// with the rest of the FM preferences; render must never reread
+    /// and parse the preferences file on the UI thread.
+    pub(crate) custom_render: bool,
     pub(crate) preview_fraction: f32,
     pub(crate) last_find_pattern: Option<String>,
     pub(crate) shell_running: Option<ShellRunState>,
@@ -556,6 +560,7 @@ impl FileManager {
             reverse: prefs.reverse,
             line_mode: prefs.line_mode,
             show_gitignored: prefs.show_gitignored,
+            custom_render: prefs.custom_render,
             preview_fraction: crate::prefs::clamp_fraction(prefs.preview_fraction),
             last_find_pattern: None,
             shell_running: None,
@@ -1239,15 +1244,10 @@ impl FileManager {
 
     fn navigate_down(&mut self, _: &NavigateDown, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.entries.is_empty() {
-            let prev = self.selected_index;
             self.selected_index = cmp::min(self.selected_index + 1, self.entries.len() - 1);
-            // Tell the custom-render column that only these two
-            // rows changed visually — composes with the row-glyph
-            // cache (REQ:codon/fm-render#c-dirty-rect-repaint).
-            crate::render::column::FmColumnElement::mark_rows_dirty(
-                &self.custom_dirty_current,
-                &[prev, self.selected_index],
-            );
+            // Selection, focus and mark state are part of RowGlyphKey.
+            // Let the cache select the exact old/new variants instead
+            // of forcibly rebuilding both rows on every keypress.
             self.scroll_handle
                 .scroll_to_item(self.selected_index, ScrollStrategy::Bottom);
             self.refresh_visual_marks();
@@ -1258,12 +1258,9 @@ impl FileManager {
     }
 
     fn navigate_up(&mut self, _: &NavigateUp, _window: &mut Window, cx: &mut Context<Self>) {
-        let prev = self.selected_index;
         self.selected_index = self.selected_index.saturating_sub(1);
-        crate::render::column::FmColumnElement::mark_rows_dirty(
-            &self.custom_dirty_current,
-            &[prev, self.selected_index],
-        );
+        // RowGlyphKey includes the complete visual selection state, so
+        // the steady-state path can reuse both cached row variants.
         self.scroll_handle
             .scroll_to_item(self.selected_index, ScrollStrategy::Top);
         self.refresh_visual_marks();

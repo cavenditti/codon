@@ -115,9 +115,11 @@ pub(crate) struct DirtyRows {
 
 impl FmColumnElement {
     /// Hint that the listed rows' cached payloads are stale and
-    /// must be rebuilt on the next paint. The typical caller is
-    /// the FM view's `j` / `k` selection move, which passes
-    /// `&[prev_selection, new_selection]`.
+    /// must be rebuilt on the next paint. Selection changes do not
+    /// need this because the complete selection state is already in
+    /// `RowGlyphKey`; this remains the invalidation surface for row
+    /// inputs that are not represented by that key.
+    #[allow(dead_code)] // retained as the explicit invalidation surface for non-keyed row changes
     pub fn mark_rows_dirty(dirty: &Rc<RefCell<DirtyRows>>, indices: &[usize]) {
         let mut state = dirty.borrow_mut();
         for &i in indices {

@@ -24,11 +24,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 impl FileManager {
-    /// Whether the phase-17 custom-render pipeline is active. Wired
-    /// through `FmPrefs::custom_render` so users can flip it from
-    /// `codon.toml`. Off by default while the harness stabilises.
+    /// Whether the phase-17 custom-render pipeline is active. The
+    /// preference is loaded when the FM is created and then kept in
+    /// memory so a paint never performs synchronous config I/O.
     pub(crate) fn custom_render_enabled(&self) -> bool {
-        crate::prefs::FmPrefs::load().custom_render
+        self.custom_render
     }
 
     /// Clear every per-column row-glyph cache. Called when the
@@ -228,9 +228,9 @@ pub(crate) fn build_entry_row(
 /// `None` when the custom render path isn't active so the caller
 /// falls back to `uniform_list`.
 pub(crate) fn build_fm_column(
-    entries: &[DirEntry],
+    entries: Vec<DirEntry>,
     selection: Option<usize>,
-    marks: &std::collections::HashSet<usize>,
+    marks: std::collections::HashSet<usize>,
     site: RowCallSite,
     column_kind: ColumnKind,
     scroll_offset: &Rc<RefCell<f32>>,
@@ -248,22 +248,19 @@ pub(crate) fn build_fm_column(
         scrollbar_thumb: colors.scrollbar_thumb_background,
     });
 
-    let entries_arc: Arc<[Arc<DirEntry>]> = entries
-        .iter()
-        .cloned()
-        .map(Arc::new)
-        .collect::<Vec<_>>()
-        .into();
+    let entry_count = entries.len();
+    let entries_arc: Arc<[Arc<DirEntry>]> =
+        entries.into_iter().map(Arc::new).collect::<Vec<_>>().into();
 
     let cache_capacity =
-        crate::render::shaped_line_cache::default_capacity(entries.len().clamp(32, 64), 1, 1);
+        crate::render::shaped_line_cache::default_capacity(entry_count.clamp(32, 64), 1, 1);
     let cache = Rc::new(RefCell::new(ShapedLineCache::new(cache_capacity)));
 
     FmColumnElement {
         column_kind,
         entries: entries_arc,
         selection,
-        marks: Arc::new(marks.clone()),
+        marks: Arc::new(marks),
         theme: column_theme,
         row_metrics: metrics,
         line_mode: site.line_mode,
@@ -334,9 +331,9 @@ impl FileManager {
                 )
             };
             return build_fm_column(
-                entries,
+                entries.to_vec(),
                 None,
-                &Default::default(),
+                Default::default(),
                 site,
                 kind,
                 scroll_cell,
@@ -393,9 +390,9 @@ impl FileManager {
                 };
                 if custom_render {
                     build_fm_column(
-                        &entries,
+                        entries,
                         None,
-                        &Default::default(),
+                        Default::default(),
                         site,
                         ColumnKind::Preview,
                         &self.custom_scroll_preview,
@@ -698,9 +695,9 @@ impl Render for FileManager {
             };
             let marks_set: std::collections::HashSet<usize> = marked.iter().copied().collect();
             build_fm_column(
-                &entries,
+                entries,
                 Some(selected_idx_for_current),
-                &marks_set,
+                marks_set,
                 site,
                 ColumnKind::Current,
                 &self.custom_scroll_current,

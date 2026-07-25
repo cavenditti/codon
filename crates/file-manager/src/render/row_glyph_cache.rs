@@ -73,13 +73,13 @@ impl RowGlyphCache {
     /// can't be smuggled into a closure that also holds the cache
     /// borrow.
     pub fn get(&mut self, key: &RowGlyphKey) -> Option<Arc<CachedRow>> {
-        if let Some(idx) = self.inner.get_index_of(key) {
-            let (k, v) = self
-                .inner
-                .swap_remove_index(idx)
-                .expect("index just resolved");
-            let value = v.clone();
-            self.inner.insert(k, v);
+        if let Some(value) = self.inner.get(key).cloned() {
+            // Hits dominate the steady-state render path, so keep them
+            // read-only. Moving every hit to the LRU tail used to turn
+            // each visible row into a hash lookup + removal + insertion
+            // on every frame. The cache is already generously sized for
+            // the visible working set; FIFO eviction on insertion keeps
+            // it bounded without putting map mutation on the hot path.
             self.hits = self.hits.saturating_add(1);
             COUNTERS.add_row_glyph_hits(1);
             Some(value)
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn row_glyph_cache_evicts_lru() {
+    fn row_glyph_cache_evicts_oldest_inserted() {
         let mut cache = RowGlyphCache::new(2);
         cache.insert(key("/a", false), payload());
         cache.insert(key("/b", false), payload());
@@ -184,6 +184,22 @@ mod tests {
         assert_eq!(cache.len(), 2);
         // First inserted (`/a`) should be evicted.
         assert!(cache.get(&key("/a", false)).is_none());
+        assert!(cache.get(&key("/b", false)).is_some());
+        assert!(cache.get(&key("/c", false)).is_some());
+    }
+
+    #[test]
+    fn row_glyph_cache_hit_does_not_reorder_entries() {
+        let mut cache = RowGlyphCache::new(2);
+        let a = key("/a", false);
+        cache.insert(a.clone(), payload());
+        cache.insert(key("/b", false), payload());
+
+        assert!(cache.get(&a).is_some());
+        cache.insert(key("/c", false), payload());
+
+        // Reads stay read-only; insertion order is the eviction order.
+        assert!(cache.get(&a).is_none());
         assert!(cache.get(&key("/b", false)).is_some());
         assert!(cache.get(&key("/c", false)).is_some());
     }
