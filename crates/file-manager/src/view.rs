@@ -3,7 +3,9 @@ use gpui::{
     AnyElement, App, Context, FontWeight, IntoElement, ObjectFit, Render, SharedString,
     StyledImage, Window, div, img, prelude::*, px, relative, uniform_list,
 };
+use settings::Settings as _;
 use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex, v_flex};
 
 use workspace::codon_jump_clickable::JumpClickableExt;
@@ -1225,7 +1227,7 @@ fn render_text_preview_static(text: &TextPreview, cx: &App) -> AnyElement {
         .take(MAX_LINES)
         .map(|line| SharedString::from(line.to_owned()))
         .collect();
-    let settings = theme::theme_settings(cx);
+    let settings = ThemeSettings::get_global(cx);
     v_flex()
         .size_full()
         .px(px(8.))
@@ -1233,9 +1235,9 @@ fn render_text_preview_static(text: &TextPreview, cx: &App) -> AnyElement {
         .gap(px(0.))
         .overflow_hidden()
         .bg(cx.theme().colors().editor_background)
-        .font(settings.buffer_font(cx).clone())
+        .font(settings.buffer_font.clone())
         .text_size(settings.buffer_font_size(cx))
-        .line_height(relative(settings.buffer_line_height.value()))
+        .line_height(relative(settings.line_height()))
         .text_color(cx.theme().colors().editor_foreground)
         .children(
             lines

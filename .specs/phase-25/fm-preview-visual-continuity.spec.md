@@ -7,7 +7,7 @@ summary: >
   Keep the file-manager text-preview surface and typography visually stable
   while its lightweight snapshot upgrades to a full editor.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines: ["REQ:codon/file-manager#c-preview"]
 assignee:
 eta:

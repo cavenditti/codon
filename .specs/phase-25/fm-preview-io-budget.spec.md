@@ -7,7 +7,7 @@ summary: >
   Head-read the text-preview byte cap, name the editor-upgrade dwell
   constant, and give the upgraded-preview editor a small LRU.
 owners: [carlo]
-progress: in-progress
+progress: done
 refines: ["REQ:codon/fm-op-responsiveness#c-preview-io-budget"]
 assignee:
 eta:

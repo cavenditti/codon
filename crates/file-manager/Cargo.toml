@@ -49,6 +49,7 @@ tar.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 toml.workspace = true
 trash.workspace = true
 ui.workspace = true

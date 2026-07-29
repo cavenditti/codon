@@ -429,6 +429,8 @@ mod tests {
             child_count: None,
             labels: EntryLabels {
                 name: SharedString::from("test.rs"),
+                sort_name: "test.rs".into(),
+                sort_extension: "rs".into(),
                 meta: Default::default(),
             },
             icon_path: Some(None),

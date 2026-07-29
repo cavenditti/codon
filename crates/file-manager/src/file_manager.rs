@@ -12,7 +12,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::{Icon, IconName};
@@ -319,6 +319,10 @@ pub(crate) struct DirEntry {
 #[derive(Clone, Default)]
 pub(crate) struct EntryLabels {
     pub(crate) name: gpui::SharedString,
+    /// Case-folded keys used by the sort comparator. These are built once
+    /// when the entry is read instead of allocating inside `sort_by`.
+    pub(crate) sort_name: String,
+    pub(crate) sort_extension: String,
     pub(crate) meta: [Option<gpui::SharedString>; LineMode::COUNT],
 }
 
@@ -956,7 +960,7 @@ impl FileManager {
                 if this.listing_gen != listing_gen {
                     return;
                 }
-                let entries = match entries_result {
+                let mut entries = match entries_result {
                     Ok(entries) => entries,
                     Err(err) => {
                         this.listing_state = ListingState::Error {
@@ -970,6 +974,12 @@ impl FileManager {
                         return;
                     }
                 };
+                // Sort preferences may have changed while the background
+                // read was in flight. Install using the current foreground
+                // preference, not the captured request-time ordering.
+                sort_entries(&mut entries, this.sort, this.reverse);
+                let mut parent_entries = parent_entries;
+                sort_entries(&mut parent_entries, this.sort, this.reverse);
                 this.entries = entries;
                 this.parent_entries = parent_entries;
                 this.listing_state = ListingState::Ready {
@@ -1362,7 +1372,8 @@ impl FileManager {
             editor.set_read_only(true);
             editor.set_show_gutter(false, cx);
             editor.set_show_line_numbers(false, cx);
-            editor.set_show_scrollbars(false, cx);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_show_horizontal_scrollbar(false, cx);
             editor
         });
 
@@ -4740,23 +4751,23 @@ impl FileManager {
     }
 
     /// Shared entry point for the palette-discoverable `Sort By …`
-    /// actions and the `,`-prefixed chord handler: persist the mode and
-    /// re-read the directory so the new ordering takes effect.
+    /// actions and the `,`-prefixed chord handler. Sorting is a pure model
+    /// transform: no directory read, reload-state transition, or mark wipe.
     pub(crate) fn set_sort_mode(
         &mut self,
         mode: crate::prefs::SortMode,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.apply_sort(mode, cx);
-        self.reload_entries(window, cx);
+        self.resort_loaded_entries(cx);
     }
 
-    pub(crate) fn toggle_sort_reverse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_sort_reverse(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.reverse = !self.reverse;
         let value = self.reverse;
         cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_reverse(value));
-        self.reload_entries(window, cx);
+        self.resort_loaded_entries(cx);
     }
 
     fn set_ranger_sort(
@@ -4771,7 +4782,32 @@ impl FileManager {
             prefs.set_sort(mode);
             prefs.set_reverse(reverse);
         });
-        self.reload_entries_with(None, cx);
+        self.resort_loaded_entries(cx);
+    }
+
+    /// Reorder every loaded listing using the current sort preferences.
+    /// Selection, marks, and the visual anchor are remapped by path so their
+    /// meaning survives the index permutation.
+    fn resort_loaded_entries(&mut self, cx: &mut Context<Self>) {
+        remap_listing_after_sort(
+            &mut self.entries,
+            &mut self.selected_index,
+            &mut self.marked,
+            &mut self.visual_anchor,
+            self.sort,
+            self.reverse,
+        );
+        if let Some(entries) = &mut self.entries_unfiltered {
+            sort_entries(entries, self.sort, self.reverse);
+        }
+        sort_entries(&mut self.parent_entries, self.sort, self.reverse);
+        if let Preview::Directory(entries) = &mut self.preview {
+            sort_entries(entries, self.sort, self.reverse);
+        }
+        self.refresh_listing_render_snapshots();
+        self.refresh_preview_render_snapshot();
+        self.ensure_visible();
+        cx.notify();
     }
 
     fn cycle_line_mode(&mut self, cx: &mut Context<Self>) {
@@ -5448,9 +5484,25 @@ impl Default for ReadDirOptions {
     }
 }
 
+/// Sort-independent portion of `ReadDirOptions`. Directory membership only
+/// changes with visibility options; requested ordering is applied to the
+/// cloned cache value on lookup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirCacheKey {
+    pub show_hidden: bool,
+}
+
+impl From<ReadDirOptions> for DirCacheKey {
+    fn from(options: ReadDirOptions) -> Self {
+        Self {
+            show_hidden: options.show_hidden,
+        }
+    }
+}
+
 /// Small per-FM LRU of recently-read directory listings, keyed on the
-/// absolute path. Entries also carry the directory's `mtime` and the
-/// `ReadDirOptions` they were read under — a cache hit requires the
+/// absolute path plus membership-affecting options. Entries also carry the
+/// directory's `mtime` — a cache hit requires the
 /// stored mtime to match the directory's *current* mtime, so external
 /// changes (a new file dropped in another pane, a `git pull`) bust the
 /// cache transparently the next time we look the directory up.
@@ -5460,7 +5512,7 @@ impl Default for ReadDirOptions {
 /// to the foreground.
 pub(crate) struct DirCacheEntry {
     pub mtime: std::time::SystemTime,
-    pub opts: ReadDirOptions,
+    pub key: DirCacheKey,
     pub entries: Vec<DirEntry>,
 }
 
@@ -5476,12 +5528,17 @@ impl DirCache {
         mtime: std::time::SystemTime,
         opts: ReadDirOptions,
     ) -> Option<Vec<DirEntry>> {
-        let pos = self.inner.iter().position(|(p, _)| p == path)?;
+        let key = DirCacheKey::from(opts);
+        let pos = self
+            .inner
+            .iter()
+            .position(|(p, entry)| p == path && entry.key == key)?;
         let (_, entry) = &self.inner[pos];
-        if entry.mtime != mtime || entry.opts != opts {
+        if entry.mtime != mtime {
             return None;
         }
-        let result = entry.entries.clone();
+        let mut result = entry.entries.clone();
+        sort_entries(&mut result, opts.sort, opts.reverse);
         if let Some(kv) = self.inner.remove(pos) {
             self.inner.push_front(kv);
         }
@@ -5495,12 +5552,14 @@ impl DirCache {
         opts: ReadDirOptions,
         entries: Vec<DirEntry>,
     ) {
-        self.inner.retain(|(p, _)| p != &path);
+        let key = DirCacheKey::from(opts);
+        self.inner
+            .retain(|(p, entry)| p != &path || entry.key != key);
         self.inner.push_front((
             path,
             DirCacheEntry {
                 mtime,
-                opts,
+                key,
                 entries,
             },
         ));
@@ -5517,10 +5576,15 @@ impl DirCache {
     /// `read_dir_cached` does mtime validation, so anything that
     /// actually reloads the listing remains correct.
     fn peek(&self, path: &Path, opts: ReadDirOptions) -> Option<Vec<DirEntry>> {
+        let key = DirCacheKey::from(opts);
         self.inner
             .iter()
-            .find(|(p, e)| p == path && e.opts == opts)
-            .map(|(_, e)| e.entries.clone())
+            .find(|(p, entry)| p == path && entry.key == key)
+            .map(|(_, entry)| {
+                let mut entries = entry.entries.clone();
+                sort_entries(&mut entries, opts.sort, opts.reverse);
+                entries
+            })
     }
 }
 
@@ -5604,7 +5668,7 @@ pub(crate) fn read_dir_sync(
                 return None;
             }
             let metadata = e.metadata().ok()?;
-            let file_type = e.file_type().ok()?;
+            let file_type = metadata.file_type();
             let mtime = metadata.modified().ok();
             let btime = metadata.created().ok().or(mtime);
             let (mode, uid, gid) = unix_metadata(&metadata);
@@ -5793,6 +5857,8 @@ pub(crate) fn build_entry_labels(entry: &DirEntry) -> EntryLabels {
     }
     EntryLabels {
         name: entry.name.clone().into(),
+        sort_name: entry.name.to_lowercase(),
+        sort_extension: extension_key(&entry.name),
         meta,
     }
 }
@@ -5842,19 +5908,56 @@ pub(crate) fn sort_entries(entries: &mut [DirEntry], mode: crate::prefs::SortMod
     });
 }
 
+/// Sort a listing while preserving all index-based interaction state by
+/// resolving it to stable paths before the permutation and rebuilding the
+/// indices afterward.
+fn remap_listing_after_sort(
+    entries: &mut [DirEntry],
+    selected_index: &mut usize,
+    marked: &mut BTreeSet<usize>,
+    visual_anchor: &mut Option<usize>,
+    mode: crate::prefs::SortMode,
+    reverse: bool,
+) {
+    let selected_path = entries.get(*selected_index).map(|entry| entry.path.clone());
+    let marked_paths: HashSet<PathBuf> = marked
+        .iter()
+        .filter_map(|index| entries.get(*index))
+        .map(|entry| entry.path.clone())
+        .collect();
+    let anchor_path = visual_anchor
+        .and_then(|index| entries.get(index))
+        .map(|entry| entry.path.clone());
+
+    sort_entries(entries, mode, reverse);
+
+    *selected_index = selected_path
+        .as_ref()
+        .and_then(|path| entries.iter().position(|entry| &entry.path == path))
+        .unwrap_or_else(|| (*selected_index).min(entries.len().saturating_sub(1)));
+    *marked = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| marked_paths.contains(&entry.path).then_some(index))
+        .collect();
+    *visual_anchor = anchor_path
+        .as_ref()
+        .and_then(|path| entries.iter().position(|entry| &entry.path == path));
+}
+
 fn compare_in_group(a: &DirEntry, b: &DirEntry, mode: crate::prefs::SortMode) -> cmp::Ordering {
     use crate::prefs::SortMode;
-    let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+    let by_name = || a.labels.sort_name.cmp(&b.labels.sort_name);
     match mode {
         SortMode::Name => by_name(),
         SortMode::Size => a.size.cmp(&b.size).then_with(by_name),
         SortMode::Mtime => a.mtime.cmp(&b.mtime).then_with(by_name),
         SortMode::Btime => a.btime.cmp(&b.btime).then_with(by_name),
-        SortMode::Extension => {
-            let ea = extension_key(&a.name);
-            let eb = extension_key(&b.name);
-            ea.cmp(&eb).then_with(by_name)
-        }
+        SortMode::Extension => a
+            .labels
+            .sort_extension
+            .cmp(&b.labels.sort_extension)
+            .then_with(by_name),
         SortMode::Natural => natural_compare(&a.name, &b.name),
         SortMode::Random => cmp::Ordering::Equal,
     }
@@ -6751,6 +6854,42 @@ mod tests {
     }
 
     #[test]
+    fn dir_cache_key_excludes_sort_mode_and_direction() {
+        let mut cache = DirCache::default();
+        let path = PathBuf::from("/synthetic/dir");
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let stored_opts = ReadDirOptions::default();
+        let entries = vec![DirEntry {
+            name: "x.txt".into(),
+            path: path.join("x.txt"),
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            size: 1,
+            git_status: None,
+            mtime: None,
+            btime: None,
+            mode: None,
+            uid: None,
+            gid: None,
+            child_count: None,
+            labels: Default::default(),
+            icon_path: None,
+        }];
+        cache.store(path.clone(), mtime, stored_opts, entries);
+
+        let requested_opts = ReadDirOptions {
+            sort: crate::prefs::SortMode::Size,
+            reverse: true,
+            ..stored_opts
+        };
+        assert!(
+            cache.lookup(&path, mtime, requested_opts).is_some(),
+            "ordering changes must reuse the membership cache"
+        );
+    }
+
+    #[test]
     fn dir_cache_lru_evicts_oldest() {
         let mut cache = DirCache::default();
         let mtime = std::time::SystemTime::UNIX_EPOCH;
@@ -6886,11 +7025,13 @@ mod tests {
 
     #[test]
     fn read_dir_sync_unreadable_path_returns_error() {
-        let error = read_dir_sync(
+        let error = match read_dir_sync(
             Path::new("/nonexistent/path/that/does/not/exist"),
             ReadDirOptions::default(),
-        )
-        .expect_err("missing directories must not look empty");
+        ) {
+            Ok(_) => panic!("missing directories must not look empty"),
+            Err(error) => error,
+        };
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
@@ -7492,6 +7633,126 @@ mod tests {
         .expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["note.md", "lib.rs", "main.rs", "readme.txt"]);
+    }
+
+    #[test]
+    fn resort_remaps_selection_marks_and_visual_anchor_by_path() {
+        let dir = make_tree(&[("c.txt", false), ("a.txt", false), ("b.txt", false)]);
+        let mut entries = read_dir_sync(
+            dir.path(),
+            ReadDirOptions {
+                sort: crate::prefs::SortMode::Name,
+                reverse: true,
+                ..ReadDirOptions::default()
+            },
+        )
+        .expect("listing");
+        // Descending input: c, b, a. Keep b selected, c + a marked, c anchored.
+        let selected_path = entries[1].path.clone();
+        let marked_paths = [entries[0].path.clone(), entries[2].path.clone()];
+        let anchor_path = entries[0].path.clone();
+        let mut selected_index = 1;
+        let mut marked = BTreeSet::from([0, 2]);
+        let mut visual_anchor = Some(0);
+
+        remap_listing_after_sort(
+            &mut entries,
+            &mut selected_index,
+            &mut marked,
+            &mut visual_anchor,
+            crate::prefs::SortMode::Name,
+            false,
+        );
+
+        assert_eq!(entries[selected_index].path, selected_path);
+        let remapped_marks: HashSet<_> = marked
+            .iter()
+            .map(|index| entries[*index].path.clone())
+            .collect();
+        assert_eq!(remapped_marks, HashSet::from(marked_paths));
+        assert_eq!(
+            visual_anchor.map(|index| entries[index].path.clone()),
+            Some(anchor_path)
+        );
+    }
+
+    #[test]
+    fn in_memory_resort_matches_fresh_listing_for_deterministic_modes() {
+        use crate::prefs::SortMode;
+
+        let dir = make_tree(&[
+            ("dir10", true),
+            ("dir2", true),
+            ("zeta.TXT", false),
+            ("file10.rs", false),
+            ("file2.md", false),
+        ]);
+        fs::write(dir.path().join("zeta.TXT"), vec![0; 32]).expect("write");
+        fs::write(dir.path().join("file10.rs"), vec![0; 16]).expect("write");
+        fs::write(dir.path().join("file2.md"), vec![0; 8]).expect("write");
+
+        let base =
+            read_dir_sync(dir.path(), ReadDirOptions::default()).expect("base directory listing");
+        for mode in [
+            SortMode::Name,
+            SortMode::Size,
+            SortMode::Mtime,
+            SortMode::Btime,
+            SortMode::Extension,
+            SortMode::Natural,
+        ] {
+            for reverse in [false, true] {
+                let mut in_memory = base.clone();
+                sort_entries(&mut in_memory, mode, reverse);
+                let fresh = read_dir_sync(
+                    dir.path(),
+                    ReadDirOptions {
+                        sort: mode,
+                        reverse,
+                        ..ReadDirOptions::default()
+                    },
+                )
+                .expect("fresh directory listing");
+                assert_eq!(
+                    in_memory
+                        .iter()
+                        .map(|entry| &entry.path)
+                        .collect::<Vec<_>>(),
+                    fresh.iter().map(|entry| &entry.path).collect::<Vec<_>>(),
+                    "mode={mode:?}, reverse={reverse}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn in_memory_random_resort_preserves_membership_and_directory_grouping() {
+        let dir = make_tree(&[
+            ("dir-a", true),
+            ("dir-b", true),
+            ("one.txt", false),
+            ("two.txt", false),
+            ("three.txt", false),
+        ]);
+        let mut entries =
+            read_dir_sync(dir.path(), ReadDirOptions::default()).expect("directory listing");
+        let expected_paths: HashSet<_> = entries.iter().map(|entry| entry.path.clone()).collect();
+
+        sort_entries(&mut entries, crate::prefs::SortMode::Random, false);
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<HashSet<_>>(),
+            expected_paths
+        );
+        let first_file = entries
+            .iter()
+            .position(|entry| !entry.is_dir)
+            .unwrap_or(entries.len());
+        assert!(entries[..first_file].iter().all(|entry| entry.is_dir));
+        assert!(entries[first_file..].iter().all(|entry| !entry.is_dir));
     }
 
     #[test]

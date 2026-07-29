@@ -8,7 +8,7 @@ summary: >
   options from the DirCache key, precompute comparator keys, and stat
   each entry only once per read.
 owners: [carlo]
-progress: pending
+progress: done
 refines: ["REQ:codon/fm-listing-model#c-in-memory-resort"]
 assignee:
 eta:
