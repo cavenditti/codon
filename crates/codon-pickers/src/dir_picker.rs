@@ -116,6 +116,24 @@ impl DirPickerDelegate {
         self.marked.clear();
     }
 
+    fn enter_directory(
+        &mut self,
+        dir: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.set_current_dir(dir);
+
+        // `update_matches("")` only refreshes the delegate's matches; it does
+        // not clear the picker's editor. Clear the editor itself so the next
+        // directory name does not get appended to the query used to enter
+        // this directory.
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+        cx.notify();
+    }
+
     /// Toggle the mark on the currently focused row. No-op for `.`/`..`
     /// rows or when not in multi-select mode.
     fn toggle_mark_at_selected(&mut self) {
@@ -289,9 +307,7 @@ impl PickerDelegate for DirPickerDelegate {
             }
             match candidate.kind {
                 CandidateKind::Child | CandidateKind::ParentDir => {
-                    self.set_current_dir(candidate.path.clone());
-                    self.update_matches(String::new(), window, cx).detach();
-                    cx.notify();
+                    self.enter_directory(candidate.path.clone(), window, cx);
                 }
                 CandidateKind::SelfDir | CandidateKind::ChildFile => {
                     let paths = if self.marked.is_empty() {
@@ -321,9 +337,7 @@ impl PickerDelegate for DirPickerDelegate {
                 });
             }
             CandidateKind::ParentDir | CandidateKind::Child => {
-                self.set_current_dir(candidate.path.clone());
-                self.update_matches(String::new(), window, cx).detach();
-                cx.notify();
+                self.enter_directory(candidate.path.clone(), window, cx);
             }
             CandidateKind::ChildFile => {
                 // Files don't appear in single-select listings, but
@@ -522,6 +536,7 @@ impl Focusable for DirPickerModal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     /// Build a delegate at a path the listing routine can't read. The
     /// `.` and `..` header rows are deterministic — we exercise just
@@ -620,6 +635,33 @@ mod tests {
         // silently collapse.
         assert_ne!(CandidateKind::SelfDir, CandidateKind::ParentDir);
         assert_ne!(CandidateKind::Child, CandidateKind::ChildFile);
+    }
+
+    #[gpui::test]
+    async fn entering_directory_clears_picker_query(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let start = PathBuf::from("/codon-tests/parent");
+        let child = start.join("something");
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(DirPickerDelegate::new(start, false), window, cx).modal(false)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("parent", window, cx);
+            picker.delegate.enter_directory(child.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        picker.update(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "");
+            assert_eq!(picker.delegate.current_dir, child);
+        });
     }
 }
 
