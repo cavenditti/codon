@@ -10,6 +10,8 @@ use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::debounced_writer::DebouncedWriter;
+
 const FILE_NAME: &str = "file-manager-prefs.toml";
 
 pub(crate) const PREVIEW_FRACTION_MIN: f32 = 0.10;
@@ -87,6 +89,18 @@ pub struct FmPrefs {
     /// escape hatch.
     #[serde(default)]
     pub custom_render: bool,
+    #[serde(skip)]
+    writer: Option<DebouncedWriter<FmPrefsSnapshot>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct FmPrefsSnapshot {
+    sort: SortMode,
+    reverse: bool,
+    line_mode: LineMode,
+    show_gitignored: bool,
+    preview_fraction: f32,
+    custom_render: bool,
 }
 
 fn default_show_gitignored() -> bool {
@@ -113,6 +127,7 @@ impl Default for FmPrefs {
             show_gitignored: true,
             preview_fraction: PREVIEW_FRACTION_DEFAULT,
             custom_render: false,
+            writer: None,
         }
     }
 }
@@ -122,21 +137,40 @@ impl FmPrefs {
         let Some(path) = Self::file_path() else {
             return Self::default();
         };
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let mut prefs = match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<FmPrefs>(&content) {
+                Ok(mut prefs) => {
+                    prefs.preview_fraction = clamp_fraction(prefs.preview_fraction);
+                    prefs
+                }
+                Err(err) => {
+                    log::warn!(
+                        "file-manager: ignoring malformed {} ({err})",
+                        path.display()
+                    );
+                    Self::default()
+                }
+            },
+            Err(_) => Self::default(),
         };
-        match toml::from_str::<FmPrefs>(&content) {
-            Ok(mut p) => {
-                p.preview_fraction = clamp_fraction(p.preview_fraction);
-                p
-            }
-            Err(err) => {
-                log::warn!(
-                    "file-manager: ignoring malformed {} ({err})",
-                    path.display()
-                );
-                Self::default()
-            }
+        prefs.writer = Some(DebouncedWriter::toml(path, "prefs"));
+        prefs
+    }
+
+    fn snapshot(&self) -> FmPrefsSnapshot {
+        FmPrefsSnapshot {
+            sort: self.sort,
+            reverse: self.reverse,
+            line_mode: self.line_mode,
+            show_gitignored: self.show_gitignored,
+            preview_fraction: self.preview_fraction,
+            custom_render: self.custom_render,
+        }
+    }
+
+    pub(crate) fn flush(&self) {
+        if let Some(writer) = &self.writer {
+            writer.flush();
         }
     }
 
@@ -166,30 +200,8 @@ impl FmPrefs {
     }
 
     fn save(&self) {
-        let Some(path) = Self::file_path() else {
-            return;
-        };
-        if let Some(parent) = path.parent() {
-            if let Err(err) = std::fs::create_dir_all(parent) {
-                log::warn!(
-                    "file-manager: could not create {} ({err})",
-                    parent.display()
-                );
-                return;
-            }
-        }
-        let serialized = match toml::to_string_pretty(self) {
-            Ok(s) => s,
-            Err(err) => {
-                log::warn!("file-manager: serialising prefs failed: {err}");
-                return;
-            }
-        };
-        if let Err(err) = std::fs::write(&path, serialized) {
-            log::warn!(
-                "file-manager: could not persist prefs to {} ({err})",
-                path.display()
-            );
+        if let Some(writer) = &self.writer {
+            writer.schedule(self.snapshot());
         }
     }
 
@@ -260,6 +272,7 @@ mod tests {
             show_gitignored: false,
             preview_fraction: 0.5,
             custom_render: true,
+            writer: None,
         };
         let s = toml::to_string_pretty(&p).expect("serialise");
         let parsed: FmPrefs = toml::from_str(&s).expect("parse");

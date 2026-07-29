@@ -7,7 +7,7 @@ summary: >
   Debounce and background preference/bookmark persistence so no
   keystroke blocks the UI thread on a disk write.
 owners: [carlo]
-progress: pending
+progress: done
 refines: ["REQ:codon/fm-op-responsiveness#c-async-config-writes"]
 assignee:
 eta:

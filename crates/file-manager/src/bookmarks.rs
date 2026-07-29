@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 
+use crate::debounced_writer::DebouncedWriter;
+
 const FILE_NAME: &str = "fm-bookmarks.toml";
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -20,12 +22,14 @@ struct BookmarkFile {
 
 pub struct BookmarkStore {
     slots: [Option<PathBuf>; 26],
+    writer: Option<DebouncedWriter<BookmarkFile>>,
 }
 
 impl Default for BookmarkStore {
     fn default() -> Self {
         Self {
             slots: std::array::from_fn(|_| None),
+            writer: None,
         }
     }
 }
@@ -35,20 +39,23 @@ impl BookmarkStore {
         let Some(path) = Self::file_path() else {
             return Self::default();
         };
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let parsed = match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<BookmarkFile>(&content) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    log::warn!(
+                        "file-manager: ignoring malformed {} ({err})",
+                        path.display()
+                    );
+                    BookmarkFile::default()
+                }
+            },
+            Err(_) => BookmarkFile::default(),
         };
-        let parsed: BookmarkFile = match toml::from_str(&content) {
-            Ok(v) => v,
-            Err(err) => {
-                log::warn!(
-                    "file-manager: ignoring malformed {} ({err})",
-                    path.display()
-                );
-                return Self::default();
-            }
+        let mut store = Self {
+            writer: Some(DebouncedWriter::toml(path, "bookmarks")),
+            ..Self::default()
         };
-        let mut store = Self::default();
         for (key, value) in parsed.slots {
             if let Some(idx) = slot_index(&key) {
                 store.slots[idx] = Some(value);
@@ -69,18 +76,9 @@ impl BookmarkStore {
     }
 
     fn save(&self) {
-        let Some(path) = Self::file_path() else {
+        let Some(writer) = &self.writer else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            if let Err(err) = std::fs::create_dir_all(parent) {
-                log::warn!(
-                    "file-manager: could not create {} ({err})",
-                    parent.display()
-                );
-                return;
-            }
-        }
         let mut file = BookmarkFile::default();
         for (idx, slot) in self.slots.iter().enumerate() {
             if let Some(dir) = slot {
@@ -88,18 +86,12 @@ impl BookmarkStore {
                 file.slots.insert(letter.to_string(), dir.clone());
             }
         }
-        let serialized = match toml::to_string_pretty(&file) {
-            Ok(s) => s,
-            Err(err) => {
-                log::warn!("file-manager: serialising bookmarks failed: {err}");
-                return;
-            }
-        };
-        if let Err(err) = std::fs::write(&path, serialized) {
-            log::warn!(
-                "file-manager: could not persist bookmarks to {} ({err})",
-                path.display()
-            );
+        writer.schedule(file);
+    }
+
+    pub(crate) fn flush(&self) {
+        if let Some(writer) = &self.writer {
+            writer.flush();
         }
     }
 

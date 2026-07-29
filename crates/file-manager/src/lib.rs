@@ -2,6 +2,7 @@
 
 pub(crate) mod bookmarks;
 pub(crate) mod bulk_rename_editor;
+pub(crate) mod debounced_writer;
 pub(crate) mod file_manager;
 pub(crate) mod goto_completer;
 pub(crate) mod jump_provider;
@@ -36,11 +37,15 @@ use fs::Fs;
 use gpui::App;
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
-    cx.on_app_quit(|_| async {
-        render::trace::flush_global();
+    file_manager::init(cx);
+    cx.on_app_quit(|cx| {
+        cx.global::<prefs::FmPrefs>().flush();
+        cx.global::<bookmarks::BookmarkStore>().flush();
+        async {
+            render::trace::flush_global();
+        }
     })
     .detach();
-    file_manager::init(cx);
     openers::init(fs.clone(), cx);
     theme::init(fs, cx);
     tasks::init(cx);
