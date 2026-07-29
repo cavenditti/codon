@@ -25,6 +25,20 @@ use workspace::{
 use crate::persistence::FileManagerDb;
 use crate::prefs::LineMode;
 
+const DEFAULT_VISIBLE_LINES: usize = 30;
+
+pub(crate) fn visible_lines_for_viewport(
+    viewport_height: Pixels,
+    row_height: Pixels,
+) -> Option<usize> {
+    let viewport_height = f32::from(viewport_height);
+    let row_height = f32::from(row_height);
+    if viewport_height <= 0.0 || row_height <= 0.0 {
+        return None;
+    }
+    Some(((viewport_height / row_height).ceil() as usize).max(1))
+}
+
 actions!(
     file_manager,
     [
@@ -446,6 +460,9 @@ pub struct FileManager {
     pub(crate) show_hidden: bool,
     pub(crate) fs: Arc<dyn fs::Fs>,
     pub(crate) scroll_handle: UniformListScrollHandle,
+    /// Last measured capacity of the current-column viewport. Retains
+    /// `DEFAULT_VISIBLE_LINES` until the first layout pass so paging is
+    /// still usable while the panel is being mounted.
     pub(crate) visible_lines: usize,
     pub(crate) pending_input: Option<PendingInput>,
     pub(crate) filter_query: String,
@@ -732,7 +749,7 @@ impl FileManager {
             show_hidden: false,
             fs,
             scroll_handle: UniformListScrollHandle::new(),
-            visible_lines: 30,
+            visible_lines: DEFAULT_VISIBLE_LINES,
             pending_input: None,
             filter_query: String::new(),
             entries_unfiltered: None,
@@ -1134,24 +1151,26 @@ impl FileManager {
     /// layout pass — callers (notably the jump provider) treat zero
     /// rows as "no candidates".
     pub fn visible_row_count(&self) -> usize {
-        let state = self.scroll_handle.0.borrow();
-        let Some(item_size) = state.last_item_size else {
+        let Some(raw) = self.measured_legacy_visible_lines() else {
             return 0;
         };
-        let row_height = item_size.item.height;
-        if row_height <= Pixels::from(0.0) {
-            return 0;
-        }
-        let viewport_height = state.base_handle.bounds().size.height;
-        let raw = (f32::from(viewport_height) / f32::from(row_height)).ceil() as i64;
-        if raw <= 0 {
-            return 0;
-        }
-        let raw = raw as usize;
         // Cap at the list length so the last partially-visible row is
         // still represented but we never produce candidates pointing
         // past the entry tail.
         raw.min(self.entries.len().saturating_sub(self.first_visible_row()))
+    }
+
+    /// Full row capacity reported by the legacy `uniform_list`, without
+    /// capping at the remaining entry count. Paging needs the viewport
+    /// capacity itself so `PageUp` near the listing tail remains a full
+    /// page rather than shrinking to the handful of rows below the cursor.
+    pub(crate) fn measured_legacy_visible_lines(&self) -> Option<usize> {
+        let state = self.scroll_handle.0.borrow();
+        let item_size = state.last_item_size?;
+        visible_lines_for_viewport(
+            state.base_handle.bounds().size.height,
+            item_size.item.height,
+        )
     }
 
     /// Screen-space bounds of `row` in window-absolute pixel space, or
@@ -6504,6 +6523,36 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn viewport_lines_follow_measured_height() {
+        assert_eq!(
+            visible_lines_for_viewport(Pixels::from(240.0), Pixels::from(20.0)),
+            Some(12)
+        );
+        assert_eq!(
+            visible_lines_for_viewport(Pixels::from(241.0), Pixels::from(20.0)),
+            Some(13)
+        );
+        assert_eq!(
+            visible_lines_for_viewport(Pixels::from(120.0), Pixels::from(20.0))
+                .map(|lines| lines / 2),
+            Some(3),
+            "half-page motion follows a half-height viewport"
+        );
+    }
+
+    #[test]
+    fn viewport_lines_ignore_unusable_pre_layout_geometry() {
+        assert_eq!(
+            visible_lines_for_viewport(Pixels::from(0.0), Pixels::from(20.0)),
+            None
+        );
+        assert_eq!(
+            visible_lines_for_viewport(Pixels::from(120.0), Pixels::from(0.0)),
+            None
+        );
+    }
 
     #[test]
     fn ranger_command_payload_uses_stable_snake_case_names() {

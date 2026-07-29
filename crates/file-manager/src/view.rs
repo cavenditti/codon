@@ -12,7 +12,7 @@ use workspace::codon_jump_clickable::JumpClickableExt;
 
 use crate::file_manager::{
     ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, ListingState, PendingInput,
-    Preview, TextPreview, format_hex_dump,
+    Preview, TextPreview, format_hex_dump, visible_lines_for_viewport,
 };
 use crate::prefs::LineMode;
 use crate::render::column::{ColumnKind, ColumnTheme, DirtyRows, FmColumnElement};
@@ -111,6 +111,11 @@ fn render_entries_snapshot(entries: &[DirEntry]) -> Arc<[Arc<DirEntry>]> {
         .map(Arc::new)
         .collect::<Vec<_>>()
         .into()
+}
+
+fn resolve_row_metrics(cx: &App) -> RowMetrics {
+    let font_size = theme::theme_settings(cx).ui_font_size(cx) * 0.85;
+    RowMetrics::standard(font_size)
 }
 
 // Free function (not a method) because the `uniform_list` closures
@@ -267,8 +272,7 @@ pub(crate) fn build_entry_row(
     }
 
     let theme = resolve_row_theme(cx);
-    let font_size = theme::theme_settings(cx).ui_font_size(cx) * 0.85;
-    let metrics = RowMetrics::standard(font_size);
+    let metrics = resolve_row_metrics(cx);
     let meta_text = if site.show_meta {
         entry.labels.meta[site.line_mode.idx()].clone()
     } else {
@@ -308,8 +312,7 @@ pub(crate) fn build_fm_column(
     cx: &App,
 ) -> FmColumnElement {
     let row_theme = resolve_row_theme(cx);
-    let font_size = theme::theme_settings(cx).ui_font_size(cx) * 0.85;
-    let metrics = RowMetrics::standard(font_size);
+    let metrics = resolve_row_metrics(cx);
     let colors = theme::ActiveTheme::theme(cx).colors();
     let column_theme = Arc::new(ColumnTheme {
         row: row_theme,
@@ -735,6 +738,7 @@ impl Render for FileManager {
         let line_mode = self.line_mode;
         let custom_render = self.custom_render_enabled();
         let selected_idx_for_current = self.selected_index;
+        let current_row_height = resolve_row_metrics(cx).row_height;
 
         // Phase-17 custom render path for the current column.
         let current_col: AnyElement = if custom_render {
@@ -1084,6 +1088,32 @@ impl Render for FileManager {
                             .h_full()
                             .min_h_0()
                             .when(show_preview, |d| d.border_r_1().border_color(border_color))
+                            .on_children_prepainted({
+                                let entity = cx.entity().downgrade();
+                                move |bounds, _window, cx| {
+                                    let Some(current_bounds) = bounds.first() else {
+                                        return;
+                                    };
+                                    let custom_lines = visible_lines_for_viewport(
+                                        current_bounds.size.height,
+                                        current_row_height,
+                                    );
+                                    if let Some(entity) = entity.upgrade() {
+                                        entity.update(cx, |fm, _cx| {
+                                            let measured = if custom_render {
+                                                custom_lines
+                                            } else {
+                                                fm.measured_legacy_visible_lines().or(custom_lines)
+                                            };
+                                            if let Some(measured) = measured
+                                                && measured != fm.visible_lines
+                                            {
+                                                fm.visible_lines = measured;
+                                            }
+                                        });
+                                    }
+                                }
+                            })
                             .child(current_col),
                     )
                     .when_some(preview_col, |row, col| {

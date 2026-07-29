@@ -7,7 +7,7 @@ summary: >
   Derive page/half-page motion size from the measured pane height
   instead of the hard-coded 30-row constant.
 owners: [carlo]
-progress: pending
+progress: done
 refines: ["REQ:codon/fm-op-responsiveness#c-measured-viewport"]
 assignee:
 eta:
