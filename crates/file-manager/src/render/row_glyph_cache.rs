@@ -21,6 +21,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use git::status::FileStatus;
 use gpui::{Hsla, ShapedLine, SharedString};
 use indexmap::IndexMap;
 
@@ -33,6 +34,15 @@ pub(crate) struct RowGlyphKey {
     pub path: PathBuf,
     pub line_mode: LineMode,
     pub state: RowDisplayState,
+    /// Painted entry inputs that may be filled asynchronously while the
+    /// path and display state remain unchanged.
+    pub name_text: SharedString,
+    pub meta_text: Option<SharedString>,
+    pub git_status: Option<FileStatus>,
+    pub is_dir: bool,
+    pub is_hidden: bool,
+    pub is_symlink: bool,
+    pub mode: Option<u32>,
     /// Resolved icon path — if the icon changes (e.g. after a
     /// `populate_icon_paths` backfill), the cached row payload
     /// must invalidate.
@@ -141,6 +151,13 @@ mod tests {
                 is_focused_row: sel,
                 zebra_stripe: false,
             },
+            name_text: SharedString::from(path.to_string()),
+            meta_text: None,
+            git_status: None,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            mode: None,
             icon_path: None,
         }
     }
@@ -202,5 +219,20 @@ mod tests {
         assert!(cache.get(&a).is_none());
         assert!(cache.get(&key("/b", false)).is_some());
         assert!(cache.get(&key("/c", false)).is_some());
+    }
+
+    #[test]
+    fn row_glyph_cache_misses_when_async_inputs_change() {
+        let mut cache = RowGlyphCache::new(8);
+        let base = key("/dir", false);
+        cache.insert(base.clone(), payload());
+
+        let mut metadata_changed = base.clone();
+        metadata_changed.meta_text = Some(SharedString::from("12 items"));
+        assert!(cache.get(&metadata_changed).is_none());
+
+        let mut git_changed = base.clone();
+        git_changed.git_status = Some(FileStatus::Untracked);
+        assert!(cache.get(&git_changed).is_none());
     }
 }

@@ -4,9 +4,8 @@
 //! kinds:
 //!
 //! - `KeypressDispatched` — a key reached the FM input handler.
-//! - `FramePainted` — the FM render closure returned (provisional;
-//!   accurate prepaint/paint/draw split arrives with
-//!   `TASK:phase-17/fm-render-custom-row`).
+//! - `FramePainted` — a GPUI post-frame callback records completed
+//!   wall time plus custom-column prepaint/paint/cache counters.
 //! - `PreviewUpgraded` — the FM upgraded the preview column from the
 //!   lightweight snapshot to the real `EditorElement`.
 //! - `SwitchTiming` — codon-session emits one per window-/session-switch
@@ -26,9 +25,10 @@
 //! fallback to `$HOME/.local/state/codon/render-trace/...`).
 //!
 //! Storage is a `Mutex<Vec<TraceEvent>>`. Events are pushed inline; the
-//! whole buffer is flushed to disk in `Drop`. The hot path avoids
-//! allocations (`SharedString` clones are `Arc` bumps; `PathBuf` only
-//! appears in `PreviewUpgraded`, fired at most once per dwell).
+//! whole buffer is flushed by the app-quit hook (and by `Drop` for
+//! directly-owned test collectors). The hot path avoids allocations
+//! (`SharedString` clones are `Arc` bumps; `PathBuf` only appears in
+//! `PreviewUpgraded`, fired at most once per dwell).
 //!
 //! Per-event overhead target is ~50 ns — a `Mutex` lock + `Vec::push`.
 //! That fits inside the FM's frame budget (≤ 5 ms p95) with thousands
@@ -41,9 +41,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use gpui::SharedString;
@@ -107,6 +107,10 @@ pub(crate) enum TraceEvent {
         rows_painted: u32,
         cache_hits: u32,
         cache_misses: u32,
+        row_cache_hits: u32,
+        row_cache_misses: u32,
+        shaped_cache_hits: u32,
+        shaped_cache_misses: u32,
     },
     PreviewUpgraded {
         at: Instant,
@@ -215,12 +219,20 @@ impl RenderTrace {
                     rows_painted,
                     cache_hits,
                     cache_misses,
+                    row_cache_hits,
+                    row_cache_misses,
+                    shaped_cache_hits,
+                    shaped_cache_misses,
                     ..
                 } => format!(
                     "{{\"t\":\"frame_painted\",\"at_ms\":{at_ms:.3},\
                      \"prepaint_ms\":{prepaint_ms:.3},\"paint_ms\":{paint_ms:.3},\
                      \"draw_ms\":{draw_ms:.3},\"rows_painted\":{rows_painted},\
-                     \"cache_hits\":{cache_hits},\"cache_misses\":{cache_misses}}}"
+                     \"cache_hits\":{cache_hits},\"cache_misses\":{cache_misses},\
+                     \"row_cache_hits\":{row_cache_hits},\
+                     \"row_cache_misses\":{row_cache_misses},\
+                     \"shaped_cache_hits\":{shaped_cache_hits},\
+                     \"shaped_cache_misses\":{shaped_cache_misses}}}"
                 ),
                 TraceEvent::PreviewUpgraded { path, .. } => format!(
                     "{{\"t\":\"preview_upgraded\",\"at_ms\":{at_ms:.3},\"path\":{}}}",
@@ -325,6 +337,15 @@ pub fn install_global(path: PathBuf) {
     install(path);
 }
 
+/// Flush the process-global collector. Registered with GPUI's app-quit
+/// lifecycle by `file_manager::init`; process statics are not dropped at
+/// shutdown, so relying on `Drop` alone would lose real CLI traces.
+pub(crate) fn flush_global() {
+    if let Some(trace) = GLOBAL.get() {
+        trace.flush();
+    }
+}
+
 /// Resolve the default output path when no explicit path is supplied.
 /// Lives in `$XDG_STATE_HOME/codon/render-trace/` (or the
 /// `$HOME/.local/state/codon/render-trace/` fallback) with a
@@ -367,15 +388,20 @@ pub(crate) fn record_keypress(key: SharedString) {
 
 /// Convenience: record a [`TraceEvent::FramePainted`].
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_frame(
     prepaint_ms: f32,
     paint_ms: f32,
     draw_ms: f32,
     rows_painted: u32,
-    cache_hits: u32,
-    cache_misses: u32,
+    row_cache_hits: u32,
+    row_cache_misses: u32,
+    shaped_cache_hits: u32,
+    shaped_cache_misses: u32,
 ) {
     if let Some(trace) = GLOBAL.get() {
+        let cache_hits = row_cache_hits.saturating_add(shaped_cache_hits);
+        let cache_misses = row_cache_misses.saturating_add(shaped_cache_misses);
         trace.record(TraceEvent::FramePainted {
             at: Instant::now(),
             prepaint_ms,
@@ -384,8 +410,70 @@ pub(crate) fn record_frame(
             rows_painted,
             cache_hits,
             cache_misses,
+            row_cache_hits,
+            row_cache_misses,
+            shaped_cache_hits,
+            shaped_cache_misses,
         });
     }
+}
+
+/// Schedule one aggregate FM trace event after GPUI finishes the current
+/// frame. `Render::render` calls this after it has built the FM element
+/// tree; custom column elements add their prepaint/paint durations and
+/// cache counters to [`COUNTERS`] later in the same frame.
+///
+/// GPUI may ask the FM to render more than once before presenting a
+/// frame. `COMPLETED_FRAME_PENDING` coalesces those passes into one
+/// callback/event, matching the user-visible unit that the performance
+/// budget cares about.
+pub(crate) fn schedule_completed_frame(
+    window: &gpui::Window,
+    render_started: Instant,
+    render_build_ms: f32,
+) {
+    if GLOBAL.get().is_none() {
+        return;
+    }
+    if COMPLETED_FRAME_PENDING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    // Discard counters left by a frame rendered before tracing was
+    // scheduled. Everything added after this point belongs to the frame
+    // whose post-frame callback we are installing.
+    let _ = COUNTERS.drain();
+    window.on_next_frame(move |_, _| {
+        let counters = COUNTERS.drain();
+        let custom_prepaint_ms = duration_ms(Duration::from_nanos(counters.prepaint_ns));
+        let paint_ms = duration_ms(Duration::from_nanos(counters.paint_ns));
+        let prepaint_ms = render_build_ms + custom_prepaint_ms;
+        let completed_ms = duration_ms(render_started.elapsed());
+        // GPUI does not expose a narrower public draw/present boundary.
+        // The residual is nevertheless measured after presentation and
+        // includes layout + scene submission + compositor/present time
+        // not already attributed to render/prepaint/paint.
+        let draw_ms = (completed_ms - prepaint_ms - paint_ms).max(0.0);
+        record_frame(
+            prepaint_ms,
+            paint_ms,
+            draw_ms,
+            counters.rows_repainted.min(u32::MAX as u64) as u32,
+            counters.row_glyph_cache_hits.min(u32::MAX as u64) as u32,
+            counters.row_glyph_cache_misses.min(u32::MAX as u64) as u32,
+            counters.shaped_line_cache_hits.min(u32::MAX as u64) as u32,
+            counters.shaped_line_cache_misses.min(u32::MAX as u64) as u32,
+        );
+        COMPLETED_FRAME_PENDING.store(false, Ordering::Release);
+    });
+}
+
+#[inline]
+fn duration_ms(duration: Duration) -> f32 {
+    duration.as_secs_f32() * 1000.0
 }
 
 /// Convenience: record a [`TraceEvent::PreviewUpgraded`].
@@ -456,6 +544,10 @@ mod tests {
                 rows_painted: 30,
                 cache_hits: 28,
                 cache_misses: 2,
+                row_cache_hits: 14,
+                row_cache_misses: 1,
+                shaped_cache_hits: 14,
+                shaped_cache_misses: 1,
             });
             trace.record(TraceEvent::PreviewUpgraded {
                 at: Instant::now(),
@@ -526,6 +618,28 @@ mod tests {
         assert_eq!(json_string("a\\b"), "\"a\\\\b\"");
         assert_eq!(json_string("a\nb"), "\"a\\nb\"");
     }
+
+    #[test]
+    fn render_counters_drain_timings_and_cache_counts() {
+        let counters = RenderCounters::new();
+        counters.add_row_glyph_hits(3);
+        counters.add_shaped_line_misses(2);
+        counters.add_rows_repainted(7);
+        counters.add_prepaint_duration(Duration::from_micros(250));
+        counters.add_paint_duration(Duration::from_micros(500));
+
+        let snapshot = counters.drain();
+        assert_eq!(snapshot.row_glyph_cache_hits, 3);
+        assert_eq!(snapshot.shaped_line_cache_misses, 2);
+        assert_eq!(snapshot.rows_repainted, 7);
+        assert_eq!(snapshot.prepaint_ns, 250_000);
+        assert_eq!(snapshot.paint_ns, 500_000);
+
+        let empty = counters.drain();
+        assert_eq!(empty.rows_repainted, 0);
+        assert_eq!(empty.prepaint_ns, 0);
+        assert_eq!(empty.paint_ns, 0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +655,8 @@ pub(crate) struct CounterSnapshot {
     pub row_glyph_cache_hits: u64,
     pub row_glyph_cache_misses: u64,
     pub rows_repainted: u64,
+    pub prepaint_ns: u64,
+    pub paint_ns: u64,
 }
 
 #[allow(dead_code)]
@@ -550,6 +666,8 @@ pub(crate) struct RenderCounters {
     pub row_glyph_cache_hits: AtomicU64,
     pub row_glyph_cache_misses: AtomicU64,
     pub rows_repainted: AtomicU64,
+    pub prepaint_ns: AtomicU64,
+    pub paint_ns: AtomicU64,
 }
 
 #[allow(dead_code)]
@@ -561,6 +679,8 @@ impl RenderCounters {
             row_glyph_cache_hits: AtomicU64::new(0),
             row_glyph_cache_misses: AtomicU64::new(0),
             rows_repainted: AtomicU64::new(0),
+            prepaint_ns: AtomicU64::new(0),
+            paint_ns: AtomicU64::new(0),
         }
     }
 
@@ -595,6 +715,16 @@ impl RenderCounters {
         }
     }
 
+    pub fn add_prepaint_duration(&self, duration: Duration) {
+        self.prepaint_ns
+            .fetch_add(duration_ns(duration), Ordering::Relaxed);
+    }
+
+    pub fn add_paint_duration(&self, duration: Duration) {
+        self.paint_ns
+            .fetch_add(duration_ns(duration), Ordering::Relaxed);
+    }
+
     pub fn drain(&self) -> CounterSnapshot {
         CounterSnapshot {
             shaped_line_cache_hits: self.shaped_line_cache_hits.swap(0, Ordering::Relaxed),
@@ -602,9 +732,16 @@ impl RenderCounters {
             row_glyph_cache_hits: self.row_glyph_cache_hits.swap(0, Ordering::Relaxed),
             row_glyph_cache_misses: self.row_glyph_cache_misses.swap(0, Ordering::Relaxed),
             rows_repainted: self.rows_repainted.swap(0, Ordering::Relaxed),
+            prepaint_ns: self.prepaint_ns.swap(0, Ordering::Relaxed),
+            paint_ns: self.paint_ns.swap(0, Ordering::Relaxed),
         }
     }
 }
 
+fn duration_ns(duration: Duration) -> u64 {
+    duration.as_nanos().min(u64::MAX as u128) as u64
+}
+
 #[allow(dead_code)]
 pub(crate) static COUNTERS: RenderCounters = RenderCounters::new();
+static COMPLETED_FRAME_PENDING: AtomicBool = AtomicBool::new(false);

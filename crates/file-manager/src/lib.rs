@@ -36,6 +36,10 @@ use fs::Fs;
 use gpui::App;
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
+    cx.on_app_quit(|_| async {
+        render::trace::flush_global();
+    })
+    .detach();
     file_manager::init(cx);
     openers::init(fs.clone(), cx);
     theme::init(fs, cx);

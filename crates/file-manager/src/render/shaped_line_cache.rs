@@ -3,8 +3,9 @@
 //! GPUI's process-wide `LineLayoutCache` is bounded by `with_text_style`
 //! boundaries and routinely re-shapes the same FM row labels (filenames,
 //! meta strings) on every frame during fast `j`/`k` navigation. This
-//! cache exists alongside it, keyed on `(font_id, font_size, text)` —
-//! the keyset that the FM column iterates over each paint — so that
+//! cache exists alongside it, keyed on
+//! `(font_id, font_size, text, run_font, run_color)` — the keyset that
+//! the FM column iterates over each paint — so that
 //! a steady-state navigation reduces shaping to a handful of misses
 //! (only when a new label scrolls into view) instead of one per row
 //! per column per frame.
@@ -17,7 +18,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use gpui::{FontId, Pixels, ShapedLine, SharedString, TextRun, WindowTextSystem};
+use gpui::{Font, FontId, Hsla, Pixels, ShapedLine, SharedString, TextRun, WindowTextSystem};
 use indexmap::IndexMap;
 
 use crate::render::trace::COUNTERS;
@@ -31,10 +32,22 @@ pub(crate) struct ShapedLineKey {
     pub font_id: FontId,
     pub font_size_centi_px: u32,
     pub text: SharedString,
+    /// `font_id` is resolved from the column's base font, while an
+    /// individual run may override weight/style (selected rows are
+    /// bold). Keep the run font and color in the key so a shaped line
+    /// created for an unselected/default-color row cannot be replayed
+    /// for a selected or marked row.
+    pub run_font: Font,
+    pub color: Hsla,
 }
 
 impl ShapedLineKey {
-    fn from_parts(font_id: FontId, font_size: Pixels, text: SharedString) -> Self {
+    fn from_parts(
+        font_id: FontId,
+        font_size: Pixels,
+        text: SharedString,
+        run_for_shaping: &TextRun,
+    ) -> Self {
         // `Pixels` is a newtype over `f32`. Multiply by 100 and round so
         // 13.00 px and 13.00 px hash identically even after arithmetic.
         let centi = (f32::from(font_size) * 100.0).round() as u32;
@@ -42,6 +55,8 @@ impl ShapedLineKey {
             font_id,
             font_size_centi_px: centi,
             text,
+            run_font: run_for_shaping.font.clone(),
+            color: run_for_shaping.color,
         }
     }
 }
@@ -91,7 +106,7 @@ impl ShapedLineCache {
         text_system: &WindowTextSystem,
         run_for_shaping: &TextRun,
     ) -> Arc<ShapedLine> {
-        let key = ShapedLineKey::from_parts(font_id, font_size, text.clone());
+        let key = ShapedLineKey::from_parts(font_id, font_size, text.clone(), run_for_shaping);
 
         if let Some(idx) = self.inner.get_index_of(&key) {
             // Hit: bump recency by moving the entry to the tail.
@@ -178,10 +193,16 @@ mod tests {
     use gpui::px;
 
     fn dummy_key(font_id: usize, font_size: f32, text: &str) -> ShapedLineKey {
+        let run = TextRun {
+            len: text.len(),
+            ..Default::default()
+        };
         ShapedLineKey {
             font_id: FontId(font_id),
             font_size_centi_px: (font_size * 100.0).round() as u32,
             text: SharedString::from(text.to_string()),
+            run_font: run.font,
+            color: run.color,
         }
     }
 
@@ -251,5 +272,29 @@ mod tests {
         // the floor of 64. Small layouts still get a sane floor.
         assert!(default_capacity(30, 3, 5) >= 600);
         assert_eq!(default_capacity(0, 0, 0), 64);
+    }
+
+    #[test]
+    fn shaped_line_key_distinguishes_run_style() {
+        let text = SharedString::from("same");
+        let base = TextRun {
+            len: text.len(),
+            ..Default::default()
+        };
+        let mut bold = base.clone();
+        bold.font.weight = gpui::FontWeight::BOLD;
+        let mut colored = base.clone();
+        colored.color = gpui::Hsla {
+            h: 0.5,
+            s: 0.8,
+            l: 0.6,
+            a: 1.0,
+        };
+
+        let a = ShapedLineKey::from_parts(FontId(0), px(13.0), text.clone(), &base);
+        let b = ShapedLineKey::from_parts(FontId(0), px(13.0), text.clone(), &bold);
+        let c = ShapedLineKey::from_parts(FontId(0), px(13.0), text, &colored);
+        assert_ne!(a, b);
+        assert_ne!(a, c);
     }
 }

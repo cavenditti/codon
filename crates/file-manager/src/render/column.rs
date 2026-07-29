@@ -236,6 +236,7 @@ impl Element for FmColumnElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
+        let trace_started = std::time::Instant::now();
         // Consume the dirty-rows hint up front so the next frame
         // starts clean unless the view re-marks. `all` clears the
         // row-glyph cache wholesale; individual dirty indices are
@@ -295,6 +296,13 @@ impl Element for FmColumnElement {
                 path: entry.path.clone(),
                 line_mode: self.line_mode,
                 state,
+                name_text: entry.labels.name.clone(),
+                meta_text: meta_text.clone(),
+                git_status: entry.git_status,
+                is_dir: entry.is_dir,
+                is_hidden: entry.is_hidden,
+                is_symlink: entry.is_symlink,
+                mode: entry.mode,
                 icon_path: icon_path_key,
             };
             let force_rebuild = dirty_set.contains(&i);
@@ -359,11 +367,13 @@ impl Element for FmColumnElement {
             }
         };
 
-        FmColumnPrepaint {
+        let result = FmColumnPrepaint {
             visible_rows,
             track_bounds,
             thumb_bounds,
-        }
+        };
+        COUNTERS.add_prepaint_duration(trace_started.elapsed());
+        result
     }
 
     fn paint(
@@ -376,6 +386,7 @@ impl Element for FmColumnElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let trace_started = std::time::Instant::now();
         let visible_rows = std::mem::take(&mut prepaint.visible_rows);
         let mut painted = 0u64;
         // Path B (per the spec's investigation note): GPUI's
@@ -405,6 +416,7 @@ impl Element for FmColumnElement {
         if let Some(thumb) = prepaint.thumb_bounds.take() {
             window.paint_quad(fill(thumb, self.theme.scrollbar_thumb));
         }
+        COUNTERS.add_paint_duration(trace_started.elapsed());
     }
 }
 

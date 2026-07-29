@@ -66,6 +66,10 @@ def main(argv: list[str]) -> int:
     rows: list[float] = []
     hits: list[float] = []
     misses: list[float] = []
+    row_hits: list[float] = []
+    row_misses: list[float] = []
+    shaped_hits: list[float] = []
+    shaped_misses: list[float] = []
     previews: list[tuple[float, str]] = []
 
     with path.open() as fh:
@@ -98,6 +102,10 @@ def main(argv: list[str]) -> int:
                 rows.append(float(evt.get("rows_painted", 0)))
                 hits.append(float(evt.get("cache_hits", 0)))
                 misses.append(float(evt.get("cache_misses", 0)))
+                row_hits.append(float(evt.get("row_cache_hits", 0)))
+                row_misses.append(float(evt.get("row_cache_misses", 0)))
+                shaped_hits.append(float(evt.get("shaped_cache_hits", 0)))
+                shaped_misses.append(float(evt.get("shaped_cache_misses", 0)))
             elif kind == "preview_upgraded":
                 previews.append((at_ms, evt.get("path", "?")))
 
@@ -123,6 +131,15 @@ def main(argv: list[str]) -> int:
     print(fmt_dist("rows_painted", rows, unit=""))
     print(fmt_dist("cache_hits", hits, unit=""))
     print(fmt_dist("cache_misses", misses, unit=""))
+    row_total = sum(row_hits) + sum(row_misses)
+    shaped_total = sum(shaped_hits) + sum(shaped_misses)
+    if row_total:
+        print(f"  {'row-cache hit rate':<28} {100.0 * sum(row_hits) / row_total:8.3f}%")
+    if shaped_total:
+        print(
+            f"  {'shaped-line hit rate':<28} "
+            f"{100.0 * sum(shaped_hits) / shaped_total:8.3f}%"
+        )
     print()
     print("keypress -> frame_painted latency:")
     print(fmt_dist("latency_ms", latencies))

@@ -623,6 +623,20 @@ impl FileManager {
         cx.observe_global::<CodonModeTracker>(|_, cx| cx.notify())
             .detach();
 
+        // Custom row payloads contain resolved colors and shaped glyph
+        // runs. Theme changes must invalidate those payloads even when
+        // the entry paths and line mode are unchanged.
+        cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
+            this.invalidate_custom_render_caches();
+            cx.notify();
+        })
+        .detach();
+        cx.observe_global::<crate::theme::FmThemeStore>(|this: &mut Self, cx| {
+            this.invalidate_custom_render_caches();
+            cx.notify();
+        })
+        .detach();
+
         let prefs = cx
             .try_global::<crate::prefs::FmPrefs>()
             .cloned()
@@ -709,6 +723,13 @@ impl FileManager {
             sort: self.sort,
             reverse: self.reverse,
         }
+    }
+
+    fn invalidate_custom_render_caches(&self) {
+        self.clear_row_glyph_caches();
+        crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_parent);
+        crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_current);
+        crate::render::column::FmColumnElement::mark_all_dirty(&self.custom_dirty_preview);
     }
 
     pub(crate) fn push_history_back(&mut self, dir: PathBuf) {
