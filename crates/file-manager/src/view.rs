@@ -55,7 +55,7 @@ impl FileManager {
 
     /// Refresh metadata-only enrichment for both listings. Child-count
     /// fill changes painted row payloads but cannot change membership,
-    /// file sizes, or mark indices, so their aggregates stay valid.
+    /// file sizes, or the derived mark lookup, so aggregates stay valid.
     pub(crate) fn refresh_listing_enrichment_render_snapshots(&mut self) {
         self.render_entries = render_entries_snapshot(&self.entries);
         self.render_parent_entries = render_entries_snapshot(&self.parent_entries);
@@ -82,15 +82,26 @@ impl FileManager {
     }
 
     pub(crate) fn refresh_mark_render_snapshot(&mut self) {
-        self.render_marked = Arc::new(self.marked.iter().copied().collect());
-        self.render_marked_total_size = self
-            .marked
+        self.render_marked = Arc::new(marked_indices_for_entries(&self.entries, &self.marked));
+        let mark_source = self.entries_unfiltered.as_deref().unwrap_or(&self.entries);
+        self.render_marked_total_size = mark_source
             .iter()
-            .filter_map(|index| self.entries.get(*index))
+            .filter(|entry| self.marked.contains(&entry.path))
             .filter(|entry| !entry.is_dir)
             .map(|entry| entry.size)
             .sum();
     }
+}
+
+fn marked_indices_for_entries(
+    entries: &[DirEntry],
+    marked: &std::collections::BTreeSet<std::path::PathBuf>,
+) -> std::collections::HashSet<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| marked.contains(&entry.path).then_some(index))
+        .collect()
 }
 
 fn render_entries_snapshot(entries: &[DirEntry]) -> Arc<[Arc<DirEntry>]> {
@@ -2174,6 +2185,32 @@ mod tests {
 
         let shared = snapshot.clone();
         assert!(Arc::ptr_eq(&snapshot[0], &shared[0]));
+    }
+
+    #[test]
+    fn marked_indices_are_listing_local_and_reappear_after_filter_clear() {
+        let full = vec![entry("a"), entry("b"), entry("c")];
+        let filtered = vec![entry("a")];
+        let parent = vec![entry("parent-a"), entry("parent-b")];
+        let marked = std::collections::BTreeSet::from([std::path::PathBuf::from("b")]);
+
+        assert_eq!(
+            marked_indices_for_entries(&full, &marked),
+            std::collections::HashSet::from([1])
+        );
+        assert!(
+            marked_indices_for_entries(&filtered, &marked).is_empty(),
+            "a filtered-out mark must remain owned without highlighting another row"
+        );
+        assert!(
+            marked_indices_for_entries(&parent, &marked).is_empty(),
+            "parent indices must never collide with current-column marks"
+        );
+        assert_eq!(
+            marked_indices_for_entries(&full, &marked),
+            std::collections::HashSet::from([1]),
+            "clearing the filter restores the mark"
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ summary: >
   Key the marked set by canonical path so marks survive reload,
   re-sort, filter changes, and watcher deltas.
 owners: [carlo]
-progress: pending
+progress: done
 refines: ["REQ:codon/fm-listing-model#c-path-keyed-marks"]
 assignee:
 eta:

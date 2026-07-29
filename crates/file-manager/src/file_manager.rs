@@ -421,7 +421,10 @@ pub struct FileManager {
     pub(crate) current_dir: PathBuf,
     pub(crate) entries: Vec<DirEntry>,
     pub(crate) selected_index: usize,
-    pub(crate) marked: BTreeSet<usize>,
+    /// Stable ownership set for marks. Paths remain meaningful when the
+    /// listing is filtered, re-sorted, or replaced; render derives the
+    /// current-column index lookup only when the listing snapshot changes.
+    pub(crate) marked: BTreeSet<PathBuf>,
     pub(crate) parent_entries: Vec<DirEntry>,
     pub(crate) preview: Preview,
     /// Immutable entry snapshots consumed by both render pipelines.
@@ -886,14 +889,10 @@ impl FileManager {
         context
     }
 
-    /// Clear listing-derived state ahead of a reload. Marks/filter belong
-    /// to the *old* listing — keeping them visible against the upcoming
-    /// (different) entries would be wrong. They're cleared synchronously
-    /// at spawn time so the screen never shows mismatched mark indices,
-    /// even though the new entries themselves arrive asynchronously from
-    /// `reload_entries_with`.
+    /// Clear transient listing-derived state ahead of a reload. Marks are
+    /// path-owned and intentionally survive until the new listing arrives;
+    /// the install path prunes files that no longer exist.
     fn prepare_reload(&mut self) {
-        self.marked.clear();
         self.visual_anchor = None;
         self.refresh_mark_render_snapshot();
         // A fresh directory listing invalidates any active filter — the
@@ -982,6 +981,7 @@ impl FileManager {
                 sort_entries(&mut parent_entries, this.sort, this.reverse);
                 this.entries = entries;
                 this.parent_entries = parent_entries;
+                retain_marks_present_in(&mut this.marked, &this.entries);
                 this.listing_state = ListingState::Ready {
                     path: current_dir.clone(),
                 };
@@ -1258,6 +1258,11 @@ impl FileManager {
                 for entry in &mut this.parent_entries {
                     entry.git_status = map.get(entry.path.as_path()).copied();
                 }
+                if let Some(entries) = &mut this.entries_unfiltered {
+                    for entry in entries {
+                        entry.git_status = map.get(entry.path.as_path()).copied();
+                    }
+                }
                 this.apply_gitignore_filter();
                 if this.show_gitignored {
                     this.refresh_listing_enrichment_render_snapshots();
@@ -1287,8 +1292,13 @@ impl FileManager {
             .map(|e| e.name.clone());
         self.entries
             .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+        if let Some(entries) = &mut self.entries_unfiltered {
+            entries.retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+        }
         self.parent_entries
             .retain(|e| !matches!(e.git_status, Some(FileStatus::Ignored)));
+        let mark_source = self.entries_unfiltered.as_deref().unwrap_or(&self.entries);
+        retain_marks_present_in(&mut self.marked, mark_source);
         if !was_filtering {
             if let Some(name) = selected_name
                 && let Some(idx) = self.entries.iter().position(|e| e.name == name)
@@ -1655,6 +1665,7 @@ impl FileManager {
                 self.selected_index = 0;
                 self.entries = children;
                 self.parent_entries = new_parent_entries;
+                retain_marks_present_in(&mut self.marked, &self.entries);
                 self.listing_state = ListingState::Ready {
                     path: self.current_dir.clone(),
                 };
@@ -1804,10 +1815,11 @@ impl FileManager {
         // existing visual-range marks are preserved so the toggle still
         // acts on the current row as expected.
         self.visual_anchor = None;
-        if self.marked.contains(&self.selected_index) {
-            self.marked.remove(&self.selected_index);
+        let path = self.entries[self.selected_index].path.clone();
+        if self.marked.contains(&path) {
+            self.marked.remove(&path);
         } else {
-            self.marked.insert(self.selected_index);
+            self.marked.insert(path);
         }
         self.refresh_mark_render_snapshot();
         cx.notify();
@@ -2014,17 +2026,14 @@ impl FileManager {
             return;
         }
         self.visual_anchor = None;
-        self.marked = (0..self.entries.len()).collect();
+        self.marked
+            .extend(self.entries.iter().map(|entry| entry.path.clone()));
         self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
-    /// `ctrl-r`: flip each visible index's membership in `marked` (the
-    /// set-symmetric-difference against the visible window). Entries
-    /// outside the visible window — which today is empty by construction,
-    /// since marks can only be created from rendered rows — keep their
-    /// existing state, so the operation remains correct if that invariant
-    /// is ever relaxed.
+    /// `ctrl-r`: flip each visible path's membership in `marked`. Marks
+    /// hidden by a text filter remain untouched.
     pub(crate) fn invert_marks_visible(&mut self, cx: &mut Context<Self>) {
         if !self.ensure_listing_ready(cx) {
             return;
@@ -2033,19 +2042,16 @@ impl FileManager {
             return;
         }
         self.visual_anchor = None;
-        let visible = 0..self.entries.len();
-        let mut next: BTreeSet<usize> = self
-            .marked
+        for path in self
+            .entries
             .iter()
-            .copied()
-            .filter(|i| !visible.contains(i))
-            .collect();
-        for i in visible {
-            if !self.marked.contains(&i) {
-                next.insert(i);
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+        {
+            if !self.marked.remove(&path) {
+                self.marked.insert(path);
             }
         }
-        self.marked = next;
         self.refresh_mark_render_snapshot();
         cx.notify();
     }
@@ -2065,7 +2071,7 @@ impl FileManager {
         let anchor = self.selected_index;
         self.visual_anchor = Some(anchor);
         self.marked.clear();
-        self.marked.insert(anchor);
+        self.marked.insert(self.entries[anchor].path.clone());
         self.refresh_mark_render_snapshot();
         cx.notify();
     }
@@ -2090,9 +2096,8 @@ impl FileManager {
         let lo = cmp::min(anchor, cursor);
         let hi = cmp::max(anchor, cursor);
         self.marked.clear();
-        for i in lo..=hi {
-            self.marked.insert(i);
-        }
+        self.marked
+            .extend(self.entries[lo..=hi].iter().map(|entry| entry.path.clone()));
         self.refresh_mark_render_snapshot();
     }
 
@@ -2223,11 +2228,23 @@ impl FileManager {
                 .map(|e| vec![e.path.clone()])
                 .unwrap_or_default()
         } else {
-            self.marked
-                .iter()
-                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-                .collect()
+            self.marked_paths_in_listing_order()
         }
+    }
+
+    /// Return marked paths in listing order. While a text filter is active,
+    /// use its full backing listing so marks hidden by the query still
+    /// participate in subsequent file operations.
+    fn marked_paths_in_listing_order(&self) -> Vec<PathBuf> {
+        self.mark_source_entries()
+            .iter()
+            .filter(|entry| self.marked.contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect()
+    }
+
+    fn mark_source_entries(&self) -> &[DirEntry] {
+        self.entries_unfiltered.as_deref().unwrap_or(&self.entries)
     }
 
     fn create_file(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2514,10 +2531,7 @@ impl FileManager {
         self.notify_workspace_scrolled(cx);
     }
 
-    /// Apply a `GrammarSelection::Files` to the FM's mark set. We map
-    /// each path back to its index in `entries` and replace the
-    /// marked-set — same shape as `select_all_visible` but driven by
-    /// the trait result rather than a fixed full-range.
+    /// Apply a `GrammarSelection::Files` to the FM's path-owned mark set.
     fn apply_grammar_marks(&mut self, sel: codon_mode::GrammarSelection) {
         if !self.listing_state.is_ready() {
             return;
@@ -2529,13 +2543,13 @@ impl FileManager {
         if paths.is_empty() {
             return;
         }
-        let path_set: std::collections::HashSet<PathBuf> = paths.into_iter().collect();
+        let path_set: HashSet<PathBuf> = paths.into_iter().collect();
         self.visual_anchor = None;
         self.marked = self
             .entries
             .iter()
-            .enumerate()
-            .filter_map(|(i, e)| path_set.contains(&e.path).then_some(i))
+            .filter(|entry| path_set.contains(&entry.path))
+            .map(|entry| entry.path.clone())
             .collect();
         self.refresh_mark_render_snapshot();
     }
@@ -2917,11 +2931,7 @@ impl FileManager {
             .get(self.selected_index)
             .map(|e| e.path.clone())
             .unwrap_or_else(|| self.current_dir.clone());
-        let marked: Vec<PathBuf> = self
-            .marked
-            .iter()
-            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-            .collect();
+        let marked = self.marked_paths_in_listing_order();
         crate::opener_picker::OpenerTargets {
             cursor,
             marked,
@@ -3040,7 +3050,6 @@ impl FileManager {
             .filter(|entry| is_subsequence(&needle, &entry.name))
             .collect();
         self.selected_index = 0;
-        self.marked.clear();
         self.refresh_current_listing_render_snapshot();
         self.request_preview_update(cx);
     }
@@ -3216,11 +3225,7 @@ impl FileManager {
         if self.marked.is_empty() {
             return;
         }
-        let targets: Vec<PathBuf> = self
-            .marked
-            .iter()
-            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-            .collect();
+        let targets = self.marked_paths_in_listing_order();
         if targets.is_empty() {
             return;
         }
@@ -3245,10 +3250,7 @@ impl FileManager {
                 .map(|e| vec![e.path.clone()])
                 .unwrap_or_default()
         } else {
-            self.marked
-                .iter()
-                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-                .collect()
+            self.marked_paths_in_listing_order()
         };
         if targets.is_empty() {
             return;
@@ -3287,9 +3289,10 @@ impl FileManager {
                 .map(|e| vec![(e.path.clone(), e.mode)])
                 .unwrap_or_default()
         } else {
-            self.marked
+            self.mark_source_entries()
                 .iter()
-                .filter_map(|&i| self.entries.get(i).map(|e| (e.path.clone(), e.mode)))
+                .filter(|entry| self.marked.contains(&entry.path))
+                .map(|entry| (entry.path.clone(), entry.mode))
                 .collect()
         };
         if targets.is_empty() {
@@ -4410,11 +4413,7 @@ impl FileManager {
             .get(self.selected_index)
             .map(|e| e.path.clone())
             .unwrap_or_else(|| self.current_dir.clone());
-        let marked: Vec<PathBuf> = self
-            .marked
-            .iter()
-            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-            .collect();
+        let marked = self.marked_paths_in_listing_order();
         crate::shell::apply_substitutions(template, &cursor, &marked, &self.current_dir)
     }
 
@@ -4792,7 +4791,6 @@ impl FileManager {
         remap_listing_after_sort(
             &mut self.entries,
             &mut self.selected_index,
-            &mut self.marked,
             &mut self.visual_anchor,
             self.sort,
             self.reverse,
@@ -5036,12 +5034,7 @@ impl SelectionSource for FileManager {
             return Selection::Empty;
         }
         if !self.marked.is_empty() {
-            let paths: Vec<PathBuf> = self
-                .marked
-                .iter()
-                .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
-                .collect();
-            Selection::Files(paths)
+            Selection::Files(self.marked_paths_in_listing_order())
         } else {
             match self.entries.get(self.selected_index) {
                 Some(entry) => Selection::Files(vec![entry.path.clone()]),
@@ -5908,23 +5901,17 @@ pub(crate) fn sort_entries(entries: &mut [DirEntry], mode: crate::prefs::SortMod
     });
 }
 
-/// Sort a listing while preserving all index-based interaction state by
-/// resolving it to stable paths before the permutation and rebuilding the
-/// indices afterward.
+/// Sort a listing while preserving the remaining index-based interaction
+/// state (cursor and visual anchor) by resolving it to paths first. Marks are
+/// already path-owned and need no remapping.
 fn remap_listing_after_sort(
     entries: &mut [DirEntry],
     selected_index: &mut usize,
-    marked: &mut BTreeSet<usize>,
     visual_anchor: &mut Option<usize>,
     mode: crate::prefs::SortMode,
     reverse: bool,
 ) {
     let selected_path = entries.get(*selected_index).map(|entry| entry.path.clone());
-    let marked_paths: HashSet<PathBuf> = marked
-        .iter()
-        .filter_map(|index| entries.get(*index))
-        .map(|entry| entry.path.clone())
-        .collect();
     let anchor_path = visual_anchor
         .and_then(|index| entries.get(index))
         .map(|entry| entry.path.clone());
@@ -5935,14 +5922,14 @@ fn remap_listing_after_sort(
         .as_ref()
         .and_then(|path| entries.iter().position(|entry| &entry.path == path))
         .unwrap_or_else(|| (*selected_index).min(entries.len().saturating_sub(1)));
-    *marked = entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| marked_paths.contains(&entry.path).then_some(index))
-        .collect();
     *visual_anchor = anchor_path
         .as_ref()
         .and_then(|path| entries.iter().position(|entry| &entry.path == path));
+}
+
+fn retain_marks_present_in(marked: &mut BTreeSet<PathBuf>, entries: &[DirEntry]) {
+    let present: HashSet<&Path> = entries.iter().map(|entry| entry.path.as_path()).collect();
+    marked.retain(|path| present.contains(path.as_path()));
 }
 
 fn compare_in_group(a: &DirEntry, b: &DirEntry, mode: crate::prefs::SortMode) -> cmp::Ordering {
@@ -7636,7 +7623,7 @@ mod tests {
     }
 
     #[test]
-    fn resort_remaps_selection_marks_and_visual_anchor_by_path() {
+    fn resort_preserves_selection_visual_anchor_and_path_marks() {
         let dir = make_tree(&[("c.txt", false), ("a.txt", false), ("b.txt", false)]);
         let mut entries = read_dir_sync(
             dir.path(),
@@ -7649,31 +7636,41 @@ mod tests {
         .expect("listing");
         // Descending input: c, b, a. Keep b selected, c + a marked, c anchored.
         let selected_path = entries[1].path.clone();
-        let marked_paths = [entries[0].path.clone(), entries[2].path.clone()];
+        let marked = BTreeSet::from([entries[0].path.clone(), entries[2].path.clone()]);
+        let expected_marks = marked.clone();
         let anchor_path = entries[0].path.clone();
         let mut selected_index = 1;
-        let mut marked = BTreeSet::from([0, 2]);
         let mut visual_anchor = Some(0);
 
         remap_listing_after_sort(
             &mut entries,
             &mut selected_index,
-            &mut marked,
             &mut visual_anchor,
             crate::prefs::SortMode::Name,
             false,
         );
 
         assert_eq!(entries[selected_index].path, selected_path);
-        let remapped_marks: HashSet<_> = marked
-            .iter()
-            .map(|index| entries[*index].path.clone())
-            .collect();
-        assert_eq!(remapped_marks, HashSet::from(marked_paths));
+        assert_eq!(marked, expected_marks);
         assert_eq!(
             visual_anchor.map(|index| entries[index].path.clone()),
             Some(anchor_path)
         );
+    }
+
+    #[test]
+    fn reload_pruning_drops_only_missing_mark_paths() {
+        let dir = make_tree(&[("a.txt", false), ("b.txt", false)]);
+        let entries =
+            read_dir_sync(dir.path(), ReadDirOptions::default()).expect("directory listing");
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        let missing = dir.path().join("deleted.txt");
+        let mut marked = BTreeSet::from([a.clone(), b.clone(), missing]);
+
+        retain_marks_present_in(&mut marked, &entries);
+
+        assert_eq!(marked, BTreeSet::from([a, b]));
     }
 
     #[test]
