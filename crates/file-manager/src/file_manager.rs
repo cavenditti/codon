@@ -77,6 +77,107 @@ actions!(
     ]
 );
 
+/// Ranger-compatible browser commands exposed as one typed action family.
+/// Keeping the command in the action payload lets the central TOML keymap
+/// enumerate every alias (and therefore the cheatsheet can discover it)
+/// without creating dozens of near-empty action structs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RangerCommand {
+    NavigateUp,
+    NavigateDown,
+    ParentDirectory,
+    EnterDirectory,
+    GoToTop,
+    GoToBottom,
+    HalfPageUp,
+    HalfPageDown,
+    PageUp,
+    PageDown,
+    HistoryBack,
+    HistoryForward,
+    Reload,
+    Redraw,
+    Filter,
+    FindForward,
+    FindBackward,
+    FindNext,
+    FindPrevious,
+    FollowSymlink,
+    ToggleHidden,
+    ToggleGitignored,
+    ToggleMark,
+    ClearMarks,
+    InvertMarks,
+    SelectAll,
+    StartVisualRange,
+    CreateFile,
+    CreateDirectory,
+    Rename,
+    BulkRename,
+    Copy,
+    Cut,
+    Paste,
+    PasteOverwrite,
+    Delete,
+    Chmod,
+    ChooseOpener,
+    TaskHistory,
+    SearchByName,
+    SearchByContent,
+    Zoxide,
+    ShellAsync,
+    ShellBlocking,
+    LineNone,
+    LineSize,
+    LineMtime,
+    LinePermissions,
+    LineOwner,
+    YankPath,
+    YankDirectory,
+    YankName,
+    YankStem,
+    CdHome,
+    CdEtc,
+    CdUsr,
+    CdDev,
+    CdOpt,
+    CdVar,
+    CdMedia,
+    CdMnt,
+    CdSrv,
+    CdTmp,
+    CdRoot,
+    CdPrompt,
+    SortReverse,
+    SortRandomAscending,
+    SortSizeAscending,
+    SortNameAscending,
+    SortNaturalAscending,
+    SortMtimeAscending,
+    SortBtimeAscending,
+    SortExtensionAscending,
+    SortSizeDescending,
+    SortNameDescending,
+    SortNaturalDescending,
+    SortMtimeDescending,
+    SortBtimeDescending,
+    SortExtensionDescending,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = codon_fm)]
+#[serde(deny_unknown_fields)]
+pub struct Ranger(pub RangerCommand);
+
+#[derive(Clone, Copy)]
+enum RangerYankField {
+    Path,
+    Directory,
+    Name,
+    Stem,
+}
+
 /// Codon-wide "navigate the file manager here" action. The payload is an
 /// absolute path: the handler opens (or focuses) the most-recently-active
 /// FM pane, navigates it to `path.parent()`, then selects the matching
@@ -1817,6 +1918,22 @@ impl FileManager {
         cx.write_to_clipboard(ClipboardItem::new_string(joined));
     }
 
+    fn copy_ranger_text(&self, field: RangerYankField, cx: &mut Context<Self>) {
+        let values: Vec<String> = self
+            .current_targets()
+            .into_iter()
+            .filter_map(|path| match field {
+                RangerYankField::Path => Some(path.display().to_string()),
+                RangerYankField::Directory => path.parent().map(|p| p.display().to_string()),
+                RangerYankField::Name => path.file_name().map(|p| p.to_string_lossy().into_owned()),
+                RangerYankField::Stem => path.file_stem().map(|p| p.to_string_lossy().into_owned()),
+            })
+            .collect();
+        if !values.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(values.join("\n")));
+        }
+    }
+
     /// Publish a path list to the OS clipboard as a `ClipboardItem` with
     /// two entries: `ExternalPaths(paths)` so file-aware apps (Finder etc.)
     /// can paste the actual files, and a joined-text `String` companion
@@ -1894,6 +2011,127 @@ impl FileManager {
         cx: &mut Context<Self>,
     ) {
         self.choose_opener(window, cx);
+        cx.stop_propagation();
+    }
+
+    /// Dispatch a discoverable Ranger compatibility action through the
+    /// existing FM verbs. The central keymap binds both Ranger aliases and
+    /// approved Codon/Helix keys to this surface, so the cheatsheet and the
+    /// raw-key path cannot drift into separate implementations.
+    pub(crate) fn handle_ranger(
+        &mut self,
+        action: &Ranger,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use RangerCommand::*;
+        // Central bindings bypass `handle_key_down`, so preserve its
+        // visual-range housekeeping here. j/k extend the range; Enter/Esc
+        // commit it; every other verb leaves the marks intact but exits the
+        // extending state before acting on them.
+        if self.visual_anchor.is_some() {
+            if matches!(action.0, EnterDirectory) {
+                self.commit_visual_range(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if !matches!(action.0, NavigateUp | NavigateDown) {
+                self.visual_anchor = None;
+            }
+        }
+        match action.0 {
+            NavigateUp => self.navigate_up(&crate::file_manager::NavigateUp, window, cx),
+            NavigateDown => self.navigate_down(&crate::file_manager::NavigateDown, window, cx),
+            ParentDirectory => {
+                self.parent_directory(&crate::file_manager::ParentDirectory, window, cx)
+            }
+            EnterDirectory => {
+                self.enter_directory(&crate::file_manager::EnterDirectory, window, cx)
+            }
+            GoToTop => self.go_to_top(&crate::file_manager::GoToTop, window, cx),
+            GoToBottom => self.go_to_bottom(&crate::file_manager::GoToBottom, window, cx),
+            HalfPageUp => self.half_page_up(window, cx),
+            HalfPageDown => self.half_page_down(window, cx),
+            PageUp => self.page_up(window, cx),
+            PageDown => self.page_down(window, cx),
+            HistoryBack => self.history_back(window, cx),
+            HistoryForward => self.history_forward(window, cx),
+            Reload => self.reload_entries(window, cx),
+            Redraw => cx.notify(),
+            Filter => self.start_filter(window, cx),
+            FindForward => self.start_find_forward(window, cx),
+            FindBackward => self.start_find_backward(window, cx),
+            FindNext => self.find_next(cx),
+            FindPrevious => self.find_prev(cx),
+            FollowSymlink => self.follow_symlink(window, cx),
+            ToggleHidden => self.toggle_hidden(&crate::file_manager::ToggleHidden, window, cx),
+            ToggleGitignored => self.toggle_gitignored(window, cx),
+            ToggleMark => self.toggle_mark(window, cx),
+            ClearMarks => self.clear_marks(cx),
+            InvertMarks => self.invert_marks_visible(cx),
+            SelectAll => self.select_all_visible(cx),
+            StartVisualRange => self.start_visual_range(cx),
+            CreateFile => self.create_file(window, cx),
+            CreateDirectory => self.create_directory(window, cx),
+            Rename => self.rename_entry(window, cx),
+            BulkRename => self.start_bulk_rename(window, cx),
+            Copy => self.yank_to_clipboard(window, cx),
+            Cut => self.cut_to_clipboard(window, cx),
+            Paste => self.paste_clipboard(window, cx),
+            PasteOverwrite => self.paste_clipboard_overwrite(window, cx),
+            Delete => self.delete_entry(window, cx),
+            Chmod => self.start_bulk_chmod(window, cx),
+            ChooseOpener => self.choose_opener(window, cx),
+            TaskHistory => self.open_task_history(window, cx),
+            SearchByName => self.open_search_by_name(window, cx),
+            SearchByContent => self.open_search_by_content(window, cx),
+            Zoxide => self.open_zoxide_picker(window, cx),
+            ShellAsync => self.start_shell_async(window, cx),
+            ShellBlocking => self.start_shell_blocking(window, cx),
+            LineNone => self.set_line_mode(LineMode::None, cx),
+            LineSize => self.set_line_mode(LineMode::Size, cx),
+            LineMtime => self.set_line_mode(LineMode::Mtime, cx),
+            LinePermissions => self.set_line_mode(LineMode::Permissions, cx),
+            LineOwner => self.set_line_mode(LineMode::Owner, cx),
+            YankPath => self.copy_ranger_text(RangerYankField::Path, cx),
+            YankDirectory => self.copy_ranger_text(RangerYankField::Directory, cx),
+            YankName => self.copy_ranger_text(RangerYankField::Name, cx),
+            YankStem => self.copy_ranger_text(RangerYankField::Stem, cx),
+            CdHome => self.goto_path("~", window, cx),
+            CdEtc => self.goto_path("/etc", window, cx),
+            CdUsr => self.goto_path("/usr", window, cx),
+            CdDev => self.goto_path("/dev", window, cx),
+            CdOpt => self.goto_path("/opt", window, cx),
+            CdVar => self.goto_path("/var", window, cx),
+            CdMedia => self.goto_path("/media", window, cx),
+            CdMnt => self.goto_path("/mnt", window, cx),
+            CdSrv => self.goto_path("/srv", window, cx),
+            CdTmp => self.goto_path("/tmp", window, cx),
+            CdRoot => self.goto_path("/", window, cx),
+            CdPrompt => self.start_goto_path(String::new(), window, cx),
+            SortReverse => self.toggle_sort_reverse(window, cx),
+            SortRandomAscending => self.set_ranger_sort(crate::prefs::SortMode::Random, false, cx),
+            SortSizeAscending => self.set_ranger_sort(crate::prefs::SortMode::Size, false, cx),
+            SortNameAscending => self.set_ranger_sort(crate::prefs::SortMode::Name, false, cx),
+            SortNaturalAscending => {
+                self.set_ranger_sort(crate::prefs::SortMode::Natural, false, cx)
+            }
+            SortMtimeAscending => self.set_ranger_sort(crate::prefs::SortMode::Mtime, false, cx),
+            SortBtimeAscending => self.set_ranger_sort(crate::prefs::SortMode::Btime, false, cx),
+            SortExtensionAscending => {
+                self.set_ranger_sort(crate::prefs::SortMode::Extension, false, cx)
+            }
+            SortSizeDescending => self.set_ranger_sort(crate::prefs::SortMode::Size, true, cx),
+            SortNameDescending => self.set_ranger_sort(crate::prefs::SortMode::Name, true, cx),
+            SortNaturalDescending => {
+                self.set_ranger_sort(crate::prefs::SortMode::Natural, true, cx)
+            }
+            SortMtimeDescending => self.set_ranger_sort(crate::prefs::SortMode::Mtime, true, cx),
+            SortBtimeDescending => self.set_ranger_sort(crate::prefs::SortMode::Btime, true, cx),
+            SortExtensionDescending => {
+                self.set_ranger_sort(crate::prefs::SortMode::Extension, true, cx)
+            }
+        }
         cx.stop_propagation();
     }
 
@@ -3417,7 +3655,7 @@ impl FileManager {
                     cx.stop_propagation();
                     return;
                 }
-                'm' | '\'' if key != "escape" => {
+                'm' | '\'' | '`' if key != "escape" => {
                     let letter = event
                         .keystroke
                         .key_char
@@ -3427,7 +3665,7 @@ impl FileManager {
                     if let Some(letter) = letter {
                         match chord {
                             'm' => self.save_bookmark(letter, cx),
-                            '\'' => self.jump_bookmark(letter, window, cx),
+                            '\'' | '`' => self.jump_bookmark(letter, window, cx),
                             _ => unreachable!(),
                         }
                     }
@@ -3597,6 +3835,11 @@ impl FileManager {
             }
             "'" if !ctrl => {
                 self.pending_chord = Some('\'');
+                cx.notify();
+                true
+            }
+            "`" if !ctrl => {
+                self.pending_chord = Some('`');
                 cx.notify();
                 true
             }
@@ -4199,10 +4442,31 @@ impl FileManager {
         self.reload_entries(window, cx);
     }
 
+    fn set_ranger_sort(
+        &mut self,
+        mode: crate::prefs::SortMode,
+        reverse: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sort = mode;
+        self.reverse = reverse;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|prefs, _| {
+            prefs.set_sort(mode);
+            prefs.set_reverse(reverse);
+        });
+        self.reload_entries_with(None, cx);
+    }
+
     fn cycle_line_mode(&mut self, cx: &mut Context<Self>) {
         self.line_mode = self.line_mode.next();
         let mode = self.line_mode;
         cx.update_global::<crate::prefs::FmPrefs, _>(|p, _| p.set_line_mode(mode));
+        cx.notify();
+    }
+
+    fn set_line_mode(&mut self, mode: LineMode, cx: &mut Context<Self>) {
+        self.line_mode = mode;
+        cx.update_global::<crate::prefs::FmPrefs, _>(|prefs, _| prefs.set_line_mode(mode));
         cx.notify();
     }
 
@@ -5806,6 +6070,14 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn ranger_command_payload_uses_stable_snake_case_names() {
+        let command: RangerCommand =
+            serde_json::from_str("\"paste_overwrite\"").expect("Ranger command parses");
+        assert_eq!(command, RangerCommand::PasteOverwrite);
+        assert!(serde_json::from_str::<RangerCommand>("\"not_a_command\"").is_err());
+    }
 
     fn make_tree(layout: &[(&str, bool)]) -> TempDir {
         let dir = TempDir::new().expect("create tempdir");

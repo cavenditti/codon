@@ -369,10 +369,21 @@ format_on_save = "on"
 
 [bindings.file_manager.normal]
 # `:` opens the command palette (Helix-style); already in defaults.
-# "j" = "file_manager::NavigateDown"
-# "k" = "file_manager::NavigateUp"
-# "h" = "file_manager::ParentDirectory"
-# "l" = "file_manager::EnterDirectory"
+# The shipped map includes Ranger-compatible navigation, history,
+# marks, sorting, goto, tabs, and function keys. Press `F1` in the file
+# manager to see the live list (including your overrides).
+#
+# Helix adaptations keep the frequent verbs immediate:
+#   y / d / p  copy / cut / paste
+#   F / f      filter / find
+#   a / A      new file / directory
+# Ranger sub-chords that would delay y/d/p live under `g`, for example:
+#   g y p      copy the selected path as text
+#   g p o      paste with overwrite
+#
+# Override any shipped binding here:
+# "F" = "codon_fm::Ranger(\"filter\")"
+# "g f" = "codon_fm::Ranger(\"follow_symlink\")"
 
 [bindings.terminal.normal]
 # `:` opens the command palette (Helix-style); already in defaults.

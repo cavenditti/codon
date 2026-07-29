@@ -877,6 +877,7 @@ impl Render for FileManager {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::handle_choose_opener))
+            .on_action(cx.listener(Self::handle_ranger))
             .on_action(cx.listener(Self::handle_object_next))
             .on_action(cx.listener(Self::handle_object_prev))
             .on_action(cx.listener(Self::handle_inner_container))
@@ -945,7 +946,7 @@ impl Render for FileManager {
                                 .color(Color::Accent),
                         )
                         .child(
-                            Label::new("(Esc to clear, f to edit)")
+                            Label::new("(Esc to clear, F to edit)")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),
@@ -1631,7 +1632,7 @@ pub(crate) fn contextual_help_hints(fm: &FileManager) -> Option<Vec<(&'static st
             ("y", "yank"),
             ("d", "cut"),
             ("D", "delete"),
-            ("R", "bulk-rename"),
+            ("gcw", "bulk-rename"),
             ("uv", "clear marks"),
         ]);
     }
@@ -1651,8 +1652,8 @@ pub(crate) fn general_shortcut_hints() -> Vec<(&'static str, &'static str)> {
         ("y", "copy"),
         ("v", "mark"),
         ("/", "find"),
-        ("f", "filter"),
-        (".", "hidden"),
+        ("F", "filter"),
+        ("zh", "hidden"),
         ("M", "info col"),
         (";:", "cmd"),
     ]

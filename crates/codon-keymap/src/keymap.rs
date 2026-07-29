@@ -457,30 +457,196 @@ const DEFAULT_KEYMAP: &str = r#"
 
 [bindings.file_manager.normal]
 ":" = "codon_command_palette::Toggle"
-# `O` (shift-o) opens the choose-opener picker over the entry under the
-# cursor — see `crates/file-manager/src/opener_picker.rs`. Raw key
-# handling already triggers the picker; this binding keeps `O` visible
-# in the cheatsheet and lets users rebind it from `codon.toml`.
-"shift-o" = "file_manager::ChooseOpener"
+# Ranger 1.9.4 compatibility. These bindings deliberately live in the
+# central TOML rather than only in the FM's raw-key fallback so the
+# contextual cheatsheet can enumerate the complete compatibility surface.
+# The payload names are stable, typed `codon_fm::Ranger` variants.
+
+# Navigation + scrolling.
+"j"        = "codon_fm::Ranger(\"navigate_down\")"
+"down"     = "codon_fm::Ranger(\"navigate_down\")"
+"k"        = "codon_fm::Ranger(\"navigate_up\")"
+"up"       = "codon_fm::Ranger(\"navigate_up\")"
+"h"        = "codon_fm::Ranger(\"parent_directory\")"
+"left"     = "codon_fm::Ranger(\"parent_directory\")"
+"l"        = "codon_fm::Ranger(\"enter_directory\")"
+"right"    = "codon_fm::Ranger(\"enter_directory\")"
+"enter"    = "codon_fm::Ranger(\"enter_directory\")"
+"home"     = "codon_fm::Ranger(\"go_to_top\")"
+"g g"      = "codon_fm::Ranger(\"go_to_top\")"
+"end"      = "codon_fm::Ranger(\"go_to_bottom\")"
+"shift-g"  = "codon_fm::Ranger(\"go_to_bottom\")"
+"ctrl-d"   = "codon_fm::Ranger(\"half_page_down\")"
+"shift-j"  = "codon_fm::Ranger(\"half_page_down\")"
+"ctrl-u"   = "codon_fm::Ranger(\"half_page_up\")"
+"shift-k"  = "codon_fm::Ranger(\"half_page_up\")"
+"pagedown" = "codon_fm::Ranger(\"page_down\")"
+"ctrl-f"   = "codon_fm::Ranger(\"page_down\")"
+"pageup"   = "codon_fm::Ranger(\"page_up\")"
+"ctrl-b"   = "codon_fm::Ranger(\"page_up\")"
+"shift-h"  = "codon_fm::Ranger(\"history_back\")"
+"shift-l"  = "codon_fm::Ranger(\"history_forward\")"
+"ctrl-l"   = "codon_fm::Ranger(\"redraw\")"
+"ctrl-c"   = "menu::Cancel"
+
+# The user's Ranger override: F filters, f finds. Follow-symlink moves
+# from Codon's old F binding into the goto family at g f.
+"shift-f" = "codon_fm::Ranger(\"filter\")"
+"f"       = "codon_fm::Ranger(\"find_forward\")"
+"/"       = "codon_fm::Ranger(\"find_forward\")"
+"?"       = "codon_fm::Ranger(\"find_backward\")"
+"n"       = "codon_fm::Ranger(\"find_next\")"
+"shift-n" = "codon_fm::Ranger(\"find_previous\")"
+"g f"     = "codon_fm::Ranger(\"follow_symlink\")"
+"shift-r" = "codon_fm::Ranger(\"reload\")"
+"s"       = "codon_fm::Ranger(\"search_by_name\")"
+"shift-s" = "codon_fm::Ranger(\"search_by_content\")"
+
+# Marks + file operations. Space remains Codon's global Helix leader;
+# Ranger's t/Insert aliases cover its single-row marking behavior.
+"t"       = "codon_fm::Ranger(\"toggle_mark\")"
+"insert"  = "codon_fm::Ranger(\"toggle_mark\")"
+"v"       = "codon_fm::Ranger(\"toggle_mark\")"
+"u t"     = "codon_fm::Ranger(\"clear_marks\")"
+"u v"     = "codon_fm::Ranger(\"clear_marks\")"
+"ctrl-r"  = "codon_fm::Ranger(\"invert_marks\")"
+"ctrl-a"  = "codon_fm::Ranger(\"select_all\")"
+"shift-v" = "codon_fm::Ranger(\"start_visual_range\")"
+"a"       = "codon_fm::Ranger(\"create_file\")"
+"shift-a" = "codon_fm::Ranger(\"create_directory\")"
+"r"       = "codon_fm::Ranger(\"rename\")"
+"c w"     = "codon_fm::Ranger(\"rename\")"
+"c m"     = "codon_fm::Ranger(\"chmod\")"
+"c d"     = "codon_fm::Ranger(\"cd_prompt\")"
+"shift-i" = "codon_fm::Ranger(\"rename\")"
+"shift-e" = "codon_fm::Ranger(\"enter_directory\")"
+"y"       = "codon_fm::Ranger(\"copy\")"
+"d"       = "codon_fm::Ranger(\"cut\")"
+"p"       = "codon_fm::Ranger(\"paste\")"
+"shift-d" = "codon_fm::Ranger(\"delete\")"
+"="        = "codon_fm::Ranger(\"chmod\")"
+"shift-o"  = "codon_fm::Ranger(\"choose_opener\")"
+"w"        = "codon_fm::Ranger(\"task_history\")"
+";"        = "codon_fm::Ranger(\"shell_async\")"
+"!"        = "codon_fm::Ranger(\"shell_blocking\")"
+
+# Ranger's y/d/p sub-chords sit under g in Codon. GPUI otherwise has to
+# delay the exact single-key Helix verbs for the full five-second chord
+# timeout. The extra prefix preserves every non-redundant operation while
+# keeping y/d/p instantaneous; yy/dd are already equivalent to tapping
+# Codon's idempotent single-key verbs twice.
+"g y p" = "codon_fm::Ranger(\"yank_path\")"
+"g y d" = "codon_fm::Ranger(\"yank_directory\")"
+"g y n" = "codon_fm::Ranger(\"yank_name\")"
+"g y ." = "codon_fm::Ranger(\"yank_stem\")"
+"g p o" = "codon_fm::Ranger(\"paste_overwrite\")"
+"g c w" = "codon_fm::Ranger(\"bulk_rename\")"
+
+# Metadata line modes.
+"shift-m f"       = "codon_fm::Ranger(\"line_none\")"
+"shift-m i"       = "codon_fm::Ranger(\"line_owner\")"
+"shift-m m"       = "codon_fm::Ranger(\"line_mtime\")"
+"shift-m h"       = "codon_fm::Ranger(\"line_mtime\")"
+"shift-m p"       = "codon_fm::Ranger(\"line_permissions\")"
+"shift-m s"       = "codon_fm::Ranger(\"line_size\")"
+"shift-m shift-h" = "codon_fm::Ranger(\"line_size\")"
+
+# Goto directories.
+"g h"       = "codon_fm::Ranger(\"cd_home\")"
+"g e"       = "codon_fm::Ranger(\"cd_etc\")"
+"g u"       = "codon_fm::Ranger(\"cd_usr\")"
+"g d"       = "codon_fm::Ranger(\"cd_dev\")"
+"g o"       = "codon_fm::Ranger(\"cd_opt\")"
+"g v"       = "codon_fm::Ranger(\"cd_var\")"
+"g m"       = "codon_fm::Ranger(\"cd_media\")"
+"g shift-m" = "codon_fm::Ranger(\"cd_mnt\")"
+"g s"       = "codon_fm::Ranger(\"cd_srv\")"
+"g p"       = "codon_fm::Ranger(\"cd_tmp\")"
+"g r"       = "codon_fm::Ranger(\"cd_root\")"
+"g /"       = "codon_fm::Ranger(\"cd_root\")"
+
+# Ranger tabs map to pane-item tabs rather than Codon sessions/windows.
+"ctrl-n"    = "file_manager::OpenNew"
+"ctrl-w"    = "codon_session::Close"
+"tab"       = "pane::ActivateNextItem"
+"shift-tab" = "pane::ActivatePreviousItem"
+"alt-right" = "pane::ActivateNextItem"
+"alt-left"  = "pane::ActivatePreviousItem"
+"g t"       = "pane::ActivateNextItem"
+"g shift-t" = "pane::ActivatePreviousItem"
+"g n"       = "file_manager::OpenNew"
+"g c"       = "codon_session::Close"
+"u q"       = "pane::ReopenClosedItem"
+"alt-1"     = "pane::ActivateItem(0)"
+"alt-2"     = "pane::ActivateItem(1)"
+"alt-3"     = "pane::ActivateItem(2)"
+"alt-4"     = "pane::ActivateItem(3)"
+"alt-5"     = "pane::ActivateItem(4)"
+"alt-6"     = "pane::ActivateItem(5)"
+"alt-7"     = "pane::ActivateItem(6)"
+"alt-8"     = "pane::ActivateItem(7)"
+"alt-9"     = "pane::ActivateItem(8)"
+
+# Sorting. Lower-case variants force ascending; upper-case force descending.
+"o r"       = "codon_fm::Ranger(\"sort_reverse\")"
+"o z"       = "codon_fm::Ranger(\"sort_random_ascending\")"
+"o s"       = "codon_fm::Ranger(\"sort_size_ascending\")"
+"o b"       = "codon_fm::Ranger(\"sort_name_ascending\")"
+"o n"       = "codon_fm::Ranger(\"sort_natural_ascending\")"
+"o m"       = "codon_fm::Ranger(\"sort_mtime_ascending\")"
+"o c"       = "codon_fm::Ranger(\"sort_btime_ascending\")"
+"o e"       = "codon_fm::Ranger(\"sort_extension_ascending\")"
+"o shift-s" = "codon_fm::Ranger(\"sort_size_descending\")"
+"o shift-b" = "codon_fm::Ranger(\"sort_name_descending\")"
+"o shift-n" = "codon_fm::Ranger(\"sort_natural_descending\")"
+"o shift-m" = "codon_fm::Ranger(\"sort_mtime_descending\")"
+"o shift-c" = "codon_fm::Ranger(\"sort_btime_descending\")"
+"o shift-e" = "codon_fm::Ranger(\"sort_extension_descending\")"
+
+# View toggles and the user's filter aliases.
+"z h" = "codon_fm::Ranger(\"toggle_hidden\")"
+"ctrl-h" = "codon_fm::Ranger(\"toggle_hidden\")"
+"backspace" = "codon_fm::Ranger(\"toggle_hidden\")"
+"z g" = "codon_fm::Ranger(\"toggle_gitignored\")"
+"z f" = "codon_fm::Ranger(\"filter\")"
+"z z" = "codon_fm::Ranger(\"filter\")"
+"g z" = "codon_fm::Ranger(\"zoxide\")"
+
+# Ranger-style safe close: never turn a bare FM key into an app-wide quit.
+"q"                 = "codon_session::Close"
+"shift-q"           = "codon_session::Close"
+"shift-z shift-z"   = "codon_session::Close"
+"shift-z shift-q"   = "codon_session::Close"
+
+# Function-key aliases with direct Codon equivalents.
+"f1"  = "codon_keymap::ShowKeymap"
+"f2"  = "codon_fm::Ranger(\"rename\")"
+"f4"  = "codon_fm::Ranger(\"enter_directory\")"
+"f5"  = "codon_fm::Ranger(\"copy\")"
+"f6"  = "codon_fm::Ranger(\"cut\")"
+"f7"  = "codon_fm::Ranger(\"create_directory\")"
+"f8"  = "codon_fm::Ranger(\"delete\")"
+"f10" = "codon_session::Close"
+
 # `, h` toggles the show-hidden flag. Joined the `,` view-options
 # sub-prefix that already hosts the sort chords so the bare `.` chord
 # is free for the global action-history repeat. The fm's raw `,` chord
 # handler routes through `handle_sort_chord` which now dispatches `h`
 # to ToggleHidden. The binding here exists for cheatsheet visibility
 # and to let users rebind from `codon.toml`.
-", h" = "file_manager::ToggleHidden"
+", h" = "codon_fm::Ranger(\"toggle_hidden\")"
 
-# Phase-19 object-grammar verbs. The fm is the proof-of-concept pane
-# implementation — `w` / `b` cursor-step over files; `mip` / `map` mark
-# the whole containing directory; `%f` marks every visible row. See
+# Phase-19 object-grammar verbs. Ranger owns `w` and `m<char>` in the FM,
+# so Codon's next/previous and container selections use punctuation / the
+# global Space leader. `%f` still marks every visible row. See
 # `crates/codon-pane-bridge/src/object_grammar.rs` for the trait and
 # `REQ:codon/object-grammar` for the cross-pane design. Other pane
 # kinds opt in by implementing `ObjectGrammar` + wiring their own
 # `on_action` handlers (follow-up tasks).
-"w"     = "codon_panes::ObjectNext"
-"b"     = "codon_panes::ObjectPrev"
-"m i p" = "codon_panes::InnerContainer(\"file\")"
-"m a p" = "codon_panes::AroundContainer(\"file\")"
+"]"     = "codon_panes::ObjectNext"
+"["     = "codon_panes::ObjectPrev"
+"space m i p" = "codon_panes::InnerContainer(\"file\")"
+"space m a p" = "codon_panes::AroundContainer(\"file\")"
 "% f"   = "codon_panes::SelectAll(\"file\")"
 
 [bindings.editor.normal]
@@ -697,7 +863,7 @@ verbs = ["d (delete)", "c (change)", "y (yank)", "s (select)", "?"]
 verbs = ["w (next block)", "b (prev block)", "y (copy)", ":"]
 
 [glance.file_manager.normal]
-verbs = ["j/k (move)", "enter (open)", "y (yank path)", ", h (hidden)", ":"]
+verbs = ["F/f (filter/find)", "y/d/p (copy/move)", "o… (sort)", "m/'<c> (bookmarks)", "F1 (keys)"]
 
 [glance.git_panel.normal]
 verbs = ["j/k (move)", "s (stage)", "u (unstage)", "i (msg)", ":"]
@@ -1402,6 +1568,70 @@ mod tests {
         }
     }
 
+    /// Ranger aliases must remain in the central TOML: that is what makes
+    /// them both bindable and visible in the contextual cheatsheet.
+    #[test]
+    fn ranger_file_manager_bindings_are_discoverable_and_immediate() {
+        let parsed = parse_keymap(DEFAULT_KEYMAP).expect("DEFAULT_KEYMAP parses");
+        let fm_normal_pred = mode_predicates("FileManager").0;
+        let fm: HashMap<&str, &str> = parsed
+            .iter()
+            .filter(|(_, _, ctx)| ctx.as_deref() == Some(fm_normal_pred.as_str()))
+            .map(|(key, action, _)| (key.as_str(), action.as_str()))
+            .collect();
+
+        for (key, action) in [
+            ("j", "codon_fm::Ranger(\"navigate_down\")"),
+            ("shift-f", "codon_fm::Ranger(\"filter\")"),
+            ("f", "codon_fm::Ranger(\"find_forward\")"),
+            ("g f", "codon_fm::Ranger(\"follow_symlink\")"),
+            ("shift-h", "codon_fm::Ranger(\"history_back\")"),
+            ("t", "codon_fm::Ranger(\"toggle_mark\")"),
+            ("ctrl-r", "codon_fm::Ranger(\"invert_marks\")"),
+            ("y", "codon_fm::Ranger(\"copy\")"),
+            ("d", "codon_fm::Ranger(\"cut\")"),
+            ("p", "codon_fm::Ranger(\"paste\")"),
+            ("g y p", "codon_fm::Ranger(\"yank_path\")"),
+            ("o s", "codon_fm::Ranger(\"sort_size_ascending\")"),
+            ("g h", "codon_fm::Ranger(\"cd_home\")"),
+            ("g t", "pane::ActivateNextItem"),
+            ("z h", "codon_fm::Ranger(\"toggle_hidden\")"),
+            ("q", "codon_session::Close"),
+            ("f5", "codon_fm::Ranger(\"copy\")"),
+        ] {
+            assert_eq!(
+                fm.get(key),
+                Some(&action),
+                "unexpected FM binding for {key}"
+            );
+        }
+
+        assert!(
+            fm.len() >= 100,
+            "expected a broad Ranger compatibility surface, got {} bindings",
+            fm.len()
+        );
+        assert!(
+            !fm.contains_key("space"),
+            "Space must remain the global Helix leader"
+        );
+        for chord in fm.keys() {
+            for stroke in chord.split_whitespace() {
+                gpui::Keystroke::parse(stroke)
+                    .unwrap_or_else(|err| panic!("invalid FM keystroke {stroke:?}: {err}"));
+            }
+        }
+
+        // A direct binding that is also the prefix of a longer GPUI chord
+        // waits for CHORD_TIMEOUT. Keep the three hot-path verbs leaf-only.
+        for prefix in ["y ", "d ", "p "] {
+            assert!(
+                fm.keys().all(|key| !key.starts_with(prefix)),
+                "{prefix:?} chord would delay the single-key FM verb"
+            );
+        }
+    }
+
     /// The embedded `[glance.*]` table parses and exposes verbs for
     /// every curated pane × mode pair listed in the spec. Locks in
     /// the curated starting point so a future trim of DEFAULT_KEYMAP
@@ -1430,6 +1660,11 @@ mod tests {
                 verbs.len()
             );
         }
+        let fm = merged
+            .get("file_manager.normal")
+            .expect("file-manager glance exists");
+        assert!(fm.iter().any(|verb| verb.contains("bookmarks")));
+        assert!(fm.iter().any(|verb| verb.contains("F/f")));
     }
 
     /// A user `[glance.editor.normal] verbs = []` overrides the
