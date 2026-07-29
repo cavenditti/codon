@@ -101,6 +101,9 @@ pub(crate) enum TraceEvent {
     },
     FramePainted {
         at: Instant,
+        /// Cardinality of the current listing rendered in this frame;
+        /// lets the report compare warm distributions by listing size.
+        listing_count: u32,
         prepaint_ms: f32,
         paint_ms: f32,
         draw_ms: f32,
@@ -213,6 +216,7 @@ impl RenderTrace {
                     json_string(key.as_ref()),
                 ),
                 TraceEvent::FramePainted {
+                    listing_count,
                     prepaint_ms,
                     paint_ms,
                     draw_ms,
@@ -226,6 +230,7 @@ impl RenderTrace {
                     ..
                 } => format!(
                     "{{\"t\":\"frame_painted\",\"at_ms\":{at_ms:.3},\
+                     \"listing_count\":{listing_count},\
                      \"prepaint_ms\":{prepaint_ms:.3},\"paint_ms\":{paint_ms:.3},\
                      \"draw_ms\":{draw_ms:.3},\"rows_painted\":{rows_painted},\
                      \"cache_hits\":{cache_hits},\"cache_misses\":{cache_misses},\
@@ -390,6 +395,7 @@ pub(crate) fn record_keypress(key: SharedString) {
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_frame(
+    listing_count: u32,
     prepaint_ms: f32,
     paint_ms: f32,
     draw_ms: f32,
@@ -404,6 +410,7 @@ pub(crate) fn record_frame(
         let cache_misses = row_cache_misses.saturating_add(shaped_cache_misses);
         trace.record(TraceEvent::FramePainted {
             at: Instant::now(),
+            listing_count,
             prepaint_ms,
             paint_ms,
             draw_ms,
@@ -431,6 +438,7 @@ pub(crate) fn schedule_completed_frame(
     window: &gpui::Window,
     render_started: Instant,
     render_build_ms: f32,
+    listing_count: usize,
 ) {
     if GLOBAL.get().is_none() {
         return;
@@ -458,6 +466,7 @@ pub(crate) fn schedule_completed_frame(
         // not already attributed to render/prepaint/paint.
         let draw_ms = (completed_ms - prepaint_ms - paint_ms).max(0.0);
         record_frame(
+            listing_count.min(u32::MAX as usize) as u32,
             prepaint_ms,
             paint_ms,
             draw_ms,
@@ -538,6 +547,7 @@ mod tests {
             });
             trace.record(TraceEvent::FramePainted {
                 at: Instant::now(),
+                listing_count: 500,
                 prepaint_ms: 0.4,
                 paint_ms: 2.1,
                 draw_ms: 1.6,
@@ -571,6 +581,7 @@ mod tests {
         assert!(lines[0].contains("\"t\":\"keypress\""));
         assert!(lines[0].contains("\"key\":\"j\""));
         assert!(lines[1].contains("\"t\":\"frame_painted\""));
+        assert!(lines[1].contains("\"listing_count\":500"));
         assert!(lines[1].contains("\"rows_painted\":30"));
         assert!(lines[2].contains("\"t\":\"preview_upgraded\""));
         assert!(lines[2].contains("/tmp/foo.rs"));

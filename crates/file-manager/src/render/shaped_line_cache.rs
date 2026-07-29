@@ -10,10 +10,10 @@
 //! (only when a new label scrolls into view) instead of one per row
 //! per column per frame.
 //!
-//! Ownership: a `ShapedLineCache` is instantiated by the custom
-//! column Element (`FmColumnElement`) and borrowed mutably by each
-//! row's paint via `Rc<RefCell<_>>`. Capacity is sized for the
-//! visible window plus a generous lookahead — see `default_capacity`.
+//! Ownership: one `ShapedLineCache` per column persists on the FM
+//! entity and is borrowed mutably by each row's paint via
+//! `Rc<RefCell<_>>`. Capacity is sized for the visible window plus a
+//! generous lookahead — see `default_capacity`.
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;

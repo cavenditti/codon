@@ -41,7 +41,63 @@ impl FileManager {
         self.custom_row_cache_parent.borrow_mut().clear();
         self.custom_row_cache_current.borrow_mut().clear();
         self.custom_row_cache_preview.borrow_mut().clear();
+        self.custom_shaped_cache_parent.borrow_mut().clear();
+        self.custom_shaped_cache_current.borrow_mut().clear();
+        self.custom_shaped_cache_preview.borrow_mut().clear();
     }
+
+    pub(crate) fn refresh_listing_render_snapshots(&mut self) {
+        self.refresh_current_listing_render_snapshot();
+        self.render_parent_entries = render_entries_snapshot(&self.parent_entries);
+    }
+
+    /// Refresh metadata-only enrichment for both listings. Child-count
+    /// fill changes painted row payloads but cannot change membership,
+    /// file sizes, or mark indices, so their aggregates stay valid.
+    pub(crate) fn refresh_listing_enrichment_render_snapshots(&mut self) {
+        self.render_entries = render_entries_snapshot(&self.entries);
+        self.render_parent_entries = render_entries_snapshot(&self.parent_entries);
+    }
+
+    pub(crate) fn refresh_current_listing_render_snapshot(&mut self) {
+        self.render_entries = render_entries_snapshot(&self.entries);
+        self.render_listing_total_size = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.size)
+            .sum();
+        self.render_listing_revision = self.render_listing_revision.wrapping_add(1);
+        self.render_find_key = None;
+        self.refresh_mark_render_snapshot();
+    }
+
+    pub(crate) fn refresh_preview_render_snapshot(&mut self) {
+        self.render_preview_entries = match &self.preview {
+            Preview::Directory(entries) => render_entries_snapshot(entries),
+            _ => Vec::<Arc<DirEntry>>::new().into(),
+        };
+    }
+
+    pub(crate) fn refresh_mark_render_snapshot(&mut self) {
+        self.render_marked = Arc::new(self.marked.iter().copied().collect());
+        self.render_marked_total_size = self
+            .marked
+            .iter()
+            .filter_map(|index| self.entries.get(*index))
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.size)
+            .sum();
+    }
+}
+
+fn render_entries_snapshot(entries: &[DirEntry]) -> Arc<[Arc<DirEntry>]> {
+    entries
+        .iter()
+        .cloned()
+        .map(Arc::new)
+        .collect::<Vec<_>>()
+        .into()
 }
 
 // Free function (not a method) because the `uniform_list` closures
@@ -173,10 +229,9 @@ pub(crate) struct RowCallSite {
 /// custom `FmRowElement` path (when `custom_render = true`) or the
 /// legacy nested-Div path (the default until the harness stabilises).
 ///
-/// The shaped-line cache is shared across rows in a single
-/// `uniform_list` callback invocation via `Rc<RefCell<_>>` — that's
-/// the smallest sharing granularity that keeps `uniform_list`'s
-/// `'static` closure requirement satisfied.
+/// The shaped-line cache is owned by the FM entity and shared across
+/// rows and frames via `Rc<RefCell<_>>`; the same cache serves the
+/// custom and legacy paths for a column.
 pub(crate) fn build_entry_row(
     entry: &DirEntry,
     index: usize,
@@ -228,14 +283,15 @@ pub(crate) fn build_entry_row(
 /// `None` when the custom render path isn't active so the caller
 /// falls back to `uniform_list`.
 pub(crate) fn build_fm_column(
-    entries: Vec<DirEntry>,
+    entries: Arc<[Arc<DirEntry>]>,
     selection: Option<usize>,
-    marks: std::collections::HashSet<usize>,
+    marks: Arc<std::collections::HashSet<usize>>,
     site: RowCallSite,
     column_kind: ColumnKind,
     scroll_offset: &Rc<RefCell<f32>>,
     dirty_rows: &Rc<RefCell<DirtyRows>>,
     row_glyph_cache: &Rc<RefCell<RowGlyphCache>>,
+    shaped_line_cache: &Rc<RefCell<ShapedLineCache>>,
     cx: &App,
 ) -> FmColumnElement {
     let row_theme = resolve_row_theme(cx);
@@ -248,24 +304,16 @@ pub(crate) fn build_fm_column(
         scrollbar_thumb: colors.scrollbar_thumb_background,
     });
 
-    let entry_count = entries.len();
-    let entries_arc: Arc<[Arc<DirEntry>]> =
-        entries.into_iter().map(Arc::new).collect::<Vec<_>>().into();
-
-    let cache_capacity =
-        crate::render::shaped_line_cache::default_capacity(entry_count.clamp(32, 64), 1, 1);
-    let cache = Rc::new(RefCell::new(ShapedLineCache::new(cache_capacity)));
-
     FmColumnElement {
         column_kind,
-        entries: entries_arc,
+        entries,
         selection,
-        marks: Arc::new(marks),
+        marks,
         theme: column_theme,
         row_metrics: metrics,
         line_mode: site.line_mode,
         scroll_offset: scroll_offset.clone(),
-        shaped_line_cache: cache,
+        shaped_line_cache: shaped_line_cache.clone(),
         row_glyph_cache: row_glyph_cache.clone(),
         dirty_rows: dirty_rows.clone(),
         dimmed: site.dimmed,
@@ -295,7 +343,7 @@ pub(crate) fn populate_icon_paths(entries: &mut [DirEntry], cx: &App) {
 impl FileManager {
     fn render_column_static(
         &self,
-        entries: &[DirEntry],
+        entries: Arc<[Arc<DirEntry>]>,
         dimmed: bool,
         show_meta: bool,
         list_id: &'static str,
@@ -309,17 +357,17 @@ impl FileManager {
             line_mode,
             custom_render,
         };
-
-        if custom_render {
-            // Determine which scroll/dirty/cache cell to use based
-            // on `list_id`. The two static-column call sites pass
-            // "fm-parent-list" or "fm-preview-dir-list" — anything
-            // else lands on the current-column cells.
-            let (scroll_cell, dirty_cell, glyph_cache, kind) = if list_id == "fm-parent-list" {
+        // Determine which scroll/dirty/cache cells to use based on
+        // `list_id`. The two static-column call sites pass
+        // "fm-parent-list" or "fm-preview-dir-list" — anything else
+        // lands on the preview-column cells.
+        let (scroll_cell, dirty_cell, glyph_cache, shaped_cache, kind) =
+            if list_id == "fm-parent-list" {
                 (
                     &self.custom_scroll_parent,
                     &self.custom_dirty_parent,
                     &self.custom_row_cache_parent,
+                    &self.custom_shaped_cache_parent,
                     ColumnKind::Parent,
                 )
             } else {
@@ -327,24 +375,28 @@ impl FileManager {
                     &self.custom_scroll_preview,
                     &self.custom_dirty_preview,
                     &self.custom_row_cache_preview,
+                    &self.custom_shaped_cache_preview,
                     ColumnKind::Preview,
                 )
             };
+
+        if custom_render {
             return build_fm_column(
-                entries.to_vec(),
+                entries,
                 None,
-                Default::default(),
+                Arc::new(Default::default()),
                 site,
                 kind,
                 scroll_cell,
                 dirty_cell,
                 glyph_cache,
+                shaped_cache,
                 cx,
             )
             .into_any_element();
         }
 
-        let entries: Vec<DirEntry> = entries.to_vec();
+        let cache = shaped_cache.clone();
         // Virtualized: a directory whose listing happens to be the
         // user's parent dir can easily run into the hundreds (think
         // `~/Projects/` or `node_modules/`). Eager `.children(...)`
@@ -353,12 +405,6 @@ impl FileManager {
         // viewport. No explicit bg — the root container paints the
         // panel color once and the columns inherit it.
         uniform_list(list_id, entries.len(), move |range, _window, cx| {
-            // Cache is per-range invocation — `uniform_list` invokes
-            // the callback once per visible window, so a fresh cache
-            // captures hits across the rows in this batch.
-            let cache = Rc::new(RefCell::new(ShapedLineCache::new(
-                crate::render::shaped_line_cache::default_capacity(range.len().max(8), 1, 1),
-            )));
             range
                 .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
                 .collect()
@@ -371,76 +417,70 @@ impl FileManager {
     fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let line_mode = self.line_mode;
 
-        // Clone the preview snapshot so the subsequent `&mut self` call
-        // for the text branch (`preview_editor_for`) doesn't overlap with
-        // the immutable borrow that a `match &self.preview` would hold.
-        // The variants are cheap to clone — `Text` carries at most
-        // `TEXT_PREVIEW_MAX_BYTES`, `Directory` carries a `Vec<DirEntry>`
-        // that's also the source for the rendered children.
-        let snapshot = self.preview.clone();
-
-        let body: AnyElement = match snapshot {
-            Preview::Directory(entries) => {
-                let custom_render = self.custom_render_enabled();
-                let site = RowCallSite {
-                    dimmed: true,
-                    show_meta: true,
-                    line_mode,
-                    custom_render,
-                };
-                if custom_render {
-                    build_fm_column(
-                        entries,
-                        None,
-                        Default::default(),
-                        site,
-                        ColumnKind::Preview,
-                        &self.custom_scroll_preview,
-                        &self.custom_dirty_preview,
-                        &self.custom_row_cache_preview,
-                        cx,
-                    )
-                    .into_any_element()
-                } else {
-                    // Virtualized: preview can render thousands of children
-                    // when the user lands on a big directory (`node_modules`,
-                    // `~/Downloads`). Without `uniform_list`, every
-                    // navigation rebuilt every row.
-                    uniform_list(
-                        "fm-preview-dir-list",
-                        entries.len(),
-                        move |range, _window, cx| {
-                            let cache = Rc::new(RefCell::new(ShapedLineCache::new(
-                                crate::render::shaped_line_cache::default_capacity(
-                                    range.len().max(8),
-                                    1,
-                                    1,
-                                ),
-                            )));
-                            range
-                                .map(|i| {
-                                    build_entry_row(&entries[i], i, None, false, site, &cache, cx)
-                                })
-                                .collect()
-                        },
-                    )
-                    .size_full()
-                    .into_any_element()
-                }
-            }
-            Preview::Text(text) => render_text_preview(self, &text, window, cx).into_any_element(),
-            Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
-            Preview::Image(info) => render_image_preview(&info).into_any_element(),
-            Preview::Binary(info) => render_binary_preview(&info, cx).into_any_element(),
-            Preview::Empty => div()
-                .child(
-                    div().px(px(8.)).child(
-                        Label::new("[empty]")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
+        // Directory previews use the persistent Arc snapshot directly,
+        // avoiding a full `Vec<DirEntry>` clone on every frame. Other
+        // variants retain the old owned-snapshot path because the text
+        // branch needs a mutable borrow to build/reuse its editor.
+        let body: AnyElement = if matches!(&self.preview, Preview::Directory(_)) {
+            let entries = self.render_preview_entries.clone();
+            let custom_render = self.custom_render_enabled();
+            let site = RowCallSite {
+                dimmed: true,
+                show_meta: true,
+                line_mode,
+                custom_render,
+            };
+            if custom_render {
+                build_fm_column(
+                    entries,
+                    None,
+                    Arc::new(Default::default()),
+                    site,
+                    ColumnKind::Preview,
+                    &self.custom_scroll_preview,
+                    &self.custom_dirty_preview,
+                    &self.custom_row_cache_preview,
+                    &self.custom_shaped_cache_preview,
+                    cx,
                 )
-                .into_any_element(),
+                .into_any_element()
+            } else {
+                let cache = self.custom_shaped_cache_preview.clone();
+                // Virtualized: preview can render thousands of children
+                // when the user lands on a big directory (`node_modules`,
+                // `~/Downloads`). Without `uniform_list`, every
+                // navigation rebuilt every row.
+                uniform_list(
+                    "fm-preview-dir-list",
+                    entries.len(),
+                    move |range, _window, cx| {
+                        range
+                            .map(|i| build_entry_row(&entries[i], i, None, false, site, &cache, cx))
+                            .collect()
+                    },
+                )
+                .size_full()
+                .into_any_element()
+            }
+        } else {
+            match self.preview.clone() {
+                Preview::Directory(_) => unreachable!("directory preview handled above"),
+                Preview::Text(text) => {
+                    render_text_preview(self, &text, window, cx).into_any_element()
+                }
+                Preview::Archive(listing) => render_archive_preview(&listing).into_any_element(),
+                Preview::Image(info) => render_image_preview(&info).into_any_element(),
+                Preview::Binary(info) => render_binary_preview(&info, cx).into_any_element(),
+                Preview::Empty => div()
+                    .child(
+                        div().px(px(8.)).child(
+                            Label::new("[empty]")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .into_any_element(),
+            }
         };
 
         // `size_full` (not `flex_1`) — the preview is mounted inside a
@@ -560,7 +600,7 @@ impl Render for FileManager {
         let parent_col = if show_parent_for_build {
             Some(
                 self.render_column_static(
-                    &self.parent_entries,
+                    self.render_parent_entries.clone(),
                     true,
                     parent_show_meta,
                     "fm-parent-list",
@@ -604,19 +644,8 @@ impl Render for FileManager {
                 None
             }
         });
-        let marked_total_size: u64 = self
-            .marked
-            .iter()
-            .filter_map(|i| self.entries.get(*i))
-            .filter(|e| !e.is_dir)
-            .map(|e| e.size)
-            .sum();
-        let listing_total_size: u64 = self
-            .entries
-            .iter()
-            .filter(|e| !e.is_dir)
-            .map(|e| e.size)
-            .sum();
+        let marked_total_size = self.render_marked_total_size;
+        let listing_total_size = self.render_listing_total_size;
         let bottom_bar_state = BottomBarState {
             entry: focused_entry,
             child_count: focused_child_count,
@@ -649,10 +678,16 @@ impl Render for FileManager {
             _ => None,
         });
         let find_active_pattern = find_pending.or_else(|| self.last_find_pattern.clone());
-        let find_match_count = find_active_pattern
-            .as_ref()
-            .map(|needle| count_find_matches(&self.entries, needle))
-            .unwrap_or(0);
+        let find_match_count = if let Some(needle) = find_active_pattern.as_ref() {
+            let key = (self.render_listing_revision, needle.clone());
+            if self.render_find_key.as_ref() != Some(&key) {
+                self.render_find_match_count = count_find_matches(&self.entries, needle);
+                self.render_find_key = Some(key);
+            }
+            self.render_find_match_count
+        } else {
+            0
+        };
         let top_bar = TopBarState {
             dir_path: dir_display,
             sort: self.sort,
@@ -667,8 +702,8 @@ impl Render for FileManager {
             show_hidden: self.show_hidden,
         };
 
-        let entries = self.entries.clone();
-        let marked = self.marked.clone();
+        let entries = self.render_entries.clone();
+        let marked = self.render_marked.clone();
         let this = cx.entity().downgrade();
         let focus = self.focus_handle.clone();
         let line_mode = self.line_mode;
@@ -683,16 +718,16 @@ impl Render for FileManager {
                 line_mode,
                 custom_render: true,
             };
-            let marks_set: std::collections::HashSet<usize> = marked.iter().copied().collect();
             build_fm_column(
                 entries,
                 Some(selected_idx_for_current),
-                marks_set,
+                marked,
                 site,
                 ColumnKind::Current,
                 &self.custom_scroll_current,
                 &self.custom_dirty_current,
                 &self.custom_row_cache_current,
+                &self.custom_shaped_cache_current,
                 cx,
             )
             .into_any_element()
@@ -1077,7 +1112,12 @@ impl Render for FileManager {
             .child(render_bottom_bar(&bottom_bar_state, bottom_left_mode, cx));
 
         let render_build_ms = render_started.elapsed().as_secs_f32() * 1000.0;
-        crate::render::trace::schedule_completed_frame(window, render_started, render_build_ms);
+        crate::render::trace::schedule_completed_frame(
+            window,
+            render_started,
+            render_build_ms,
+            entry_count,
+        );
 
         panel
     }
@@ -2047,6 +2087,23 @@ mod tests {
             labels: Default::default(),
             icon_path: None,
         }
+    }
+
+    #[test]
+    fn render_entry_snapshot_is_stable_until_explicitly_rebuilt() {
+        let mut entries = vec![entry("first"), entry("second")];
+        entries[0].size = 42;
+
+        let snapshot = render_entries_snapshot(&entries);
+        entries[0].name = "changed".into();
+        entries.push(entry("third"));
+
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].name, "first");
+        assert_eq!(snapshot[0].size, 42);
+
+        let shared = snapshot.clone();
+        assert!(Arc::ptr_eq(&snapshot[0], &shared[0]));
     }
 
     #[test]

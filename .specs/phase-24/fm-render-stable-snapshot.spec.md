@@ -7,7 +7,7 @@ summary: >
   Replace per-render listing clones and derived O(N) scans with stable
   immutable render snapshots updated only when model state changes.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/fm-render-production#c-stable-snapshots
 blocked_by:

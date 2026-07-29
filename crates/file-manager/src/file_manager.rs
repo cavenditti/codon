@@ -393,6 +393,22 @@ pub struct FileManager {
     pub(crate) marked: BTreeSet<usize>,
     pub(crate) parent_entries: Vec<DirEntry>,
     pub(crate) preview: Preview,
+    /// Immutable entry snapshots consumed by both render pipelines.
+    /// Rebuilt only when the corresponding model listing changes, so a
+    /// warm repaint clones three `Arc`s instead of every `DirEntry`.
+    pub(crate) render_entries: Arc<[Arc<DirEntry>]>,
+    pub(crate) render_parent_entries: Arc<[Arc<DirEntry>]>,
+    pub(crate) render_preview_entries: Arc<[Arc<DirEntry>]>,
+    pub(crate) render_marked: Arc<std::collections::HashSet<usize>>,
+    /// Derived once with `render_entries`, rather than scanning the
+    /// complete listing for the bottom bar on every frame.
+    pub(crate) render_listing_total_size: u64,
+    pub(crate) render_marked_total_size: u64,
+    /// Revision-keyed find aggregate. Active find prompts can trigger
+    /// frequent repaints without rescanning the full listing.
+    pub(crate) render_listing_revision: u64,
+    pub(crate) render_find_key: Option<(u64, String)>,
+    pub(crate) render_find_match_count: usize,
     pub(crate) show_hidden: bool,
     pub(crate) fs: Arc<dyn fs::Fs>,
     pub(crate) scroll_handle: UniformListScrollHandle,
@@ -492,6 +508,16 @@ pub struct FileManager {
         std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
     pub(crate) custom_row_cache_preview:
         std::rc::Rc<std::cell::RefCell<crate::render::row_glyph_cache::RowGlyphCache>>,
+    /// Shaped-line caches persist across `Render::render` calls. The
+    /// old construction path allocated a fresh cache for every column
+    /// on every frame, preventing warm-cache reuse for newly-visible
+    /// rows not already present in the row-glyph cache.
+    pub(crate) custom_shaped_cache_parent:
+        std::rc::Rc<std::cell::RefCell<crate::render::shaped_line_cache::ShapedLineCache>>,
+    pub(crate) custom_shaped_cache_current:
+        std::rc::Rc<std::cell::RefCell<crate::render::shaped_line_cache::ShapedLineCache>>,
+    pub(crate) custom_shaped_cache_preview:
+        std::rc::Rc<std::cell::RefCell<crate::render::shaped_line_cache::ShapedLineCache>>,
     /// Dwell-timer state for the deferred-editor preview pipeline
     /// (`REQ:codon/fm-render#c-defer-editor-in-preview`). While the
     /// selection has been stable on the current preview target for
@@ -641,6 +667,8 @@ impl FileManager {
             .try_global::<crate::prefs::FmPrefs>()
             .cloned()
             .unwrap_or_default();
+        let empty_render_entries: Arc<[Arc<DirEntry>]> = Vec::<Arc<DirEntry>>::new().into();
+        let shaped_cache_capacity = crate::render::shaped_line_cache::default_capacity(32, 1, 4);
 
         let mut this = Self {
             focus_handle,
@@ -652,6 +680,15 @@ impl FileManager {
             marked: BTreeSet::new(),
             parent_entries: Vec::new(),
             preview: Preview::Empty,
+            render_entries: empty_render_entries.clone(),
+            render_parent_entries: empty_render_entries.clone(),
+            render_preview_entries: empty_render_entries,
+            render_marked: Arc::new(std::collections::HashSet::new()),
+            render_listing_total_size: 0,
+            render_marked_total_size: 0,
+            render_listing_revision: 0,
+            render_find_key: None,
+            render_find_match_count: 0,
             show_hidden: false,
             fs,
             scroll_handle: UniformListScrollHandle::new(),
@@ -698,6 +735,15 @@ impl FileManager {
             )),
             custom_row_cache_preview: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::render::row_glyph_cache::RowGlyphCache::new(512),
+            )),
+            custom_shaped_cache_parent: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::shaped_line_cache::ShapedLineCache::new(shaped_cache_capacity),
+            )),
+            custom_shaped_cache_current: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::shaped_line_cache::ShapedLineCache::new(shaped_cache_capacity),
+            )),
+            custom_shaped_cache_preview: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::render::shaped_line_cache::ShapedLineCache::new(shaped_cache_capacity),
             )),
             preview_dwell_path: None,
             preview_dwell_upgraded: false,
@@ -790,6 +836,7 @@ impl FileManager {
     /// `reload_entries_with`.
     fn prepare_reload(&mut self) {
         self.marked.clear();
+        self.refresh_mark_render_snapshot();
         // A fresh directory listing invalidates any active filter — the
         // user navigated, so the original set is gone.
         self.filter_query.clear();
@@ -846,6 +893,7 @@ impl FileManager {
                 this.parent_entries = parent_entries;
                 crate::view::populate_icon_paths(&mut this.entries, cx);
                 crate::view::populate_icon_paths(&mut this.parent_entries, cx);
+                this.refresh_listing_render_snapshots();
                 if let Some(name) = select_after.as_deref() {
                     this.selected_index = this
                         .entries
@@ -932,6 +980,7 @@ impl FileManager {
                         entry.labels = build_entry_labels(entry);
                     }
                 }
+                this.refresh_listing_enrichment_render_snapshots();
                 cx.notify();
             })
             .ok();
@@ -1114,6 +1163,11 @@ impl FileManager {
                     entry.git_status = map.get(entry.path.as_path()).copied();
                 }
                 this.apply_gitignore_filter();
+                if this.show_gitignored {
+                    this.refresh_listing_enrichment_render_snapshots();
+                } else {
+                    this.refresh_listing_render_snapshots();
+                }
                 cx.notify();
             })
             .ok();
@@ -1288,6 +1342,7 @@ impl FileManager {
 
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             self.preview = Preview::Empty;
+            self.refresh_preview_render_snapshot();
             self.preview_editor = None;
             cx.notify();
             return;
@@ -1310,6 +1365,7 @@ impl FileManager {
             drop(cache_guard);
             crate::view::populate_icon_paths(&mut children, cx);
             self.preview = Preview::Directory(children);
+            self.refresh_preview_render_snapshot();
             cx.notify();
             return;
         }
@@ -1341,6 +1397,7 @@ impl FileManager {
                     crate::view::populate_icon_paths(children, cx);
                 }
                 this.preview = new_preview;
+                this.refresh_preview_render_snapshot();
                 // `preview_editor` is keyed on the previewed path; the
                 // view layer rebuilds it on next render if the path
                 // changed, so we don't need to invalidate it here.
@@ -1475,6 +1532,8 @@ impl FileManager {
                 self.selected_index = 0;
                 self.entries = children;
                 self.parent_entries = new_parent_entries;
+                self.refresh_listing_render_snapshots();
+                self.refresh_preview_render_snapshot();
                 // Directory rotation: every visible row's payload
                 // is stale (different path set). Mark all three
                 // custom-render columns dirty so the row-glyph
@@ -1615,6 +1674,7 @@ impl FileManager {
         } else {
             self.marked.insert(self.selected_index);
         }
+        self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
@@ -1798,6 +1858,7 @@ impl FileManager {
         }
         self.visual_anchor = None;
         self.marked.clear();
+        self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
@@ -1810,6 +1871,7 @@ impl FileManager {
         }
         self.visual_anchor = None;
         self.marked = (0..self.entries.len()).collect();
+        self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
@@ -1837,6 +1899,7 @@ impl FileManager {
             }
         }
         self.marked = next;
+        self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
@@ -1853,6 +1916,7 @@ impl FileManager {
         self.visual_anchor = Some(anchor);
         self.marked.clear();
         self.marked.insert(anchor);
+        self.refresh_mark_render_snapshot();
         cx.notify();
     }
 
@@ -1879,6 +1943,7 @@ impl FileManager {
         for i in lo..=hi {
             self.marked.insert(i);
         }
+        self.refresh_mark_render_snapshot();
     }
 
     /// `y` in Normal mode: store the current entry — or the whole marked
@@ -1895,6 +1960,7 @@ impl FileManager {
         self.write_paths_to_os_clipboard(&paths, cx);
         self.clipboard = FmClipboard::Yank(paths);
         self.marked.clear();
+        self.refresh_mark_render_snapshot();
         self.surface_error(format!("Yanked {count} entr{}", plural_y(count)), cx);
         cx.notify();
     }
@@ -1918,6 +1984,7 @@ impl FileManager {
         self.write_paths_to_os_clipboard(&paths, cx);
         self.clipboard = FmClipboard::Cut(paths);
         self.marked.clear();
+        self.refresh_mark_render_snapshot();
         self.surface_error(format!("Cut {count} entr{}", plural_y(count)), cx);
         cx.notify();
     }
@@ -2290,6 +2357,7 @@ impl FileManager {
             .enumerate()
             .filter_map(|(i, e)| path_set.contains(&e.path).then_some(i))
             .collect();
+        self.refresh_mark_render_snapshot();
     }
 
     pub(crate) fn handle_cancel(
@@ -2747,6 +2815,7 @@ impl FileManager {
         if self.filter_query.is_empty() {
             self.entries = unfiltered;
             self.selected_index = 0;
+            self.refresh_current_listing_render_snapshot();
             self.request_preview_update(cx);
             return;
         }
@@ -2761,6 +2830,7 @@ impl FileManager {
             .collect();
         self.selected_index = 0;
         self.marked.clear();
+        self.refresh_current_listing_render_snapshot();
         self.request_preview_update(cx);
     }
 
@@ -2770,6 +2840,7 @@ impl FileManager {
             self.entries = unfiltered;
         }
         self.selected_index = cmp::min(self.selected_index, self.entries.len().saturating_sub(1));
+        self.refresh_current_listing_render_snapshot();
         self.request_preview_update(cx);
     }
 

@@ -63,6 +63,8 @@ def main(argv: list[str]) -> int:
     paint: list[float] = []
     draw: list[float] = []
     total: list[float] = []
+    listing_counts: list[float] = []
+    totals_by_listing: dict[int, list[float]] = {}
     rows: list[float] = []
     hits: list[float] = []
     misses: list[float] = []
@@ -94,11 +96,17 @@ def main(argv: list[str]) -> int:
                 prepaint.append(float(evt.get("prepaint_ms", 0.0)))
                 paint.append(float(evt.get("paint_ms", 0.0)))
                 draw.append(float(evt.get("draw_ms", 0.0)))
-                total.append(
+                total_ms = (
                     float(evt.get("prepaint_ms", 0.0))
                     + float(evt.get("paint_ms", 0.0))
                     + float(evt.get("draw_ms", 0.0))
                 )
+                total.append(total_ms)
+                listing_count = evt.get("listing_count")
+                if listing_count is not None:
+                    listing_count = int(listing_count)
+                    listing_counts.append(float(listing_count))
+                    totals_by_listing.setdefault(listing_count, []).append(total_ms)
                 rows.append(float(evt.get("rows_painted", 0)))
                 hits.append(float(evt.get("cache_hits", 0)))
                 misses.append(float(evt.get("cache_misses", 0)))
@@ -128,6 +136,8 @@ def main(argv: list[str]) -> int:
     print(fmt_dist("paint_ms", paint))
     print(fmt_dist("draw_ms", draw))
     print(fmt_dist("total_ms", total))
+    if listing_counts:
+        print(fmt_dist("listing_count", listing_counts, unit=""))
     print(fmt_dist("rows_painted", rows, unit=""))
     print(fmt_dist("cache_hits", hits, unit=""))
     print(fmt_dist("cache_misses", misses, unit=""))
@@ -140,6 +150,11 @@ def main(argv: list[str]) -> int:
             f"  {'shaped-line hit rate':<28} "
             f"{100.0 * sum(shaped_hits) / shaped_total:8.3f}%"
         )
+    if len(totals_by_listing) > 1:
+        print()
+        print("total_ms grouped by listing_count:")
+        for listing_count, samples in sorted(totals_by_listing.items()):
+            print(fmt_dist(f"{listing_count} entries", samples))
     print()
     print("keypress -> frame_painted latency:")
     print(fmt_dist("latency_ms", latencies))
