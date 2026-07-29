@@ -18,8 +18,6 @@
 //! FIFO eviction. It is in-memory only — cleared on quit — and lives
 //! beside the `WindowRuntimeCache` pattern in `codon-session`.
 
-#![allow(dead_code)]
-
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -51,6 +49,8 @@ const TICK_THROTTLE: Duration = Duration::from_millis(100);
 pub enum FmTaskKind {
     /// `D` — recursive trash of one or more entries.
     Delete,
+    /// `dD` — permanently remove one or more entries without trash.
+    HardDelete,
     /// `p` / `P` — copy-or-move from the FM clipboard into the current
     /// directory.
     Paste,
@@ -65,18 +65,20 @@ impl FmTaskKind {
     fn verb_running(self) -> &'static str {
         match self {
             FmTaskKind::Delete => "Trashing",
+            FmTaskKind::HardDelete => "Deleting",
             FmTaskKind::Paste => "Pasting",
             FmTaskKind::BulkRename => "Renaming",
-            FmTaskKind::Chmod => "Chmoding",
+            FmTaskKind::Chmod => "Chmodding",
         }
     }
 
     fn verb_done(self) -> &'static str {
         match self {
             FmTaskKind::Delete => "Trashed",
+            FmTaskKind::HardDelete => "Deleted",
             FmTaskKind::Paste => "Pasted",
             FmTaskKind::BulkRename => "Renamed",
-            FmTaskKind::Chmod => "Chmoded",
+            FmTaskKind::Chmod => "Chmodded",
         }
     }
 }
@@ -177,7 +179,7 @@ impl FmTask {
     pub fn summary(&self) -> String {
         match &self.state {
             FmTaskState::Running { processed, total } => {
-                format!("{} {} of {} …", self.kind.verb_running(), processed, total)
+                format!("{} — {} of {} …", self.label, processed, total)
             }
             FmTaskState::Done { processed, .. } => {
                 format!(
@@ -198,7 +200,7 @@ impl FmTask {
                     self.kind.verb_done(),
                     processed,
                     total,
-                    total.saturating_sub(*processed),
+                    errors.len(),
                     first
                 )
             }
@@ -244,10 +246,6 @@ impl FmTaskStore {
         out
     }
 
-    pub fn get(&self, id: u64) -> Option<&FmTask> {
-        self.tasks.iter().find(|t| t.id == id)
-    }
-
     fn allocate_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -284,10 +282,6 @@ pub struct FmTaskHandle {
 }
 
 impl FmTaskHandle {
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
     pub fn cancel_flag(&self) -> Arc<AtomicBool> {
         self.cancel.clone()
     }
@@ -480,6 +474,17 @@ mod tests {
         let s = task.summary();
         assert!(s.contains("permission denied"), "{s}");
         assert!(s.contains("10 of 12"), "{s}");
+        assert!(s.contains("2 failed"), "{s}");
+    }
+
+    #[test]
+    fn hard_delete_summary_does_not_claim_items_were_trashed() {
+        let mut task = sample_task(FmTaskState::Done {
+            processed: 3,
+            total: 3,
+        });
+        task.kind = FmTaskKind::HardDelete;
+        assert_eq!(task.summary(), "Deleted 3 entries");
     }
 
     #[test]

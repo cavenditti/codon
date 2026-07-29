@@ -14,7 +14,10 @@ use serde::Deserialize;
 use std::cmp;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use ui::{Icon, IconName};
 use util::ResultExt;
 use workspace::{
@@ -661,6 +664,33 @@ pub(crate) struct PasteEntry {
     pub(crate) source: PathBuf,
     pub(crate) destination: PathBuf,
     pub(crate) destination_exists: bool,
+}
+
+struct CancellableItems<I> {
+    inner: std::iter::Enumerate<I>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl<I: Iterator> Iterator for CancellableItems<I> {
+    type Item = (usize, I::Item);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cancel.load(Ordering::Relaxed) {
+            None
+        } else {
+            self.inner.next()
+        }
+    }
+}
+
+fn cancellable_items<T: IntoIterator>(
+    items: T,
+    cancel: Arc<AtomicBool>,
+) -> CancellableItems<T::IntoIter> {
+    CancellableItems {
+        inner: items.into_iter().enumerate(),
+        cancel,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3127,9 +3157,20 @@ impl FileManager {
         cx: &mut Context<Self>,
     ) {
         let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let total = targets.len();
+        let mut handle = crate::tasks::begin(
+            workspace.clone(),
+            crate::tasks::FmTaskKind::HardDelete,
+            format!("Deleting {total} entries"),
+            total,
+            cx,
+        );
+        let cancel_flag = handle.cancel_flag();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
-            for path in targets {
+            let mut processed = 0;
+            for (index, path) in cancellable_items(targets, cancel_flag.clone()) {
                 let options = fs::RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: false,
@@ -3143,7 +3184,31 @@ impl FileManager {
                 if let Err(e) = result {
                     failures.push((path, e));
                 }
+                processed = index + 1;
+                let workspace = workspace.clone();
+                cx.update(|_, cx| {
+                    crate::tasks::tick(&mut handle, processed, workspace, cx);
+                })
+                .ok();
             }
+            let cancelled = cancel_flag.load(Ordering::Relaxed) && processed < total;
+            let outcome = if cancelled {
+                crate::tasks::FmTaskOutcome::Cancelled
+            } else if failures.is_empty() {
+                crate::tasks::FmTaskOutcome::Done
+            } else {
+                crate::tasks::FmTaskOutcome::Failed {
+                    errors: failures
+                        .iter()
+                        .map(|(path, error)| format!("{}: {error}", path.display()))
+                        .collect(),
+                }
+            };
+            let workspace_finish = workspace.clone();
+            cx.update(|_, cx| {
+                crate::tasks::finish(handle, outcome, workspace_finish, cx);
+            })
+            .ok();
             this.update_in(cx, |this, window, cx| {
                 for (path, e) in &failures {
                     let name = path
@@ -3165,7 +3230,6 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use std::sync::atomic::Ordering;
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let total = targets.len();
@@ -3360,13 +3424,48 @@ impl FileManager {
                 }
             };
             let fs = self.fs.clone();
+            let workspace = self.workspace.clone();
+            let total = plan.len();
+            let mut handle = crate::tasks::begin(
+                workspace.clone(),
+                crate::tasks::FmTaskKind::Chmod,
+                format!("Changing permissions on {total} entries"),
+                total,
+                cx,
+            );
+            let cancel_flag = handle.cancel_flag();
             cx.spawn_in(window, async move |this, cx| {
                 let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
-                for (path, mode) in plan {
+                let mut processed = 0;
+                for (index, (path, mode)) in cancellable_items(plan, cancel_flag.clone()) {
                     if let Err(e) = fs.set_permissions(&path, mode).await {
                         failures.push((path, e));
                     }
+                    processed = index + 1;
+                    let workspace = workspace.clone();
+                    cx.update(|_, cx| {
+                        crate::tasks::tick(&mut handle, processed, workspace, cx);
+                    })
+                    .ok();
                 }
+                let cancelled = cancel_flag.load(Ordering::Relaxed) && processed < total;
+                let outcome = if cancelled {
+                    crate::tasks::FmTaskOutcome::Cancelled
+                } else if failures.is_empty() {
+                    crate::tasks::FmTaskOutcome::Done
+                } else {
+                    crate::tasks::FmTaskOutcome::Failed {
+                        errors: failures
+                            .iter()
+                            .map(|(path, error)| format!("{}: {error}", path.display()))
+                            .collect(),
+                    }
+                };
+                let workspace_finish = workspace.clone();
+                cx.update(|_, cx| {
+                    crate::tasks::finish(handle, outcome, workspace_finish, cx);
+                })
+                .ok();
                 this.update_in(cx, |this, window, cx| {
                     for (path, e) in &failures {
                         let name = path
@@ -3394,37 +3493,71 @@ impl FileManager {
             return;
         }
         let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let total = targets.len();
+        let mut handle = crate::tasks::begin(
+            workspace.clone(),
+            crate::tasks::FmTaskKind::BulkRename,
+            format!("Renaming {total} entries"),
+            total,
+            cx,
+        );
+        let cancel_flag = handle.cancel_flag();
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
-            for (index, source) in targets.iter().enumerate() {
+            let mut processed = 0;
+            for (index, source) in cancellable_items(targets, cancel_flag.clone()) {
                 let parent = source.parent().unwrap_or(Path::new("/")).to_path_buf();
                 let new_name = apply_rename_pattern(&pattern, index + 1);
                 let destination = parent.join(&new_name);
-                if destination == *source {
-                    continue;
-                }
-                if destination.exists() {
+                if destination == source {
+                    // No-op patterns still count as processed work.
+                } else if destination.exists() {
                     failures.push((
                         source.clone(),
                         anyhow::anyhow!("target {new_name} already exists"),
                     ));
-                    continue;
+                } else {
+                    let result = fs
+                        .rename(
+                            &source,
+                            &destination,
+                            RenameOptions {
+                                overwrite: false,
+                                ignore_if_exists: false,
+                                create_parents: false,
+                            },
+                        )
+                        .await;
+                    if let Err(e) = result {
+                        failures.push((source.clone(), e));
+                    }
                 }
-                let result = fs
-                    .rename(
-                        source,
-                        &destination,
-                        RenameOptions {
-                            overwrite: false,
-                            ignore_if_exists: false,
-                            create_parents: false,
-                        },
-                    )
-                    .await;
-                if let Err(e) = result {
-                    failures.push((source.clone(), e));
-                }
+                processed = index + 1;
+                let workspace = workspace.clone();
+                cx.update(|_, cx| {
+                    crate::tasks::tick(&mut handle, processed, workspace, cx);
+                })
+                .ok();
             }
+            let cancelled = cancel_flag.load(Ordering::Relaxed) && processed < total;
+            let outcome = if cancelled {
+                crate::tasks::FmTaskOutcome::Cancelled
+            } else if failures.is_empty() {
+                crate::tasks::FmTaskOutcome::Done
+            } else {
+                crate::tasks::FmTaskOutcome::Failed {
+                    errors: failures
+                        .iter()
+                        .map(|(path, error)| format!("{}: {error}", path.display()))
+                        .collect(),
+                }
+            };
+            let workspace_finish = workspace.clone();
+            cx.update(|_, cx| {
+                crate::tasks::finish(handle, outcome, workspace_finish, cx);
+            })
+            .ok();
             this.update_in(cx, |this, window, cx| {
                 for (path, e) in &failures {
                     let name = path
@@ -3632,11 +3765,25 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if plan.is_empty() {
+            return;
+        }
         let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let total = plan.len();
+        let mut handle = crate::tasks::begin(
+            workspace.clone(),
+            crate::tasks::FmTaskKind::Paste,
+            format!("Pasting {total} entries"),
+            total,
+            cx,
+        );
+        let cancel_flag = handle.cancel_flag();
 
         cx.spawn_in(window, async move |this, cx| {
             let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
-            for entry in &plan {
+            let mut processed = 0;
+            for (index, entry) in cancellable_items(plan, cancel_flag.clone()) {
                 let result = if is_cut {
                     fs.rename(
                         &entry.source,
@@ -3660,7 +3807,31 @@ impl FileManager {
                 if let Err(e) = result {
                     failures.push((entry.source.clone(), e));
                 }
+                processed = index + 1;
+                let workspace = workspace.clone();
+                cx.update(|_, cx| {
+                    crate::tasks::tick(&mut handle, processed, workspace, cx);
+                })
+                .ok();
             }
+            let cancelled = cancel_flag.load(Ordering::Relaxed) && processed < total;
+            let outcome = if cancelled {
+                crate::tasks::FmTaskOutcome::Cancelled
+            } else if failures.is_empty() {
+                crate::tasks::FmTaskOutcome::Done
+            } else {
+                crate::tasks::FmTaskOutcome::Failed {
+                    errors: failures
+                        .iter()
+                        .map(|(path, error)| format!("{}: {error}", path.display()))
+                        .collect(),
+                }
+            };
+            let workspace_finish = workspace.clone();
+            cx.update(|_, cx| {
+                crate::tasks::finish(handle, outcome, workspace_finish, cx);
+            })
+            .ok();
 
             this.update_in(cx, |this, window, cx| {
                 for (path, e) in &failures {
@@ -3671,7 +3842,7 @@ impl FileManager {
                     let verb = if is_cut { "move" } else { "copy" };
                     this.surface_error(format!("Couldn't {verb} {name}: {e}"), cx);
                 }
-                if is_cut && failures.is_empty() {
+                if is_cut && !cancelled && failures.is_empty() {
                     this.clipboard = FmClipboard::Empty;
                 }
                 this.reload_entries(window, cx);
@@ -6551,6 +6722,33 @@ mod tests {
         assert_eq!(
             visible_lines_for_viewport(Pixels::from(120.0), Pixels::from(0.0)),
             None
+        );
+    }
+
+    #[test]
+    fn paste_iteration_stops_mid_batch_when_cancelled() {
+        let plan = (0..5)
+            .map(|index| PasteEntry {
+                source: PathBuf::from(format!("/source/{index}")),
+                destination: PathBuf::from(format!("/destination/{index}")),
+                destination_exists: false,
+            })
+            .collect::<Vec<_>>();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut processed = Vec::new();
+
+        for (_, entry) in cancellable_items(plan, cancel.clone()) {
+            processed.push(entry.source);
+            if processed.len() == 2 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+
+        assert_eq!(processed.len(), 2);
+        assert_eq!(
+            5 - processed.len(),
+            3,
+            "the unstarted paste items are skipped"
         );
     }
 

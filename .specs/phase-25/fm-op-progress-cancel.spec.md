@@ -8,7 +8,7 @@ summary: >
   delete, bulk rename, and bulk chmod — the four ops that bypass the
   task store today.
 owners: [carlo]
-progress: pending
+progress: done
 refines: ["REQ:codon/fm-op-responsiveness#c-operation-progress"]
 assignee:
 eta:
