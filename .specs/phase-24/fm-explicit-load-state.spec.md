@@ -7,7 +7,7 @@ summary: >
   Represent listing loading and errors explicitly and prevent retained
   stale rows from receiving list-dependent operations.
 owners: [carlo]
-progress: pending
+progress: in-progress
 refines:
   - REQ:codon/fm-stateful-ux#c-explicit-load-state
 blocked_by: []

@@ -9,8 +9,8 @@ use ui::{Color, Icon, IconName, IconSize, Label, LabelCommon, LabelSize, h_flex,
 use workspace::codon_jump_clickable::JumpClickableExt;
 
 use crate::file_manager::{
-    ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, PendingInput, Preview,
-    TextPreview, format_hex_dump,
+    ArchiveListing, BinaryInfo, DirEntry, FileManager, ImageInfo, ListingState, PendingInput,
+    Preview, TextPreview, format_hex_dump,
 };
 use crate::prefs::LineMode;
 use crate::render::column::{ColumnKind, ColumnTheme, DirtyRows, FmColumnElement};
@@ -416,6 +416,11 @@ impl FileManager {
 
     fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let line_mode = self.line_mode;
+        let preview_surface = if matches!(&self.preview, Preview::Text(_)) {
+            cx.theme().colors().editor_background
+        } else {
+            cx.theme().colors().panel_background
+        };
 
         // Directory previews use the persistent Arc snapshot directly,
         // avoiding a full `Vec<DirEntry>` clone on every frame. Other
@@ -492,6 +497,11 @@ impl FileManager {
             .size_full()
             .overflow_hidden()
             .py(px(2.))
+            // Text previews eventually mount a full Editor, whose native
+            // surface is `editor_background`. Paint that surface from the
+            // first fallback frame so the padded editor never appears as an
+            // inset card with a panel-colored border around it.
+            .bg(preview_surface)
             .child(body)
             .into_any_element()
     }
@@ -626,6 +636,9 @@ impl Render for FileManager {
         let panel_bg = theme.colors().panel_background;
         let dir_display = self.current_dir.display().to_string();
         let entry_count = self.entries.len();
+        let listing_ready = self.listing_state.is_ready();
+        let listing_state_banner =
+            render_listing_state_banner(&self.listing_state, entry_count, cx);
         let marked_count = self.marked.len();
         let selected_index = self.selected_index;
 
@@ -951,6 +964,7 @@ impl Render for FileManager {
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(render_top_bar(&top_bar, cx))
+            .when_some(listing_state_banner, |this, banner| this.child(banner))
             .when(filter_committed, |this| {
                 this.child(
                     h_flex()
@@ -992,6 +1006,7 @@ impl Render for FileManager {
                 h_flex()
                     .flex_1()
                     .min_h_0()
+                    .when(!listing_ready, |row| row.opacity(0.55))
                     .on_children_prepainted({
                         // Capture two things from the painted column
                         // row: the parent column width (drives the
@@ -1123,6 +1138,48 @@ impl Render for FileManager {
     }
 }
 
+fn render_listing_state_banner(
+    state: &ListingState,
+    entry_count: usize,
+    cx: &App,
+) -> Option<AnyElement> {
+    let (message, color) = match state {
+        ListingState::Loading { path } if entry_count == 0 => {
+            (format!("Loading {}…", path.display()), Color::Accent)
+        }
+        ListingState::Loading { path } => (
+            format!(
+                "Loading {}… · showing retained rows read-only",
+                path.display()
+            ),
+            Color::Accent,
+        ),
+        ListingState::Error { path, message } => (
+            format!(
+                "Couldn’t load {}: {} · Shift-R to retry",
+                path.display(),
+                message
+            ),
+            Color::Error,
+        ),
+        ListingState::Ready { .. } if entry_count == 0 => {
+            ("Empty directory".to_string(), Color::Muted)
+        }
+        ListingState::Ready { .. } => return None,
+    };
+    let theme = cx.theme();
+    Some(
+        h_flex()
+            .px(px(8.))
+            .py(px(2.))
+            .bg(theme.colors().editor_background)
+            .border_b_1()
+            .border_color(theme.colors().border)
+            .child(Label::new(message).size(LabelSize::Small).color(color))
+            .into_any_element(),
+    )
+}
+
 fn render_text_preview(
     fm: &mut FileManager,
     text: &TextPreview,
@@ -1133,48 +1190,59 @@ fn render_text_preview(
     // rows, render a static text snapshot via plain glyph runs and
     // skip the full `EditorElement::prepaint` →
     // `WindowTextSystem::shape_line` cost. Once the dwell timer
-    // (150 ms) has elapsed on the same target path, upgrade to the
-    // real editor for cursor / folding / gutter / etc. See
+    // has elapsed on the same target path, upgrade to the
+    // real editor for cursor / folding / gutter / etc. The static snapshot
+    // deliberately uses the editor's surface and typography so this is a
+    // content-quality upgrade, not a background/font-size flash. See
     // `REQ:codon/fm-render#c-defer-editor-in-preview`.
     let dwell_complete =
         fm.preview_dwell_upgraded && fm.preview_dwell_path.as_ref() == Some(&text.path);
     if !dwell_complete {
-        return render_text_preview_static(text);
+        return render_text_preview_static(text, cx);
     }
     let editor = fm.preview_editor_for(text, window, cx);
     div()
         .size_full()
         .px(px(8.))
         .py(px(2.))
+        .bg(cx.theme().colors().editor_background)
         .child(editor)
         .into_any_element()
 }
 
 /// Static fallback rendering for the deferred-editor preview. Emits
-/// the file's bytes as a vertical stack of muted `Label`s — enough
-/// to give the user a glance at the file contents without paying
-/// the full `EditorElement::prepaint` cost on every `j` / `k` move.
-fn render_text_preview_static(text: &TextPreview) -> AnyElement {
+/// the file's bytes with the same surface, font, size, line height, and
+/// foreground as the upgraded editor, without paying the full
+/// `EditorElement::prepaint` cost on every `j` / `k` move.
+fn render_text_preview_static(text: &TextPreview, cx: &App) -> AnyElement {
     // Cap the static preview to a screenful's worth of lines.
     // Beyond that the user is going to want the real editor (which
-    // the dwell timer will deliver in 150 ms).
+    // the dwell timer will deliver after a stable selection).
     const MAX_LINES: usize = 64;
-    let lines: Vec<String> = text
+    let lines: Vec<SharedString> = text
         .content
         .lines()
         .take(MAX_LINES)
-        .map(|s| s.to_string())
+        .map(|line| SharedString::from(line.to_owned()))
         .collect();
-    let mut col = v_flex().size_full().px(px(8.)).py(px(2.)).gap(px(0.));
-    for line in lines {
-        col = col.child(
-            Label::new(line)
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .single_line(),
-        );
-    }
-    col.into_any_element()
+    let settings = theme::theme_settings(cx);
+    v_flex()
+        .size_full()
+        .px(px(8.))
+        .py(px(2.))
+        .gap(px(0.))
+        .overflow_hidden()
+        .bg(cx.theme().colors().editor_background)
+        .font(settings.buffer_font(cx).clone())
+        .text_size(settings.buffer_font_size(cx))
+        .line_height(relative(settings.buffer_line_height.value()))
+        .text_color(cx.theme().colors().editor_foreground)
+        .children(
+            lines
+                .into_iter()
+                .map(|line| div().overflow_hidden().whitespace_nowrap().child(line)),
+        )
+        .into_any_element()
 }
 
 fn render_image_preview(info: &ImageInfo) -> impl IntoElement {

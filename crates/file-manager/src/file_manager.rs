@@ -218,6 +218,16 @@ const L_CHORD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(22
 /// preview read.
 const PREVIEW_DEBOUNCE_MS: u64 = 40;
 
+/// Time a text-preview selection must remain stable before the static
+/// snapshot upgrades to a full editor. Cached editors bypass this dwell:
+/// their construction cost has already been paid.
+const PREVIEW_EDITOR_DWELL_MS: u64 = 150;
+
+/// Number of upgraded text-preview editors retained for reuse. Four entries
+/// cover the common "bounce between nearby files" workflow while keeping the
+/// buffers, syntax state, and editor entities strictly bounded.
+const PREVIEW_EDITOR_CACHE_CAP: usize = 4;
+
 /// How many recently-visited directories `DirCache` retains. Tuned for
 /// the back/forward + parent-and-back navigation cycle: 8 covers a few
 /// rounds of "into a subdir, back out, into a sibling" without evicting
@@ -322,6 +332,19 @@ pub(crate) enum Preview {
     Empty,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ListingState {
+    Loading { path: PathBuf },
+    Ready { path: PathBuf },
+    Error { path: PathBuf, message: String },
+}
+
+impl ListingState {
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+}
+
 /// Source bytes for a text preview. The heavy `editor::Editor` entity
 /// that actually renders the content is built lazily by `view.rs` and
 /// cached on the `FileManager` keyed by `path`, so rapid `j`/`k`
@@ -331,14 +354,18 @@ pub(crate) enum Preview {
 pub(crate) struct TextPreview {
     pub(crate) path: PathBuf,
     pub(crate) content: String,
+    /// Fingerprint of the bytes used to build `content`. The editor LRU
+    /// includes this in its key so an externally modified file cannot revive
+    /// a stale editor merely because its path stayed the same.
+    pub(crate) revision: u64,
 }
 
-/// Cached read-only `editor::Editor` for the currently previewed text
-/// file. Held outside the `Preview` enum so swapping preview variants
-/// (text → directory → text) doesn't churn the entity unless the
-/// previewed path actually changes.
+/// Cached read-only `editor::Editor` for a recently previewed text file.
+/// Entries live outside the `Preview` enum so swapping preview variants
+/// (text → directory → text) can reuse the editor when the path returns.
 pub(crate) struct PreviewEditorCache {
     pub(crate) path: PathBuf,
+    pub(crate) revision: u64,
     pub(crate) editor: Entity<editor::Editor>,
 }
 
@@ -418,6 +445,10 @@ pub struct FileManager {
     pub(crate) entries_unfiltered: Option<Vec<DirEntry>>,
     pub(crate) error_message: Option<String>,
     pub(crate) error_gen: u64,
+    /// Truthful state for the current listing. `entries` may be retained
+    /// while Loading/Error to avoid visual flicker, but actions must not
+    /// treat those rows as belonging to `current_dir`.
+    pub(crate) listing_state: ListingState,
     /// Bumped on every directory load so the background `child_count`
     /// fill task can detect "the listing I was spawned for is gone" and
     /// drop its result without touching `entries`.
@@ -460,10 +491,10 @@ pub struct FileManager {
     /// workspace for every selection change. `None` only in test setups
     /// where the FM is spun up without a workspace entity.
     pub(crate) language_registry: Option<Arc<LanguageRegistry>>,
-    /// Read-only editor used to render the currently previewed text
-    /// file. Reused across selection changes within the same file;
-    /// rebuilt when the selected path changes.
-    pub(crate) preview_editor: Option<PreviewEditorCache>,
+    /// Small MRU-first cache of read-only editors used by text previews.
+    /// Retaining nearby files avoids rebuilding their buffer, syntax state,
+    /// and editor entity when the cursor alternates between adjacent rows.
+    pub(crate) preview_editors: VecDeque<PreviewEditorCache>,
     /// True while Cmd is the only modifier currently held in this
     /// window. Drives the bottom-bar Cmd-shortcut overlay; updated
     /// via the `on_modifiers_changed` handler.
@@ -521,7 +552,8 @@ pub struct FileManager {
     /// Dwell-timer state for the deferred-editor preview pipeline
     /// (`REQ:codon/fm-render#c-defer-editor-in-preview`). While the
     /// selection has been stable on the current preview target for
-    /// less than 150 ms, the FM renders a static text snapshot via
+    /// less than the editor-dwell threshold, the FM renders a static
+    /// text snapshot via
     /// the custom row Elements; once the dwell threshold trips the
     /// FM upgrades to the real `EditorElement`. The next selection
     /// change cancels the timer and drops the upgrade.
@@ -669,6 +701,7 @@ impl FileManager {
             .unwrap_or_default();
         let empty_render_entries: Arc<[Arc<DirEntry>]> = Vec::<Arc<DirEntry>>::new().into();
         let shaped_cache_capacity = crate::render::shaped_line_cache::default_capacity(32, 1, 4);
+        let initial_listing_path = initial_dir.clone();
 
         let mut this = Self {
             focus_handle,
@@ -698,6 +731,9 @@ impl FileManager {
             entries_unfiltered: None,
             error_message: None,
             error_gen: 0,
+            listing_state: ListingState::Loading {
+                path: initial_listing_path,
+            },
             listing_gen: 0,
             preview_gen: 0,
             preview_target: None,
@@ -717,7 +753,7 @@ impl FileManager {
             last_find_pattern: None,
             shell_running: None,
             language_registry,
-            preview_editor: None,
+            preview_editors: VecDeque::with_capacity(PREVIEW_EDITOR_CACHE_CAP),
             cmd_only_held: false,
             parent_col_width: 0.0,
             fm_total_width: 0.0,
@@ -817,6 +853,24 @@ impl FileManager {
         .detach();
     }
 
+    fn ensure_listing_ready(&mut self, cx: &mut Context<Self>) -> bool {
+        let message = match &self.listing_state {
+            ListingState::Ready { .. } => return true,
+            ListingState::Loading { path } => {
+                format!(
+                    "Still loading {} — retained rows are read-only",
+                    path.display()
+                )
+            }
+            ListingState::Error { path, .. } => format!(
+                "Couldn’t use retained rows for {} — press Shift-R to retry",
+                path.display()
+            ),
+        };
+        self.surface_error(message, cx);
+        false
+    }
+
     pub(crate) fn dispatch_context(&self) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
         context.add("FileManager");
@@ -836,11 +890,17 @@ impl FileManager {
     /// `reload_entries_with`.
     fn prepare_reload(&mut self) {
         self.marked.clear();
+        self.visual_anchor = None;
         self.refresh_mark_render_snapshot();
         // A fresh directory listing invalidates any active filter — the
         // user navigated, so the original set is gone.
         self.filter_query.clear();
         self.entries_unfiltered = None;
+        // Any open prompt may carry paths or indices captured from the
+        // old listing (rename/delete/chmod/filter/find). Cancel it before
+        // exposing retained rows under the requested path.
+        self.pending_input = None;
+        self.mode = PaneMode::Normal;
         // Bump so any in-flight child-count fill / preview / listing task
         // from a previous reload sees the gen mismatch and drops its
         // result without mutating `self`.
@@ -848,6 +908,9 @@ impl FileManager {
         // Invalidate the preview target so a navigation back to the same
         // selected path still triggers a fresh preview load.
         self.preview_target = None;
+        self.preview_gen = self.preview_gen.wrapping_add(1);
+        self.preview = Preview::Empty;
+        self.refresh_preview_render_snapshot();
     }
 
     fn reload_entries(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -866,6 +929,10 @@ impl FileManager {
         self.prepare_reload();
         let listing_gen = self.listing_gen;
         let current_dir = self.current_dir.clone();
+        self.listing_state = ListingState::Loading {
+            path: current_dir.clone(),
+        };
+        cx.notify();
         let opts = self.read_dir_options();
         let want_index = self.selected_index;
         let cache = Arc::clone(&self.dir_cache);
@@ -873,13 +940,13 @@ impl FileManager {
         cx.spawn(async move |this, cx| {
             let parent_path = current_dir.parent().map(|p| p.to_path_buf());
             let dir_for_read = current_dir.clone();
-            let (entries, parent_entries) = cx
+            let (entries_result, parent_entries) = cx
                 .background_executor()
                 .spawn(async move {
                     let entries = read_dir_cached(&cache, &dir_for_read, opts);
                     let parent_entries = parent_path
                         .as_deref()
-                        .map(|p| read_dir_cached(&cache, p, opts))
+                        .and_then(|p| read_dir_cached(&cache, p, opts).ok())
                         .unwrap_or_default();
                     (entries, parent_entries)
                 })
@@ -889,8 +956,25 @@ impl FileManager {
                 if this.listing_gen != listing_gen {
                     return;
                 }
+                let entries = match entries_result {
+                    Ok(entries) => entries,
+                    Err(err) => {
+                        this.listing_state = ListingState::Error {
+                            path: current_dir.clone(),
+                            message: err.to_string(),
+                        };
+                        this.preview = Preview::Empty;
+                        this.refresh_preview_render_snapshot();
+                        cx.emit(FileManagerEvent::PathChanged);
+                        cx.notify();
+                        return;
+                    }
+                };
                 this.entries = entries;
                 this.parent_entries = parent_entries;
+                this.listing_state = ListingState::Ready {
+                    path: current_dir.clone(),
+                };
                 crate::view::populate_icon_paths(&mut this.entries, cx);
                 crate::view::populate_icon_paths(&mut this.parent_entries, cx);
                 this.refresh_listing_render_snapshots();
@@ -1123,6 +1207,8 @@ impl FileManager {
             // available — calling `select_entry_by_name` here would
             // run before the new listing has loaded.
             self.reload_entries_with(select_name, cx);
+        } else if !self.listing_state.is_ready() {
+            self.reload_entries_with(select_name, cx);
         } else if let Some(name) = select_name {
             // Same dir — entries are already current, select inline.
             self.select_entry_by_name(&name, cx);
@@ -1207,18 +1293,24 @@ impl FileManager {
 
     /// Return (creating if necessary) the read-only editor entity used
     /// to render the currently previewed text file. Cached on
-    /// `self.preview_editor` keyed by path so rapid scrolling reuses
-    /// the same editor when the selected file hasn't changed.
+    /// `self.preview_editors` keyed by path so rapid scrolling reuses
+    /// editors for recently selected files.
     pub(crate) fn preview_editor_for(
         &mut self,
         text: &TextPreview,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<editor::Editor> {
-        if let Some(cache) = self.preview_editor.as_ref()
-            && cache.path == text.path
-        {
-            return cache.editor.clone();
+        if let Some(index) = self.preview_editors.iter().position(|cache| {
+            cache.path.as_path() == text.path.as_path() && cache.revision == text.revision
+        }) {
+            let cache = self
+                .preview_editors
+                .remove(index)
+                .expect("preview-editor cache index came from this deque");
+            let editor = cache.editor.clone();
+            self.preview_editors.push_front(cache);
+            return editor;
         }
 
         let content = text.content.clone();
@@ -1274,10 +1366,16 @@ impl FileManager {
             editor
         });
 
-        self.preview_editor = Some(PreviewEditorCache {
+        // A changed file at the same path supersedes its old editor instead
+        // of consuming another LRU slot.
+        self.preview_editors
+            .retain(|cache| cache.path.as_path() != text.path.as_path());
+        self.preview_editors.push_front(PreviewEditorCache {
             path: text.path.clone(),
+            revision: text.revision,
             editor: editor.clone(),
         });
+        self.preview_editors.truncate(PREVIEW_EDITOR_CACHE_CAP);
 
         // Render-trace: a fresh `EditorElement` was just constructed for
         // this preview — the moment phase-17 calls "the upgrade". Cache
@@ -1301,6 +1399,14 @@ impl FileManager {
     /// The previous preview keeps rendering until the new one lands —
     /// blanking the pane during scroll would feel like a flicker.
     pub(crate) fn request_preview_update(&mut self, cx: &mut Context<Self>) {
+        if !self.listing_state.is_ready() {
+            self.preview_gen = self.preview_gen.wrapping_add(1);
+            self.preview_target = None;
+            self.preview = Preview::Empty;
+            self.refresh_preview_render_snapshot();
+            cx.notify();
+            return;
+        }
         let target_path = self
             .entries
             .get(self.selected_index)
@@ -1313,17 +1419,21 @@ impl FileManager {
         // Reset the dwell-timer for the deferred-editor preview
         // pipeline. While the user is moving across rows, we render
         // a static text snapshot via the custom row Elements; once
-        // the selection has been stable on this target for 150 ms,
-        // the timer fires and upgrades the preview to the real
+        // the selection has been stable on this target for the configured
+        // dwell, the timer fires and upgrades the preview to the real
         // `EditorElement`. Dropping the existing task cancels it.
         self.preview_dwell_path = target_path.clone();
-        self.preview_dwell_upgraded = false;
+        self.preview_dwell_upgraded = target_path.as_ref().is_some_and(|path| {
+            self.preview_editors
+                .iter()
+                .any(|cache| cache.path.as_path() == path.as_path())
+        });
         self.preview_dwell_task = None;
-        if target_path.is_some() {
+        if target_path.is_some() && !self.preview_dwell_upgraded {
             let weak = cx.entity().downgrade();
             self.preview_dwell_task = Some(cx.spawn(async move |_, cx| {
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(150))
+                    .timer(std::time::Duration::from_millis(PREVIEW_EDITOR_DWELL_MS))
                     .await;
                 let _ = weak.update(cx, |fm, cx| {
                     // Guard: ignore the timer if the selection has
@@ -1343,7 +1453,6 @@ impl FileManager {
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             self.preview = Preview::Empty;
             self.refresh_preview_render_snapshot();
-            self.preview_editor = None;
             cx.notify();
             return;
         };
@@ -1398,9 +1507,9 @@ impl FileManager {
                 }
                 this.preview = new_preview;
                 this.refresh_preview_render_snapshot();
-                // `preview_editor` is keyed on the previewed path; the
-                // view layer rebuilds it on next render if the path
-                // changed, so we don't need to invalidate it here.
+                // `preview_editors` is keyed on previewed paths; the view
+                // layer reuses a cached editor or builds one on demand, so
+                // a new payload does not require eager invalidation.
                 cx.notify();
             })
             .ok();
@@ -1500,6 +1609,9 @@ impl FileManager {
     /// a symlink pointing at a directory is treated the same as the
     /// directory itself.
     fn enter_directory(&mut self, _: &EnterDirectory, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             return;
         };
@@ -1532,6 +1644,9 @@ impl FileManager {
                 self.selected_index = 0;
                 self.entries = children;
                 self.parent_entries = new_parent_entries;
+                self.listing_state = ListingState::Ready {
+                    path: self.current_dir.clone(),
+                };
                 self.refresh_listing_render_snapshots();
                 self.refresh_preview_render_snapshot();
                 // Directory rotation: every visible row's payload
@@ -1604,6 +1719,9 @@ impl FileManager {
     /// `resolve_with_depth_cap` so a pathological `a -> b -> a` does
     /// not hang the FM.
     fn follow_symlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let Some(entry) = self.entries.get(self.selected_index).cloned() else {
             return;
         };
@@ -1665,6 +1783,12 @@ impl FileManager {
     }
 
     fn toggle_mark(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
+        if self.entries.is_empty() {
+            return;
+        }
         // A bare `v` returns the FM to single-mark muscle memory; the
         // existing visual-range marks are preserved so the toggle still
         // acts on the current row as expected.
@@ -1711,6 +1835,9 @@ impl FileManager {
     /// fake `Fs` in tests can intercept it the same way it does for
     /// rename / copy.
     fn make_symlinks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let sources = self.current_targets();
         if sources.is_empty() {
             return;
@@ -1767,6 +1894,9 @@ impl FileManager {
     /// pre-check and let the trait method bubble up whatever error
     /// the OS returns.
     fn make_hardlinks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let sources = self.current_targets();
         if sources.is_empty() {
             return;
@@ -1866,6 +1996,9 @@ impl FileManager {
     /// `self.entries` is already post-filter / post-show_hidden, so the
     /// "visible window" is exactly that vector.
     pub(crate) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         if self.entries.is_empty() {
             return;
         }
@@ -1882,6 +2015,9 @@ impl FileManager {
     /// existing state, so the operation remains correct if that invariant
     /// is ever relaxed.
     pub(crate) fn invert_marks_visible(&mut self, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         if self.entries.is_empty() {
             return;
         }
@@ -1909,6 +2045,9 @@ impl FileManager {
     /// Any prior mark set is replaced so the user sees only the sweep
     /// they are actively performing.
     pub(crate) fn start_visual_range(&mut self, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         if self.entries.is_empty() {
             return;
         }
@@ -1952,6 +2091,9 @@ impl FileManager {
     /// a joined-text companion) so Finder and other native apps can `⌘V`
     /// the actual files. See REQ:codon/fm-os-clipboard#c-fm-publishes-to-os.
     fn yank_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let paths = self.current_targets();
         if paths.is_empty() {
             return;
@@ -1976,6 +2118,9 @@ impl FileManager {
     /// own paste consumes the clipboard, so `d` → `p` in codon stays a
     /// rename; cross-app pastes always copy.
     fn cut_to_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let paths = self.current_targets();
         if paths.is_empty() {
             return;
@@ -1994,6 +2139,9 @@ impl FileManager {
     /// the path *as text* into a terminal pane; the file-URL surface is
     /// the job of `y` (`yank_to_clipboard`).
     fn copy_path_to_os_clipboard(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let paths = self.current_targets();
         if paths.is_empty() {
             return;
@@ -2006,7 +2154,10 @@ impl FileManager {
         cx.write_to_clipboard(ClipboardItem::new_string(joined));
     }
 
-    fn copy_ranger_text(&self, field: RangerYankField, cx: &mut Context<Self>) {
+    fn copy_ranger_text(&mut self, field: RangerYankField, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let values: Vec<String> = self
             .current_targets()
             .into_iter()
@@ -2052,6 +2203,9 @@ impl FileManager {
     /// entry. Returns owned PathBufs so callers can move the list into an
     /// async task without borrowing `self`.
     fn current_targets(&self) -> Vec<PathBuf> {
+        if !self.listing_state.is_ready() {
+            return Vec::new();
+        }
         if self.marked.is_empty() {
             self.entries
                 .get(self.selected_index)
@@ -2066,18 +2220,27 @@ impl FileManager {
     }
 
     fn create_file(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::CreateFile(String::new()));
         cx.notify();
     }
 
     fn create_directory(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::CreateDirectory(String::new()));
         cx.notify();
     }
 
     fn rename_entry(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         if let Some(entry) = self.entries.get(self.selected_index) {
             self.mode = PaneMode::Insert;
             self.pending_input = Some(PendingInput::Rename {
@@ -2313,6 +2476,9 @@ impl FileManager {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let codon_mode::GrammarSelection::FileIndices(indices) = sel else {
             return;
         };
@@ -2342,6 +2508,9 @@ impl FileManager {
     /// marked-set — same shape as `select_all_visible` but driven by
     /// the trait result rather than a fixed full-range.
     fn apply_grammar_marks(&mut self, sel: codon_mode::GrammarSelection) {
+        if !self.listing_state.is_ready() {
+            return;
+        }
         let paths = match sel {
             codon_mode::GrammarSelection::Files(paths) => paths,
             _ => return,
@@ -2424,6 +2593,9 @@ impl FileManager {
     /// name contains the query substring (case-insensitive). Enter
     /// commits the query as `last_find_pattern` so `n` / `N` can repeat.
     fn start_find_forward(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::FindForward {
             query: String::new(),
@@ -2435,6 +2607,9 @@ impl FileManager {
     /// `?` enters find-backward. Same UX as forward but the per-keystroke
     /// jump walks backward through `entries`.
     fn start_find_backward(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.mode = PaneMode::Insert;
         self.pending_input = Some(PendingInput::FindBackward {
             query: String::new(),
@@ -2519,6 +2694,9 @@ impl FileManager {
     /// `n` (Normal): walk forward through matches of the last committed
     /// find pattern. No-op if no pattern is committed.
     fn find_next(&mut self, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let Some(needle) = self.last_find_pattern.clone() else {
             return;
         };
@@ -2533,6 +2711,9 @@ impl FileManager {
     /// `N` (Normal): walk backward through matches of the last committed
     /// find pattern. No-op if no pattern is committed.
     fn find_prev(&mut self, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let Some(needle) = self.last_find_pattern.clone() else {
             return;
         };
@@ -2668,6 +2849,9 @@ impl FileManager {
     /// has at least one row — the synthetic "Codon (default)" — so this
     /// verb is never a silent no-op.
     fn choose_opener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -2710,6 +2894,13 @@ impl FileManager {
     /// moment the picker opens so a stale picker can't be steered into
     /// running against a different cursor.
     pub(crate) fn opener_targets(&self) -> crate::opener_picker::OpenerTargets {
+        if !self.listing_state.is_ready() {
+            return crate::opener_picker::OpenerTargets {
+                cursor: PathBuf::new(),
+                marked: Vec::new(),
+                cwd: self.current_dir.clone(),
+            };
+        }
         let cursor = self
             .entries
             .get(self.selected_index)
@@ -2738,6 +2929,9 @@ impl FileManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         match choice {
             crate::openers::OpenerChoice::Default => {
                 let paths = if targets.marked.is_empty() {
@@ -2796,6 +2990,9 @@ impl FileManager {
     }
 
     fn start_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         // Re-entering filter mode while a filter is already committed
         // keeps the existing query so the user can edit it.
         if self.entries_unfiltered.is_none() {
@@ -2809,6 +3006,9 @@ impl FileManager {
     }
 
     fn apply_filter(&mut self, cx: &mut Context<Self>) {
+        if !self.listing_state.is_ready() {
+            return;
+        }
         let Some(unfiltered) = self.entries_unfiltered.clone() else {
             return;
         };
@@ -2845,6 +3045,9 @@ impl FileManager {
     }
 
     fn delete_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let targets = self.current_targets();
 
         if targets.is_empty() {
@@ -2866,6 +3069,9 @@ impl FileManager {
     }
 
     fn start_skip_trash_delete(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let targets = self.current_targets();
         if targets.is_empty() {
             return;
@@ -2993,6 +3199,9 @@ impl FileManager {
     /// rename). The initial pattern seeds from the first marked entry's
     /// extension so the user keeps the original file type by default.
     fn start_bulk_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         if self.marked.is_empty() {
             return;
         }
@@ -3016,6 +3225,9 @@ impl FileManager {
     /// observing its close, diffing, applying renames — lives in
     /// `bulk_rename_editor.rs`.
     fn start_bulk_rename_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let targets: Vec<PathBuf> = if self.marked.is_empty() {
             self.entries
                 .get(self.selected_index)
@@ -3055,6 +3267,9 @@ impl FileManager {
     /// focused entry — `cm` should never be a silent no-op when the user
     /// pressed `m` after `c`.
     fn start_bulk_chmod(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         let targets: Vec<(PathBuf, Option<u32>)> = if self.marked.is_empty() {
             self.entries
                 .get(self.selected_index)
@@ -3198,6 +3413,9 @@ impl FileManager {
     /// are renamed. Cut clears the clipboard once a paste succeeds; yank
     /// is preserved so users can paste the same set repeatedly.
     fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.start_paste(window, cx, false);
     }
 
@@ -3205,6 +3423,9 @@ impl FileManager {
     /// destination already exists, prompt the user once before
     /// overwriting the whole batch.
     fn paste_clipboard_overwrite(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ensure_listing_ready(cx) {
+            return;
+        }
         self.start_paste(window, cx, true);
     }
 
@@ -4050,7 +4271,11 @@ impl FileManager {
                 true
             }
             "r" if shift => {
-                self.start_bulk_rename(window, cx);
+                if self.listing_state.is_ready() {
+                    self.start_bulk_rename(window, cx);
+                } else {
+                    self.reload_entries(window, cx);
+                }
                 true
             }
             // Toggles. The bare `.` chord is no longer bound — it's
@@ -4771,6 +4996,9 @@ impl SerializableItem for FileManager {
 
 impl SelectionSource for FileManager {
     fn current_selection(&self) -> Selection {
+        if !self.listing_state.is_ready() {
+            return Selection::Empty;
+        }
         if !self.marked.is_empty() {
             let paths: Vec<PathBuf> = self
                 .marked
@@ -5308,21 +5536,21 @@ fn read_dir_cached(
     cache: &std::sync::Mutex<DirCache>,
     path: &Path,
     opts: ReadDirOptions,
-) -> Vec<DirEntry> {
+) -> std::io::Result<Vec<DirEntry>> {
     let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
     if let Some(mtime) = mtime
         && let Ok(mut cache) = cache.lock()
         && let Some(entries) = cache.lookup(path, mtime, opts)
     {
-        return entries;
+        return Ok(entries);
     }
-    let entries = read_dir_sync(path, opts);
+    let entries = read_dir_sync(path, opts)?;
     if let Some(mtime) = mtime
         && let Ok(mut cache) = cache.lock()
     {
         cache.store(path.to_path_buf(), mtime, opts, entries.clone());
     }
-    entries
+    Ok(entries)
 }
 
 /// Compute the preview payload for `entry`. Pure / Send-safe so it can
@@ -5334,7 +5562,7 @@ fn compute_preview(
     cache: &std::sync::Mutex<DirCache>,
 ) -> Preview {
     if entry.is_dir {
-        let children = read_dir_cached(cache, &entry.path, opts);
+        let children = read_dir_cached(cache, &entry.path, opts).unwrap_or_default();
         return Preview::Directory(children);
     }
 
@@ -5361,10 +5589,11 @@ fn compute_preview(
     }
 }
 
-pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntry> {
-    let Ok(read_dir) = std::fs::read_dir(path) else {
-        return Vec::new();
-    };
+pub(crate) fn read_dir_sync(
+    path: &Path,
+    options: ReadDirOptions,
+) -> std::io::Result<Vec<DirEntry>> {
+    let read_dir = std::fs::read_dir(path)?;
 
     let mut entries: Vec<DirEntry> = read_dir
         .filter_map(|e| e.ok())
@@ -5411,7 +5640,7 @@ pub(crate) fn read_dir_sync(path: &Path, options: ReadDirOptions) -> Vec<DirEntr
         .collect();
 
     sort_entries(&mut entries, options.sort, options.reverse);
-    entries
+    Ok(entries)
 }
 
 /// Precompute the per-`LineMode` meta `SharedString`s for `entry`,
@@ -5708,12 +5937,35 @@ pub(crate) fn read_text_preview(path: &Path, size: u64) -> Option<TextPreview> {
     if size > TEXT_PREVIEW_MAX_BYTES {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = read_text_preview_bytes(std::fs::File::open(path).ok()?, size)?;
+    let revision = {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::hash::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    };
     let content = String::from_utf8(bytes).ok()?;
     Some(TextPreview {
         path: path.to_path_buf(),
         content,
+        revision,
     })
+}
+
+/// Read no more than the text cap plus one sentinel byte. Keeping this helper
+/// generic makes the I/O budget directly testable with an instrumented reader.
+fn read_text_preview_bytes(reader: impl std::io::Read, size: u64) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+
+    if size > TEXT_PREVIEW_MAX_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity((size.min(TEXT_PREVIEW_MAX_BYTES) as usize) + 1);
+    reader
+        .take(TEXT_PREVIEW_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= TEXT_PREVIEW_MAX_BYTES).then_some(bytes)
 }
 
 /// Build the metadata + first-bytes snapshot for the binary preview. The
@@ -6535,12 +6787,12 @@ mod tests {
         let dir = make_tree(&[("a.txt", false)]);
         let cache = std::sync::Mutex::new(DirCache::default());
         let opts = ReadDirOptions::default();
-        let _ = read_dir_cached(&cache, dir.path(), opts);
+        let _ = read_dir_cached(&cache, dir.path(), opts).expect("initial cached read");
         // Sleep ~10 ms then create a file: this bumps the directory's
         // mtime (POSIX), so the next lookup must miss.
         std::thread::sleep(std::time::Duration::from_millis(15));
         fs::write(dir.path().join("b.txt"), b"").expect("touch");
-        let after = read_dir_cached(&cache, dir.path(), opts);
+        let after = read_dir_cached(&cache, dir.path(), opts).expect("refreshed cached read");
         assert_eq!(
             after.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             vec!["a.txt", "b.txt"]
@@ -6556,12 +6808,12 @@ mod tests {
             show_hidden: true,
             ..ReadDirOptions::default()
         };
-        let a = read_dir_cached(&cache, dir.path(), no_hidden);
+        let a = read_dir_cached(&cache, dir.path(), no_hidden).expect("visible listing");
         assert_eq!(
             a.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             vec!["visible.txt"]
         );
-        let b = read_dir_cached(&cache, dir.path(), with_hidden);
+        let b = read_dir_cached(&cache, dir.path(), with_hidden).expect("hidden listing");
         assert_eq!(
             b.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             vec![".hidden.txt", "visible.txt"]
@@ -6576,7 +6828,7 @@ mod tests {
             ("subdir", true),
             (".dotdir", true),
         ]);
-        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default()).expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["subdir", "visible.txt"]);
     }
@@ -6595,7 +6847,8 @@ mod tests {
                 show_hidden: true,
                 ..ReadDirOptions::default()
             },
-        );
+        )
+        .expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         // Directories first, then files; each group case-insensitive ascending.
         assert_eq!(
@@ -6614,7 +6867,7 @@ mod tests {
             ("bdir", true),
             ("afile.txt", false),
         ]);
-        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default()).expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["adir", "bdir", "afile.txt", "zfile.txt"]);
     }
@@ -6626,18 +6879,44 @@ mod tests {
             ("apple.txt", false),
             ("Banana.txt", false),
         ]);
-        let entries = read_dir_sync(dir.path(), ReadDirOptions::default());
+        let entries = read_dir_sync(dir.path(), ReadDirOptions::default()).expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["apple.txt", "Banana.txt", "Zebra.txt"]);
     }
 
     #[test]
-    fn read_dir_sync_unreadable_path_returns_empty() {
-        let entries = read_dir_sync(
+    fn read_dir_sync_unreadable_path_returns_error() {
+        let error = read_dir_sync(
             Path::new("/nonexistent/path/that/does/not/exist"),
             ReadDirOptions::default(),
-        );
+        )
+        .expect_err("missing directories must not look empty");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn read_dir_sync_empty_directory_is_a_successful_empty_listing() {
+        let dir = make_tree(&[]);
+        let entries =
+            read_dir_sync(dir.path(), ReadDirOptions::default()).expect("empty directory is valid");
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn only_ready_listing_state_can_target_rows() {
+        let path = PathBuf::from("/tmp/example");
+        assert!(
+            ListingState::Ready { path: path.clone() }.is_ready(),
+            "a successful listing can target its rows"
+        );
+        assert!(!ListingState::Loading { path: path.clone() }.is_ready());
+        assert!(
+            !ListingState::Error {
+                path,
+                message: "permission denied".into(),
+            }
+            .is_ready()
+        );
     }
 
     #[test]
@@ -6825,6 +7104,35 @@ mod tests {
         let out = format_hex_dump(&bytes);
         assert!(out.starts_with("00000000  "));
         assert!(out.contains("\n00000010  "));
+    }
+
+    #[test]
+    fn text_preview_reader_stops_after_cap_sentinel_byte() {
+        struct CountingReader {
+            cursor: std::io::Cursor<Vec<u8>>,
+            bytes_read: std::rc::Rc<std::cell::Cell<usize>>,
+        }
+
+        impl std::io::Read for CountingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let count = std::io::Read::read(&mut self.cursor, buffer)?;
+                self.bytes_read.set(self.bytes_read.get() + count);
+                Ok(count)
+            }
+        }
+
+        let bytes_read = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reader = CountingReader {
+            cursor: std::io::Cursor::new(vec![b'a'; TEXT_PREVIEW_MAX_BYTES as usize + 128]),
+            bytes_read: bytes_read.clone(),
+        };
+
+        assert!(read_text_preview_bytes(reader, 0).is_none());
+        assert_eq!(
+            bytes_read.get(),
+            TEXT_PREVIEW_MAX_BYTES as usize + 1,
+            "the sentinel read must not consume the rest of an oversized file"
+        );
     }
 
     #[test]
@@ -7123,7 +7431,8 @@ mod tests {
                 sort: crate::prefs::SortMode::Size,
                 ..ReadDirOptions::default()
             },
-        );
+        )
+        .expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["zzz", "small.txt", "big.txt"]);
     }
@@ -7138,7 +7447,8 @@ mod tests {
                 reverse: true,
                 ..ReadDirOptions::default()
             },
-        );
+        )
+        .expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["b", "a", "y.txt", "x.txt"]);
     }
@@ -7158,7 +7468,8 @@ mod tests {
                 reverse: true,
                 ..ReadDirOptions::default()
             },
-        );
+        )
+        .expect("listing");
         let is_dir: Vec<bool> = entries.iter().map(|e| e.is_dir).collect();
         assert_eq!(is_dir, vec![true, true, false, false]);
     }
@@ -7177,7 +7488,8 @@ mod tests {
                 sort: crate::prefs::SortMode::Extension,
                 ..ReadDirOptions::default()
             },
-        );
+        )
+        .expect("listing");
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["note.md", "lib.rs", "main.rs", "readme.txt"]);
     }
